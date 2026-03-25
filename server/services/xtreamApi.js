@@ -3,18 +3,13 @@
  * Handles authentication and API calls to Xtream servers
  */
 
+const { normalizeSourceUrl } = require('./urlNormalizer');
 
-function fixBaseUrl(url) {
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    return "http://" + url;
-  }
-  return url;
-}
 
 class XtreamApi {
     constructor(baseUrl, username, password) {
         // Clean up base URL
-        this.baseUrl = baseUrl.replace(/\/+$/, '');
+                this.baseUrl = normalizeSourceUrl(baseUrl);
         this.username = username;
         this.password = password;
     }
@@ -23,7 +18,7 @@ class XtreamApi {
      * Build API URL with authentication
      */
     buildApiUrl(action, params = {}) {
-        const url = new URL(`${fixBaseUrl(this.baseUrl)}/player_api.php`);
+        const url = new URL(`${this.baseUrl}/player_api.php`);
         url.searchParams.set('username', this.username);
         url.searchParams.set('password', this.password);
         if (action) {
