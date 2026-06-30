@@ -4,6 +4,51 @@ const { spawn } = require('child_process');
 const db = require('../db');
 
 /**
+ * Allowed input URL schemes for the remux endpoint.
+ *
+ * FFmpeg accepts a wide variety of protocol handlers (file://, concat:,
+ * subfile:, data:, pipe:, crypto:, async:, cache:, ...). Several of them
+ * read from the local filesystem or compose existing protocols, so they
+ * must NOT be reachable from a request parameter — otherwise an attacker
+ * who can call /api/remux can read arbitrary local files via the streamed
+ * response.
+ *
+ * Only plain http/https stream URLs are valid inputs here.
+ */
+const ALLOWED_URL_SCHEMES = new Set(['http:', 'https:']);
+
+/**
+ * The set of ffmpeg protocols we explicitly permit via -protocol_whitelist.
+ * This is a defence-in-depth layer applied on top of the scheme check: even
+ * if a future code path forwarded a different URL, ffmpeg itself would
+ * refuse to touch local files / arbitrary demuxer-level protocols.
+ *
+ * - file/concat/subfile/pipe/data/crypto/async/cache are intentionally absent.
+ * - tls/tcp are needed for https; https/http are obvious.
+ * - hls is needed so the demuxer can follow HLS playlists.
+ */
+const FFMPEG_PROTOCOL_WHITELIST = 'http,https,tls,tcp,hls';
+
+/**
+ * Validate a user-supplied stream URL.
+ * Returns the normalised URL string on success, or null on rejection.
+ */
+function validateStreamUrl(raw) {
+    if (typeof raw !== 'string' || raw.length === 0) return null;
+    // Reject control characters (incl. CR/LF/NUL) before WHATWG URL parsing,
+    // which would otherwise silently strip some of them.
+    if (/[\x00-\x1F\x7F]/.test(raw)) return null;
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch (_) {
+        return null;
+    }
+    if (!ALLOWED_URL_SCHEMES.has(parsed.protocol)) return null;
+    return parsed.toString();
+}
+
+/**
  * Remux stream (container conversion only)
  * GET /api/remux?url=...
  * 
@@ -19,13 +64,18 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    const safeUrl = validateStreamUrl(url);
+    if (!safeUrl) {
+        return res.status(400).json({ error: 'URL must be an http:// or https:// stream URL' });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
 
     // Get User-Agent from settings
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
-    console.log(`[Remux] Starting remux for: ${url}`);
+    console.log(`[Remux] Starting remux for: ${safeUrl}`);
     console.log(`[Remux] Using User-Agent: ${settings.userAgentPreset}`);
 
     // FFmpeg arguments for pure remux (no encoding)
@@ -33,6 +83,10 @@ router.get('/', async (req, res) => {
     const args = [
         '-hide_banner',
         '-loglevel', 'warning',
+        // Restrict the protocols ffmpeg is allowed to open for input.
+        // Defence in depth: blocks file://, concat:, subfile:, data:, pipe:, etc.
+        // even if a different URL slipped past validateStreamUrl().
+        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
         '-user_agent', userAgent,
         '-user_agent', userAgent,
         // Standard probe size to handle complex containers (MKV) correctly
@@ -50,7 +104,7 @@ router.get('/', async (req, res) => {
         '-reconnect_delay_max', '5',
         // Prevent Range/HEAD requests that some providers reject with 405
         '-seekable', '0',
-        '-i', url,
+        '-i', safeUrl,
         // STRICT MAPPING: Only map video and audio, ignore subtitles/data/attachments
         // This prevents remux failure when source container has incompatible subtitle tracks (e.g. MKV -> MP4)
         '-map', '0:v',
