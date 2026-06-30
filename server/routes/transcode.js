@@ -24,6 +24,48 @@ const transcodeSession = require('../services/transcodeSession');
 transcodeSession.startCleanupInterval();
 
 /**
+ * Validate that a user-supplied input URL is safe to hand to FFmpeg.
+ *
+ * FFmpeg accepts many pseudo-protocols beyond plain HTTP (file://, concat:,
+ * subfile:, data:, pipe:, etc.). Several of those can be abused to read
+ * arbitrary local files or otherwise reach unintended resources, and the
+ * direct transcode endpoint pipes FFmpeg stdout straight back to the HTTP
+ * caller — so an unsafe `-i` argument is effectively an arbitrary-file-read
+ * primitive.
+ *
+ * We require the URL to:
+ *   - parse as an absolute URL via the WHATWG URL parser
+ *   - use exactly the http: or https: scheme
+ *
+ * Anything else (including bare filesystem paths and ffmpeg pseudo-protocols
+ * such as `concat:` or `subfile,...`) is rejected.
+ *
+ * Returns `null` on success, or a short error string on failure.
+ */
+function validateInputUrl(input) {
+    if (typeof input !== 'string' || input.length === 0) {
+        return 'URL must be a non-empty string';
+    }
+    let parsed;
+    try {
+        parsed = new URL(input);
+    } catch (_) {
+        return 'URL is malformed';
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return 'URL scheme must be http or https';
+    }
+    return null;
+}
+
+// FFmpeg protocol whitelist applied at the demuxer level. This is a
+// defense-in-depth check on top of validateInputUrl(): even if a redirect
+// chain ever pointed FFmpeg at a different protocol, it will refuse to open
+// anything outside this list. Notably, `file`, `concat`, `subfile`, `data`,
+// and `pipe` are NOT included.
+const FFMPEG_PROTOCOL_WHITELIST = 'http,https,tcp,tls,crypto';
+
+/**
  * Create a new transcode session
  * POST /api/transcode/session
  * Body: { url: string, seekOffset?: number }
@@ -165,6 +207,15 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    // Reject anything that isn't a plain http(s) URL. FFmpeg also understands
+    // file://, concat:, subfile:, data: and friends — those would let a caller
+    // read arbitrary local files via this endpoint (output is piped to the
+    // response below).
+    const urlError = validateInputUrl(url);
+    if (urlError) {
+        return res.status(400).json({ error: urlError });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
 
     // Get User-Agent from settings
@@ -181,6 +232,9 @@ router.get('/', async (req, res) => {
     const args = [
         '-hide_banner',
         '-loglevel', 'warning',
+        // Defense-in-depth: even if the URL passes validateInputUrl(), restrict
+        // the demuxer to network protocols only. Blocks file/concat/subfile/etc.
+        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
         '-user_agent', userAgent,
         // Faster startup - reduced probe/analyze for quicker first bytes
         '-probesize', '2000000', // 2MB (reduced from 5MB)
