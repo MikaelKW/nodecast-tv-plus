@@ -1,5 +1,5 @@
 /**
- * API Client - Frontend API wrapper for NodeCast TV
+ * API Client - Frontend API wrapper for NodeCast TV Plus
  */
 
 const API = {

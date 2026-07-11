@@ -199,7 +199,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`NodeCast TV server running on http://localhost:${PORT}`);
+    console.log(`NodeCast TV Plus server running on http://localhost:${PORT}`);
 
     // Load plugins
     await loadPlugins().catch(err => {

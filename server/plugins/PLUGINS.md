@@ -1,6 +1,6 @@
-# nodecast-tv Plugin System
+# NodeCast TV Plus Plugin System
 
-This directory allows you to extend the functionality of **nodecast-tv** without modifying the core source code. The server automatically detects and loads any `.js` file placed in this folder at startup.
+This directory allows you to extend the functionality of **NodeCast TV Plus** without modifying the core source code. The server automatically detects and loads any `.js` file placed in this folder at startup.
 
 ---
 
@@ -146,7 +146,7 @@ plugins/
 ## Testing Your Plugin
 
 1. Place your `.js` file in `server/plugins/`
-2. Restart the NodeCast TV server
+2. Restart the NodeCast TV Plus server
 3. Check the console for plugin loading messages:
    - `✓ Loaded plugin: your-plugin.js` - Success
    - `⚠ Plugin your-plugin.js does not export...` - Wrong export format
