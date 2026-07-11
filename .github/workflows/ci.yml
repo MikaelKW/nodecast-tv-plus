@@ -36,6 +36,9 @@ jobs:
       - name: Run application checks
         run: npm test
 
+      - name: Block high and critical dependency advisories
+        run: npm audit --audit-level=high --omit=dev
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
