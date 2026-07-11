@@ -9,7 +9,7 @@ assignees: ''
 
 **Before opening an issue, please confirm:**
 - [ ] The stream works in VLC/another player
-- [ ] I've read the [Browser Codec Support](https://github.com/technomancer702/nodecast-tv#browser-codec-support), [Supported Stream Types](https://github.com/technomancer702/nodecast-tv#supported-stream-types) and [Troubleshooting](https://github.com/technomancer702/nodecast-tv#troubleshooting) sections in the README
+- [ ] I've read the [Browser Codec Support](https://github.com/MikaelKW/nodecast-tv-plus#browser-codec-support), [Supported Stream Types](https://github.com/MikaelKW/nodecast-tv-plus#supported-stream-types) and [Troubleshooting](https://github.com/MikaelKW/nodecast-tv-plus#troubleshooting) sections in the README
 - [ ] I've tried enabling "Force Proxy" for CORS issues
 - [ ] I've tried enabling "Force Audio Transcode" for audio codec issues
 - [ ] I've tried enabling "Force Remux" for video playback issues

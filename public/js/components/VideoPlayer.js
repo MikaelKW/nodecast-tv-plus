@@ -71,6 +71,7 @@ class VideoPlayer {
             console.warn('[Player] Failed to load settings from server, using defaults:', err.message);
             // Fall back to localStorage for backwards compatibility
             try {
+                // Keep the legacy storage key so upstream users retain their player settings after upgrading.
                 const saved = localStorage.getItem('nodecast_tv_player_settings');
                 if (saved) {
                     this.settings = { ...this.getDefaultSettings(), ...JSON.parse(saved) };
