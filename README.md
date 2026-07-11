@@ -1,10 +1,6 @@
-<p align="center">
-  <img src="public/img/logo-banner.png" alt="nodecast-tv" height="60" />
-</p>
+# NodeCast TV Plus
 
-# What is nodecast-tv?
-
-nodecast-tv is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support. Built with performance and user experience in mind.
+NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv), focused on additional features, usability improvements, and reliability fixes. It is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support.
 
 ## Features
 
@@ -46,8 +42,8 @@ nodecast-tv is a modern, web-based IPTV player featuring Live TV, EPG, Movies (V
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/technomancer702/nodecast-tv.git
-    cd nodecast-tv
+    git clone https://github.com/MikaelKW/nodecast-tv-plus.git
+    cd nodecast-tv-plus
     ```
 
 2.  Install dependencies:
@@ -64,15 +60,15 @@ nodecast-tv is a modern, web-based IPTV player featuring Live TV, EPG, Movies (V
 
 ### Docker Deployment
 
-You can run nodecast-tv easily using Docker.
+You can run NodeCast TV Plus easily using Docker.
 
 1.  Create a `docker-compose.yml` file (or copy the one from this repo):
 
     ```yaml
     services:
-      nodecast-tv:
-        build: https://github.com/technomancer702/nodecast-tv.git#main
-        container_name: nodecast-tv
+      nodecast-tv-plus:
+        build: .
+        container_name: nodecast-tv-plus
         ports:
           - "3000:3000" # Host:Container
         volumes:
@@ -143,7 +139,7 @@ OIDC_CALLBACK_URL=http://localhost:3000/api/auth/oidc/callback # Adjust for your
 
 ## Browser Codec Support & Transcoding
 
-nodecast-tv is a web-based application. By default, **video decoding is handled by your browser**. However, the built-in **smart transcoding system** automatically converts incompatible media (e.g., HEVC video, Dolby audio) into browser-friendly formats using FFmpeg.
+NodeCast TV Plus is a web-based application. By default, **video decoding is handled by your browser**. However, the built-in **smart transcoding system** automatically converts incompatible media (e.g., HEVC video, Dolby audio) into browser-friendly formats using FFmpeg.
 
 **Codec Compatibility Table:**
 
@@ -162,7 +158,7 @@ nodecast-tv is a web-based application. By default, **video decoding is handled 
 
 ## Supported Stream Types
 
-nodecast-tv is optimized for **HLS (HTTP Live Streaming)**.
+NodeCast TV Plus is optimized for **HLS (HTTP Live Streaming)**.
 
 -   **✅ HLS (`.m3u8`)**: Fully supported and recommended. Best for adaptive bitrate and network resilience.
 -   **✅ MPEG-TS (`.ts`)**: Supported via Force Remux in settings.
@@ -234,7 +230,7 @@ All transcoding and stream processing settings are found in **Settings → Trans
 
 ### HTTPS / Reverse Proxy Issues
 
-If you're running nodecast-tv behind a reverse proxy (Nginx, Caddy, Traefik) with HTTPS:
+If you're running NodeCast TV Plus behind a reverse proxy (Nginx, Caddy, Traefik) with HTTPS:
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
@@ -273,23 +269,23 @@ location / {
 If you manage your streams with middleware tools, you may encounter CORS issues or raw MPEG-TS streams that browsers can't play directly.
 
 **Recommended Setup:**
-1.  **Force Backend Proxy:** Enable this in **Settings → Transcoding → Network**. This routes middleware streams through NodeCast TV, bypassing CORS restrictions.
+1.  **Force Backend Proxy:** Enable this in **Settings → Transcoding → Network**. This routes middleware streams through NodeCast TV Plus, bypassing CORS restrictions.
 2.  **Auto Transcode:** Keep this enabled (default). It will automatically detect if the middleware stream (e.g., MPEG-TS) needs to be remuxed or transcoded for the browser.
 
 There is rarely a need to configure specific "Force Remux" settings manually anymore; the system detects stream types automatically.
 
 ### TVHeadend
 
-If you're using TVHeadend as your source, you may need to configure a few settings for streams to play correctly in nodecast-tv:
+If you're using TVHeadend as your source, you may need to configure a few settings for streams to play correctly in NodeCast TV Plus:
 
 **Option 1: Enable Force Backend Proxy (Easiest)**
-- In nodecast-tv, go to **Settings → Transcoding → Network**
+- In NodeCast TV Plus, go to **Settings → Transcoding → Network**
 - Enable **"Force Backend Proxy"**
 - This routes streams through the server, bypassing browser CORS restrictions
 
 **Option 2: Configure TVHeadend CORS**
 - In TVHeadend, go to **Configuration → General → Base → HTTP Server Settings**
-- Add your nodecast-tv URL to **"CORS origin"** (e.g., `http://192.168.1.100:3000`)
+- Add your NodeCast TV Plus URL to **"CORS origin"** (e.g., `http://192.168.1.100:3000`)
 - **Note:** You must include the protocol (`http://` or `https://`)
 
 **Additional Tips:**
@@ -298,7 +294,7 @@ If you're using TVHeadend as your source, you may need to configure a few settin
 
 ### Acestream / P2P Streaming
 
-If you are using `acestream-docker-home` or similar tools, it is **recommended** to use the HLS output format to reduce server load, though NodeCast TV can remux raw streams if needed.
+If you are using `acestream-docker-home` or similar tools, it is **recommended** to use the HLS output format to reduce server load, though NodeCast TV Plus can remux raw streams if needed.
 
 -   **Recommended:** `http://proxy:6878/ace/manifest.m3u8?id=...` (HLS Playlist - Direct Play)
 -   **Supported:** `http://proxy:6878/ace/getstream?id=...` (MPEG-TS - Requires Server Remuxing)
@@ -314,7 +310,7 @@ If you are using `acestream-docker-home` or similar tools, it is **recommended**
 ## Project Structure
 
 ```
-nodecast-tv/
+nodecast-tv-plus/
 ├── public/              # Frontend assets
 │   ├── css/             # Stylesheets
 │   ├── js/              # Client-side logic

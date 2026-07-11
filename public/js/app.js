@@ -1,5 +1,5 @@
 /**
- * NodeCast TV Application Entry Point
+ * NodeCast TV Plus Application Entry Point
  */
 
 class App {
@@ -161,7 +161,7 @@ class App {
         const initialPage = hash && this.pages[hash] ? hash : 'home';
         this.navigateTo(initialPage, true); // true = replace history (don't add)
 
-        console.log('NodeCast TV initialized');
+        console.log('NodeCast TV Plus initialized');
     }
 
     async checkAuth() {
