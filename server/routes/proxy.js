@@ -12,6 +12,12 @@ const https = require('https');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
+const auth = require('../auth');
+const { redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+
+const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
+
+router.use(auth.requireAuth);
 
 // Default cache max age in hours
 const DEFAULT_MAX_AGE_HOURS = 24;
@@ -108,7 +114,7 @@ router.get('/xtream/:sourceId/live_categories', async (req, res) => {
         const cats = getCategoriesFromDb(sourceId, 'live', includeHidden);
         res.json(cats);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream live categories error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -122,7 +128,7 @@ router.get('/xtream/:sourceId/live_streams', async (req, res) => {
         const streams = getStreamsFromDb(sourceId, 'live', categoryId, includeHidden);
         res.json(streams);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream live streams error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -135,7 +141,7 @@ router.get('/xtream/:sourceId/vod_categories', async (req, res) => {
         const cats = getCategoriesFromDb(sourceId, 'movie', includeHidden);
         res.json(cats);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream VOD categories error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -149,7 +155,7 @@ router.get('/xtream/:sourceId/vod_streams', async (req, res) => {
         const streams = getStreamsFromDb(sourceId, 'movie', categoryId, includeHidden);
         res.json(streams);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream VOD streams error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -162,7 +168,7 @@ router.get('/xtream/:sourceId/series_categories', async (req, res) => {
         const cats = getCategoriesFromDb(sourceId, 'series', includeHidden);
         res.json(cats);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream series categories error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -176,7 +182,7 @@ router.get('/xtream/:sourceId/series', async (req, res) => {
         const streams = getStreamsFromDb(sourceId, 'series', categoryId, includeHidden);
         res.json(streams);
     } catch (err) {
-        console.error(err);
+        logSafeError('Xtream series error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -259,7 +265,7 @@ router.get('/xtream/:sourceId/stream/:streamId/:type', async (req, res) => {
 
         res.json({ url: streamUrl });
     } catch (err) {
-        console.error('Error getting stream URL:', err);
+        logSafeError('Error getting stream URL:', err);
         res.status(500).json({ error: 'Failed to get stream URL' });
     }
 });
@@ -309,7 +315,7 @@ router.get('/m3u/:sourceId', async (req, res) => {
         res.json({ channels: reformattedChannels, groups: reformattedGroups });
 
     } catch (err) {
-        console.error(err);
+        logSafeError('M3U proxy error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -372,13 +378,13 @@ router.get('/epg/:sourceId', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err);
+        logSafeError('EPG proxy error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
 
 // Clear cache (kept for compatibility)
-router.delete('/cache/:sourceId', (req, res) => {
+router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
     const sourceId = req.params.sourceId;
     cache.clearSource(sourceId);
     res.json({ success: true });
@@ -467,7 +473,7 @@ router.get('/xtream/:sourceId/:action', async (req, res) => {
 
         res.json(data);
     } catch (err) {
-        console.error('Xtream proxy error:', err);
+        logSafeError('Xtream proxy error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -490,7 +496,7 @@ router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
         const url = api.buildStreamUrl(streamId, type, container);
         res.json({ url });
     } catch (err) {
-        console.error('Stream URL error:', err);
+        logSafeError('Stream URL error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -536,7 +542,7 @@ router.get('/epg/:sourceId', async (req, res) => {
 
         res.json(data);
     } catch (err) {
-        console.error('EPG proxy error:', err);
+        logSafeError('EPG proxy error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -545,7 +551,7 @@ router.get('/epg/:sourceId', async (req, res) => {
  * Clear cache for a source
  * DELETE /api/proxy/cache/:sourceId
  */
-router.delete('/cache/:sourceId', (req, res) => {
+router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
     const sourceId = req.params.sourceId;
     cache.clearSource(sourceId);
     res.json({ success: true });
@@ -555,7 +561,7 @@ router.delete('/cache/:sourceId', (req, res) => {
  * Clear EPG cache for a source (legacy endpoint, calls clearSource)
  * DELETE /api/proxy/epg/:sourceId/cache
  */
-router.delete('/epg/:sourceId/cache', (req, res) => {
+router.delete('/epg/:sourceId/cache', auth.requireAdmin, (req, res) => {
     const sourceId = req.params.sourceId;
     cache.clear('epg', sourceId, 'data');
     res.json({ success: true });
@@ -565,7 +571,7 @@ router.delete('/epg/:sourceId/cache', (req, res) => {
  * Get EPG for specific channels
  * POST /api/proxy/epg/:sourceId/channels
  */
-router.post('/epg/:sourceId/channels', async (req, res) => {
+router.post('/epg/:sourceId/channels', auth.requireAdmin, async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source || source.type !== 'epg') {
@@ -587,7 +593,7 @@ router.post('/epg/:sourceId/channels', async (req, res) => {
 
         res.json(result);
     } catch (err) {
-        console.error('EPG channels error:', err);
+        logSafeError('EPG channels error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -600,14 +606,16 @@ router.post('/epg/:sourceId/channels', async (req, res) => {
 router.get('/stream', async (req, res) => {
     const maxRetries = 2;
     let lastError = null;
+    let url;
+
+    try {
+        url = validateHttpUrl(req.query.url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            let { url } = req.query;
-            if (!url) {
-                return res.status(400).json({ error: 'URL required' });
-            }
-
             // Forward some headers to be more "transparent" back to the origin
             // Pluto TV uses multiple domains for content delivery
             const plutoDomains = ['pluto.tv', 'pluto.io', 'plutotv.net', 'siloh.pluto.tv', 'service-stitcher'];
@@ -638,11 +646,7 @@ router.get('/stream', async (req, res) => {
             }
 
             if (!response.ok) {
-                console.error(`Upstream error for ${url.substring(0, 80)}...: ${response.status} ${response.statusText}`);
-                if (response.status === 403) {
-                    const errorBody = await response.text().catch(() => 'N/A');
-                    console.error(`403 Response body: ${errorBody.substring(0, 200)}`);
-                }
+                console.error(`Upstream error for ${redactUrl(url)}: ${response.status} ${response.statusText}`);
                 return res.status(response.status).send(`Failed to fetch stream: ${response.statusText}`);
             }
 
@@ -699,7 +703,7 @@ router.get('/stream', async (req, res) => {
 
                 const buffer = Buffer.concat(chunks);
                 const finalUrl = response.url || url;
-                console.log(`[Proxy] Processing HLS manifest from: ${finalUrl.substring(0, 80)}...`);
+                console.log(`[Proxy] Processing HLS manifest from: ${redactUrl(finalUrl)}`);
                 res.set('Content-Type', 'application/vnd.apple.mpegurl');
 
                 let manifest = buffer.toString('utf-8');
@@ -761,7 +765,7 @@ router.get('/stream', async (req, res) => {
 
         } catch (err) {
             lastError = err;
-            console.error(`Stream proxy error (attempt ${attempt}/${maxRetries}):`, err.message);
+            logSafeError(`Stream proxy error (attempt ${attempt}/${maxRetries}):`, err);
             if (attempt < maxRetries) {
                 console.log('[Proxy] Retrying after error...');
                 await new Promise(r => setTimeout(r, 500));
@@ -788,7 +792,9 @@ router.get('/image', async (req, res) => {
             return res.status(400).json({ error: 'URL required' });
         }
 
-        const response = await fetch(url, {
+        const validatedUrl = validateHttpUrl(url);
+
+        const response = await fetch(validatedUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'image/*,*/*;q=0.8'
@@ -815,8 +821,8 @@ router.get('/image', async (req, res) => {
         }
 
     } catch (err) {
-        console.error('Image proxy error:', err.message);
-        res.status(500).send('Image proxy error');
+        logSafeError('Image proxy error:', err);
+        res.status(err.statusCode || 500).send(err.statusCode ? err.message : 'Image proxy error');
     }
 });
 

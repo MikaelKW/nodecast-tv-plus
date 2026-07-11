@@ -298,9 +298,6 @@
                     throw new Error(data.error || 'Authentication failed');
                 }
 
-                // Store token
-                localStorage.setItem('authToken', data.token);
-
                 // Redirect to main app (replace history to prevent back button issues)
                 window.location.replace('/');
 

@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
 const db = require('../db');
+const auth = require('../auth');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+
+router.use(auth.requireAuth);
 
 /**
  * Remux stream (container conversion only)
@@ -19,13 +23,20 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    let validatedUrl;
+    try {
+        validatedUrl = validateHttpUrl(url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
 
     // Get User-Agent from settings
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
-    console.log(`[Remux] Starting remux for: ${url}`);
+    console.log(`[Remux] Starting remux for: ${redactUrl(validatedUrl)}`);
     console.log(`[Remux] Using User-Agent: ${settings.userAgentPreset}`);
 
     // FFmpeg arguments for pure remux (no encoding)
@@ -50,7 +61,8 @@ router.get('/', async (req, res) => {
         '-reconnect_delay_max', '5',
         // Prevent Range/HEAD requests that some providers reject with 405
         '-seekable', '0',
-        '-i', url,
+        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
+        '-i', validatedUrl,
         // STRICT MAPPING: Only map video and audio, ignore subtitles/data/attachments
         // This prevents remux failure when source container has incompatible subtitle tracks (e.g. MKV -> MP4)
         '-map', '0:v',
@@ -73,8 +85,6 @@ router.get('/', async (req, res) => {
         '-' // Output to stdout
     ];
 
-    console.log(`[Remux] Full command: ${ffmpegPath} ${args.join(' ')}`);
-
     let ffmpeg;
     try {
         ffmpeg = spawn(ffmpegPath, args);
@@ -95,7 +105,7 @@ router.get('/', async (req, res) => {
         const msg = data.toString();
         // Only log warnings/errors, not progress
         if (msg.includes('Warning') || msg.includes('Error') || msg.includes('error')) {
-            console.log(`[Remux FFmpeg] ${msg}`);
+            console.log(`[Remux FFmpeg] ${redactText(msg)}`);
         }
     });
 

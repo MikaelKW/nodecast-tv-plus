@@ -8,7 +8,6 @@
  * - Session-based transcoding with unique IDs
  * - HLS segment output for seeking support
  * - Segment caching for fast access
- * - Session persistence for recovery after restart
  * - Automatic cleanup of stale sessions
  */
 
@@ -18,6 +17,7 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 const EventEmitter = require('events');
 const hwDetect = require('./hwDetect');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 
 // Session storage
 const sessions = new Map();
@@ -56,7 +56,7 @@ class TranscodeSession extends EventEmitter {
     constructor(url, options = {}) {
         super();
         this.id = generateSessionId();
-        this.url = url;
+        this.url = validateHttpUrl(url);
         this.dir = path.join(CACHE_DIR, this.id);
         this.playlistPath = path.join(this.dir, 'stream.m3u8');
         this.process = null;
@@ -89,7 +89,7 @@ class TranscodeSession extends EventEmitter {
         }
 
         this.status = 'starting';
-        console.log(`[TranscodeSession ${this.id}] Starting session for: ${this.url}`);
+        console.log(`[TranscodeSession ${this.id}] Starting session for: ${redactUrl(this.url)}`);
 
         // Create session directory
         try {
@@ -102,8 +102,6 @@ class TranscodeSession extends EventEmitter {
 
         // Build FFmpeg arguments for HLS output
         const args = this.buildFFmpegArgs();
-
-        console.log(`[TranscodeSession ${this.id}] Command: ${this.options.ffmpegPath} ${args.join(' ')}`);
 
         try {
             this.process = spawn(this.options.ffmpegPath, args, {
@@ -127,7 +125,7 @@ class TranscodeSession extends EventEmitter {
                 if (lines.length > 1) {
                     lines.slice(0, -1).forEach(line => {
                         if (line.trim()) {
-                            console.log(`[FFmpeg ${this.id}] ${line}`);
+                            console.log(`[FFmpeg ${this.id}] ${redactText(line)}`);
                         }
                     });
                     stderrBuffer = lines[lines.length - 1];
@@ -155,9 +153,6 @@ class TranscodeSession extends EventEmitter {
                 this.error = err.message;
                 this.emit('error', err);
             });
-
-            // Save session metadata
-            await this.persist();
 
         } catch (err) {
             this.status = 'error';
@@ -203,7 +198,7 @@ class TranscodeSession extends EventEmitter {
             '-reconnect_delay_max', '3'
         );
 
-        args.push('-i', this.url);
+        args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST, '-i', this.url);
 
         // Add seek offset if specified (as output option to avoid Range requests)
         if (this.options.seekOffset > 0) {
@@ -590,45 +585,6 @@ class TranscodeSession extends EventEmitter {
     }
 
     /**
-     * Save session metadata to disk for recovery
-     */
-    async persist() {
-        const metadata = {
-            id: this.id,
-            url: this.url,
-            status: this.status,
-            startTime: this.startTime,
-            lastAccess: this.lastAccess,
-            options: this.options,
-            seekOffset: this.options.seekOffset
-        };
-        const metaPath = path.join(this.dir, 'session.json');
-        await fs.writeFile(metaPath, JSON.stringify(metadata, null, 2));
-    }
-
-    /**
-     * Restore a session from disk metadata
-     */
-    static async restore(sessionDir) {
-        const metaPath = path.join(sessionDir, 'session.json');
-        try {
-            const data = await fs.readFile(metaPath, 'utf8');
-            const metadata = JSON.parse(data);
-            const session = new TranscodeSession(metadata.url, metadata.options);
-            session.id = metadata.id;
-            session.dir = sessionDir;
-            session.playlistPath = path.join(sessionDir, 'stream.m3u8');
-            session.startTime = metadata.startTime;
-            session.lastAccess = metadata.lastAccess;
-            session.status = 'stopped'; // Not running after restart
-            return session;
-        } catch (err) {
-            console.error(`Failed to restore session from ${sessionDir}:`, err.message);
-            return null;
-        }
-    }
-
-    /**
      * Delete session directory and all segments
      */
     async cleanup() {
@@ -707,32 +663,6 @@ async function cleanupStaleSessions() {
 }
 
 /**
- * Recover sessions from disk after server restart
- */
-async function recoverSessions() {
-    try {
-        await fs.access(CACHE_DIR);
-        const dirs = await fs.readdir(CACHE_DIR, { withFileTypes: true });
-
-        for (const dirent of dirs) {
-            if (dirent.isDirectory()) {
-                const sessionDir = path.join(CACHE_DIR, dirent.name);
-                const session = await TranscodeSession.restore(sessionDir);
-                if (session) {
-                    sessions.set(session.id, session);
-                    console.log(`[TranscodeSession] Recovered session ${session.id}`);
-                }
-            }
-        }
-    } catch (err) {
-        // Cache dir doesn't exist yet, that's fine
-        if (err.code !== 'ENOENT') {
-            console.error('[TranscodeSession] Error recovering sessions:', err.message);
-        }
-    }
-}
-
-/**
  * Start cleanup interval
  */
 let cleanupInterval = null;
@@ -749,7 +679,7 @@ function startCleanupInterval() {
 function getAllSessions() {
     return Array.from(sessions.values()).map(s => ({
         id: s.id,
-        url: s.url,
+        url: redactUrl(s.url),
         status: s.status,
         startTime: s.startTime,
         lastAccess: s.lastAccess,
@@ -764,7 +694,6 @@ module.exports = {
     getOrCreateSession,
     removeSession,
     cleanupStaleSessions,
-    recoverSessions,
     startCleanupInterval,
     getAllSessions,
     CACHE_DIR,

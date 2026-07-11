@@ -167,18 +167,12 @@ class App {
     async checkAuth() {
         const token = localStorage.getItem('authToken');
 
-        if (!token) {
-            // No token, redirect to login (replace to avoid back button issues)
-            window.location.replace('/login.html');
-            return;
-        }
-
         try {
-            // Verify token with server
+            // Verify either the legacy Bearer token or the secure HttpOnly cookie.
+            const headers = {};
+            if (token) headers.Authorization = `Bearer ${token}`;
             const response = await fetch('/api/auth/me', {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+                headers
             });
 
             if (!response.ok) {
@@ -186,6 +180,8 @@ class App {
             }
 
             this.currentUser = await response.json();
+            // The server has migrated any legacy token into an HttpOnly cookie.
+            localStorage.removeItem('authToken');
 
             // Hide settings for viewers
             if (this.currentUser.role === 'viewer') {
@@ -224,14 +220,9 @@ class App {
             e.preventDefault();
 
             const token = localStorage.getItem('authToken');
-            if (token) {
-                await fetch('/api/auth/logout', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-            }
+            const headers = {};
+            if (token) headers.Authorization = `Bearer ${token}`;
+            await fetch('/api/auth/logout', { method: 'POST', headers });
 
             localStorage.removeItem('authToken');
             window.location.replace('/login.html');
