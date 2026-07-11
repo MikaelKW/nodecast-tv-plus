@@ -3,6 +3,7 @@ const { sources, settings } = require('../db'); // For source config and setting
 const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
 const epgParser = require('./epgParser');
+const { redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 
 // Sync tracking
 const activeSyncs = new Set(); // sourceId
@@ -98,7 +99,7 @@ class SyncService {
             this.lastSyncTime = new Date();
             console.log('[Sync] Global sync completed at', this.lastSyncTime.toISOString());
         } catch (err) {
-            console.error('[Sync] Global sync failed:', err);
+            console.error('[Sync] Global sync failed:', redactText(err?.stack || err));
         }
     }
 
@@ -120,6 +121,8 @@ class SyncService {
             if (!source) {
                 throw new Error(`Source ${sourceId} not found`);
             }
+
+            source.url = validateHttpUrl(source.url, 'Source URL');
 
             console.log(`[Sync] Starting sync for source ${source.name} (ID: ${sourceId})`);
 
@@ -144,8 +147,8 @@ class SyncService {
             console.log(`[Sync] Completed sync for source ${source.name}`);
 
         } catch (err) {
-            console.error(`[Sync] Failed sync for source ${sourceId}:`, err);
-            this.updateSyncStatus(sourceId, 'all', 'error', err.message);
+            console.error(`[Sync] Failed sync for source ${sourceId}:`, redactText(err?.stack || err));
+            this.updateSyncStatus(sourceId, 'all', 'error', redactText(err.message));
         } finally {
             activeSyncs.delete(sourceId);
         }
@@ -389,7 +392,8 @@ class SyncService {
      * Processes EPG files in batches to avoid OOM on large EPG data
      */
     async syncEpgFromUrl(sourceId, url) {
-        console.log(`[Sync] Fetching EPG from: ${url.substring(0, 60)}...`);
+        url = validateHttpUrl(url, 'EPG URL');
+        console.log(`[Sync] Fetching EPG from: ${redactUrl(url)}`);
 
         // Temporary memory logging for verification
         const logMemory = () => {

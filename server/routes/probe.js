@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
+const auth = require('../auth');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+
+router.use(auth.requireAuth);
 
 /**
  * Probe endpoint - detects stream codecs and container
@@ -32,6 +36,7 @@ function probeStream(url, ffprobePath, userAgent = null, timeout = 15000) {
     return new Promise((resolve, reject) => {
         const args = [
             '-v', 'error',
+            '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
             '-user_agent', userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             '-print_format', 'json',
             '-show_streams',
@@ -145,8 +150,15 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    let validatedUrl;
+    try {
+        validatedUrl = validateHttpUrl(url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
     const ffprobePath = req.app.locals.ffprobePath;
-    const cacheKey = `${url}${ua ? `|${ua}` : ''}`;
+    const cacheKey = `${validatedUrl}${ua ? `|${ua}` : ''}`;
 
     if (!ffprobePath) {
         // No ffprobe available - assume needs transcoding to be safe
@@ -164,15 +176,15 @@ router.get('/', async (req, res) => {
     // Check cache
     const cached = probeCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
-        console.log(`[Probe] Cache hit for: ${url.substring(0, 50)}...`);
+        console.log(`[Probe] Cache hit for: ${redactUrl(validatedUrl)}`);
         return res.json(cached.result);
     }
 
-    console.log(`[Probe] Probing: ${url.substring(0, 80)}... ${ua ? `(UA: ${ua})` : ''}`);
+    console.log(`[Probe] Probing: ${redactUrl(validatedUrl)} ${ua ? '(custom UA)' : ''}`);
 
     try {
-        const probeResult = await probeStream(url, ffprobePath, ua);
-        const analysis = analyzeProbeResult(probeResult, url);
+        const probeResult = await probeStream(validatedUrl, ffprobePath, ua);
+        const analysis = analyzeProbeResult(probeResult, validatedUrl);
 
         // Cache result
         probeCache.set(cacheKey, { result: analysis, timestamp: Date.now() });
@@ -183,7 +195,7 @@ router.get('/', async (req, res) => {
 
         res.json(analysis);
     } catch (err) {
-        console.error('[Probe] Failed:', err.message);
+        console.error('[Probe] Failed:', redactText(err.message));
 
         // On error, assume transcode needed to be safe
         res.json({

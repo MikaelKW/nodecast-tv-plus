@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
+const auth = require('../auth');
+const { FFMPEG_PROTOCOL_WHITELIST, validateHttpUrl } = require('../services/urlSecurity');
+
+router.use(auth.requireAuth);
 
 /**
  * Subtitle extraction endpoint
@@ -15,6 +19,13 @@ router.get('/', (req, res) => {
         return res.status(400).json({ error: 'URL and index parameters are required' });
     }
 
+    let validatedUrl;
+    try {
+        validatedUrl = validateHttpUrl(url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
     // console.log(`[Subtitle] Extracting track ${index} from: ${url}`);
 
@@ -24,7 +35,8 @@ router.get('/', (req, res) => {
         '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         '-probesize', '5000000',
         '-analyzeduration', '5000000',
-        '-i', url,
+        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
+        '-i', validatedUrl,
         '-map', `0:${index}`,
         '-c:s', 'webvtt',
         '-f', 'webvtt',

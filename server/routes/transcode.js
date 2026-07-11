@@ -5,6 +5,10 @@ const path = require('path');
 const fs = require('fs').promises;
 const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
+const auth = require('../auth');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+
+router.use(auth.requireAuth);
 
 /**
  * Transcode Routes
@@ -35,12 +39,19 @@ router.post('/session', async (req, res) => {
         return res.status(400).json({ error: 'URL is required' });
     }
 
+    let validatedUrl;
+    try {
+        validatedUrl = validateHttpUrl(url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
     try {
-        const session = await transcodeSession.createSession(url, {
+        const session = await transcodeSession.createSession(validatedUrl, {
             ffmpegPath,
             userAgent,
             seekOffset: seekOffset || 0,
@@ -75,7 +86,7 @@ router.post('/session', async (req, res) => {
         });
 
     } catch (err) {
-        console.error('[Transcode] Session creation failed:', err);
+        console.error('[Transcode] Session creation failed:', redactText(err?.stack || err));
         res.status(500).json({ error: 'Failed to create session', details: err.message });
     }
 });
@@ -148,7 +159,7 @@ router.delete('/:sessionId', async (req, res) => {
  * List all active sessions (for debugging)
  * GET /api/transcode/sessions
  */
-router.get('/sessions', (req, res) => {
+router.get('/sessions', auth.requireAdmin, (req, res) => {
     res.json(transcodeSession.getAllSessions());
 });
 
@@ -165,13 +176,20 @@ router.get('/', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
+    let validatedUrl;
+    try {
+        validatedUrl = validateHttpUrl(url);
+    } catch (err) {
+        return res.status(400).json({ error: err.message });
+    }
+
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
 
     // Get User-Agent from settings
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
-    console.log(`[Transcode] Starting transcoding for: ${url}`);
+    console.log(`[Transcode] Starting transcoding for: ${redactUrl(validatedUrl)}`);
     console.log(`[Transcode] Using User-Agent: ${settings.userAgentPreset}`);
     console.log(`[Transcode] Using binary: ${ffmpegPath}`);
 
@@ -197,7 +215,8 @@ router.get('/', async (req, res) => {
         '-reconnect_delay_max', '3',
         // Prevent Range/HEAD requests that some providers reject with 405
         '-seekable', '0',
-        '-i', url,
+        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
+        '-i', validatedUrl,
         // Map only first video and audio stream (avoid subtitle streams causing issues)
         '-map', '0:v:0',
         '-map', '0:a:0?', // ? makes audio optional if not present
@@ -219,8 +238,6 @@ router.get('/', async (req, res) => {
         '-flush_packets', '1', // Send data immediately
         '-' // Output to stdout
     ];
-
-    console.log(`[Transcode] Full command: ${ffmpegPath} ${args.join(' ')}`);
 
     let ffmpeg;
     try {
@@ -244,7 +261,7 @@ router.get('/', async (req, res) => {
     ffmpeg.stderr.on('data', (data) => {
         const msg = data.toString();
         stderrBuffer += msg;
-        console.log(`[FFmpeg] ${msg}`);
+        console.log(`[FFmpeg] ${redactText(msg)}`);
     });
 
     // Cleanup on client disconnect
