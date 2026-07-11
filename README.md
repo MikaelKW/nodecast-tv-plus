@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/img/logo-banner.png" alt="NodeCast TV Plus" height="80" />
+</p>
+
 # NodeCast TV Plus
 
 NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv), focused on additional features, usability improvements, and reliability fixes. It is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support.
@@ -21,6 +25,8 @@ NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/tech
 - **🐳 Docker Ready**: Easy deployment containerization.
 
 ## Screenshots
+
+> These screenshots were inherited from the upstream NodeCast TV project and will be replaced as the NodeCast TV Plus interface evolves.
 
 <div align="center">
   <img src="public/img/screenshots/screenshot-dashboard.png" width="45%" alt="Dashboard" />

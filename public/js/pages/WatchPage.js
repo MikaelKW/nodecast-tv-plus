@@ -611,6 +611,7 @@ class WatchPage {
     }
 
     setVolumeFromStorage() {
+        // Keep the legacy storage key so upstream users retain their saved volume after upgrading.
         const savedVolume = localStorage.getItem('nodecast-volume') || '80';
         this.video.volume = parseInt(savedVolume) / 100;
         if (this.volumeSlider) this.volumeSlider.value = savedVolume;

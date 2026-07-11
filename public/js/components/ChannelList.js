@@ -46,6 +46,7 @@ class ChannelList {
      */
     loadCollapsedState() {
         try {
+            // Keep the legacy storage key so upstream users retain collapsed groups after upgrading.
             const saved = localStorage.getItem('nodecast_tv_collapsed_groups');
             if (saved) {
                 this.collapsedGroups = new Set(JSON.parse(saved));
