@@ -9,5 +9,7 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     environment:
-      - NODE_ENV=production
-      - PORT=3000 # Internal container port
+      NODE_ENV: production
+      PORT: 3000 # Internal container port
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}

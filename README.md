@@ -70,6 +70,14 @@ You can run NodeCast TV Plus easily using Docker.
 
 1.  Create a `docker-compose.yml` file (or copy the one from this repo):
 
+    Copy `.env.example` to `.env`, then generate two different random secrets. For example:
+
+    ```bash
+    node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+    ```
+
+    Run the command twice and place one value in `JWT_SECRET` and the other in `SESSION_SECRET`. The `.env` file is ignored by Git and must never be committed.
+
     ```yaml
     services:
       nodecast-tv-plus:
@@ -81,8 +89,10 @@ You can run NodeCast TV Plus easily using Docker.
           - ./data:/app/data
         restart: unless-stopped
         environment:
-          - NODE_ENV=production
-          - PORT=3000 # Optional: Internal container port
+          NODE_ENV: production
+          PORT: 3000 # Optional: Internal container port
+          JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+          SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
     ```
 
 2.  Run the container:

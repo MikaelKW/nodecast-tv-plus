@@ -5,8 +5,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const password = document.getElementById('password').value;
 
     try {
-        const response = await API.request('POST', '/auth/login', { username, password });
-        localStorage.setItem('sessionToken', response.token);
+        await API.request('POST', '/auth/login', { username, password });
         window.location.href = '/';
     } catch (err) {
         document.getElementById('login-error').textContent = 'Login failed: ' + err.message;
