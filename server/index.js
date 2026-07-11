@@ -3,6 +3,8 @@ require('dotenv').config();
 const path = require('path');
 const passport = require('passport');
 const syncService = require('./services/syncService');
+const securityConfig = require('./config/security');
+const auth = require('./auth');
 
 // Initialize database
 require('./db');
@@ -20,9 +22,17 @@ app.use(express.json({ limit: '50mb' }));
 // Initialize Passport
 const session = require('express-session');
 app.use(session({
-    secret: process.env.JWT_SECRET || 'keyboard cat',
+    name: 'nodecast.sid',
+    secret: securityConfig.sessionSecret,
+    proxy: true,
     resave: false,
-    saveUninitialized: true
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: 'auto',
+        maxAge: 10 * 60 * 1000
+    }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -169,6 +179,7 @@ process.on('SIGTERM', async () => {
 });
 
 // API Routes
+app.use('/api', auth.requireSameOrigin);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/sources', require('./routes/sources'));
 app.use('/api/proxy', require('./routes/proxy'));

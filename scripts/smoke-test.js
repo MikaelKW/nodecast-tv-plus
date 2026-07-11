@@ -65,7 +65,8 @@ async function run() {
             ...process.env,
             NODE_ENV: 'test',
             PORT: String(port),
-            JWT_SECRET: 'ci-smoke-test-secret-not-for-production'
+            JWT_SECRET: 'ci-smoke-test-jwt-secret-not-for-production',
+            SESSION_SECRET: 'ci-smoke-test-session-secret-not-for-production'
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -83,6 +84,22 @@ async function run() {
         assert.equal(setupResponse.status, 200);
         const setup = await setupResponse.json();
         assert.equal(typeof setup.setupRequired, 'boolean');
+
+        for (const protectedPath of [
+            '/api/sources',
+            '/api/settings',
+            '/api/proxy/image?url=https://example.com/logo.png',
+            '/api/transcode?url=file:///etc/passwd'
+        ]) {
+            const protectedResponse = await fetch(`${baseUrl}${protectedPath}`);
+            assert.equal(protectedResponse.status, 401, `${protectedPath} must require authentication.`);
+        }
+
+        const crossSiteResponse = await fetch(`${baseUrl}/api/auth/logout`, {
+            method: 'POST',
+            headers: { Origin: 'https://attacker.example' }
+        });
+        assert.equal(crossSiteResponse.status, 403, 'Cross-site state-changing requests must be blocked.');
 
         const homeResponse = await fetch(baseUrl);
         assert.equal(homeResponse.status, 200);

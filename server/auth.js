@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { Strategy: LocalStrategy } = require('passport-local');
+const securityConfig = require('./config/security');
 
 /**
  * Authentication and Authorization Module
@@ -10,9 +11,57 @@ const { Strategy: LocalStrategy } = require('passport-local');
  * Using Passport.js with JWT tokens
  */
 
-// JWT Secret - In production, use environment variable
-const JWT_SECRET = process.env.JWT_SECRET || 'nodecast-tv-plus-secret-key-change-in-production';
+const JWT_SECRET = securityConfig.jwtSecret;
 const JWT_EXPIRY = '24h';
+
+function parseCookies(req) {
+    const header = req?.headers?.cookie;
+    if (!header) return {};
+
+    return header.split(';').reduce((cookies, part) => {
+        const separator = part.indexOf('=');
+        if (separator === -1) return cookies;
+
+        const key = part.slice(0, separator).trim();
+        const rawValue = part.slice(separator + 1).trim();
+        try {
+            cookies[key] = decodeURIComponent(rawValue);
+        } catch {
+            cookies[key] = rawValue;
+        }
+        return cookies;
+    }, {});
+}
+
+function extractJwtFromCookie(req) {
+    return parseCookies(req)[securityConfig.authCookieName] || null;
+}
+
+function useSecureCookie(req) {
+    if (process.env.AUTH_COOKIE_SECURE === 'true') return true;
+    if (process.env.AUTH_COOKIE_SECURE === 'false') return false;
+    return Boolean(req.secure);
+}
+
+function getAuthCookieOptions(req) {
+    return {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: useSecureCookie(req),
+        maxAge: securityConfig.authCookieMaxAgeMs,
+        path: '/'
+    };
+}
+
+function setAuthCookie(req, res, token) {
+    res.cookie(securityConfig.authCookieName, token, getAuthCookieOptions(req));
+}
+
+function clearAuthCookie(req, res) {
+    const options = getAuthCookieOptions(req);
+    delete options.maxAge;
+    res.clearCookie(securityConfig.authCookieName, options);
+}
 
 /**
  * Hash password using bcrypt
@@ -87,7 +136,10 @@ function configureLocalStrategy(getUserByUsername, verifyUserPassword) {
  */
 function configureJwtStrategy(getUserById) {
     const options = {
-        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+        jwtFromRequest: ExtractJwt.fromExtractors([
+            ExtractJwt.fromAuthHeaderAsBearerToken(),
+            extractJwtFromCookie
+        ]),
         secretOrKey: JWT_SECRET
     };
 
@@ -241,6 +293,41 @@ function requireAdmin(req, res, next) {
 }
 
 /**
+ * Block cross-site browser requests that could otherwise reuse the auth cookie.
+ * Requests without browser origin headers remain available to trusted API clients.
+ */
+function requireSameOrigin(req, res, next) {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+    const fetchSite = req.get('sec-fetch-site');
+    const origin = req.get('origin');
+    if (!origin) {
+        return fetchSite === 'cross-site'
+            ? res.status(403).json({ error: 'Cross-site request blocked' })
+            : next();
+    }
+
+    try {
+        const requestOrigin = new URL(origin).origin.toLowerCase();
+        const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim().toLowerCase();
+        const requestHost = req.get('host')?.toLowerCase();
+        const configuredOrigin = process.env.APP_ORIGIN
+            ? new URL(process.env.APP_ORIGIN).origin.toLowerCase()
+            : null;
+        const allowedOrigins = [forwardedHost, requestHost]
+            .filter(Boolean)
+            .map(host => `${req.protocol}://${host}`.toLowerCase());
+        if (configuredOrigin) allowedOrigins.push(configuredOrigin);
+
+        if (allowedOrigins.includes(requestOrigin)) return next();
+    } catch {
+        // Invalid origins are rejected below.
+    }
+
+    return res.status(403).json({ error: 'Cross-site request blocked' });
+}
+
+/**
  * Middleware: Check for specific role
  */
 function requireRole(role) {
@@ -258,11 +345,14 @@ module.exports = {
     verifyPassword,
     generateToken,
     verifyToken,
+    setAuthCookie,
+    clearAuthCookie,
     configureLocalStrategy,
     configureJwtStrategy,
     configureSessionSerialization,
     configureOidcStrategy,
     requireAuth,
     requireAdmin,
+    requireSameOrigin,
     requireRole
 };
