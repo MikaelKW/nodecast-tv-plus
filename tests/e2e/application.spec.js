@@ -14,9 +14,28 @@ async function waitForSync(page, sourceId) {
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
     const browserErrors = [];
+    const qualityLogs = [];
+    const qualitySessionSources = [];
+    let expectedRejectedResourceErrors = 0;
     page.on('pageerror', error => browserErrors.push(`pageerror: ${error.message}`));
     page.on('console', message => {
-        if (message.type() === 'error') browserErrors.push(`console: ${message.text()}`);
+        if (message.text().includes('[Player]') && /quality|restor/i.test(message.text())) {
+            qualityLogs.push(message.text());
+        }
+        if (message.type() !== 'error') return;
+        if (expectedRejectedResourceErrors > 0 && message.text().includes('Failed to load resource')) {
+            expectedRejectedResourceErrors -= 1;
+            return;
+        }
+        browserErrors.push(`console: ${message.text()}`);
+    });
+    page.on('request', request => {
+        if (request.method() !== 'POST' || !request.url().endsWith('/api/transcode/session')) return;
+        const sourceUrl = request.postDataJSON()?.url;
+        if (!sourceUrl) return;
+        const sourcePath = new URL(sourceUrl).pathname;
+        qualitySessionSources.push(sourcePath);
+        if (sourcePath === '/browser-only.mp4') expectedRejectedResourceErrors += 1;
     });
 
     const password = crypto.randomBytes(24).toString('base64url');
@@ -110,6 +129,83 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    // A browser-only provider must not leave the player stuck when FFmpeg is
+    // rejected. The previous direct stream and Auto selection are restored.
+    await page.evaluate(async url => {
+        window.app.player.settings.autoTranscode = false;
+        await window.app.player.play({ name: 'Browser-only provider' }, url);
+    }, `${fixtureBaseUrl}/browser-only.mp4`);
+    expect(await page.evaluate(() => window.app.player.settings.maxResolution)).toBe('1080p');
+    expect(await page.evaluate(() => window.app.player.playbackQuality)).toBe('auto');
+    await expect.poll(async () => video.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await page.evaluate(() => { window.app.player.settings.forceVideoTranscode = true; });
+    await video.hover();
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="480p"]').click();
+    await expect.poll(() => page.locator('#player-quality-btn').textContent(), {
+        timeout: 30_000
+    }).toBe('Auto');
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect.poll(async () => video.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('#player-transcode-status')).toContainText('480p unavailable');
+
+    // A cap above the source is a direct-play no-op. If a later lower cap is
+    // rejected, recovery must restore that direct stream rather than attempt
+    // to transcode to the previous cap.
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="4k"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('4K');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Direct Play');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="480p"]').click();
+    await expect.poll(() => page.locator('#player-quality-btn').textContent(), {
+        timeout: 30_000
+    }).toBe('4K');
+    await expect.poll(async () => video.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('#player-transcode-status')).toContainText('Restored Up to 4K');
+    await expect(page.locator('#player-overlay')).toHaveClass(/hidden/);
+    await page.locator('#video-container').dispatchEvent('mousemove');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="auto"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('Auto');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Direct Play');
+    await expect(page.locator('#player-overlay')).toHaveClass(/hidden/);
+    expect(
+        qualitySessionSources.filter(path => path === '/browser-only.mp4'),
+        qualityLogs.join('\n')
+    ).toHaveLength(2);
+    await page.evaluate(() => {
+        window.app.player.settings.autoTranscode = true;
+        window.app.player.settings.forceVideoTranscode = false;
+    });
+
+    // Auto now honors the global max-resolution setting even for a compatible
+    // source that would otherwise use direct playback.
+    await page.evaluate(async url => {
+        await window.API.settings.update({ maxResolution: '480p' });
+        window.app.player.settings.maxResolution = '480p';
+        await window.app.player.play({ name: 'Global quality cap' }, url);
+    }, `${fixtureBaseUrl}/sample.mp4`);
+    await expect(page.locator('#player-quality-btn')).toHaveText('Auto');
+    await expect.poll(async () => Boolean(await page.evaluate(() => window.app?.player?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(480);
+    expect(qualitySessionSources.at(-1)).toBe('/sample.mp4');
+    await page.evaluate(async () => {
+        await window.API.settings.update({ maxResolution: '1080p' });
+        window.app.player.settings.maxResolution = '1080p';
+    });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await video.hover();
@@ -154,6 +250,46 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => window.app?.pages?.watch?.currentSessionId || null), {
         timeout: 30_000
     }).toBeNull();
+
+    // The movie/series player uses the same transactional fallback when a
+    // provider permits browser playback but rejects FFmpeg.
+    await page.evaluate(async ({ url, sourceId }) => {
+        const watch = window.app.pages.watch;
+        watch.stop();
+        watch.content = {
+            id: 'browser-only-movie',
+            type: 'movie',
+            title: 'Browser-only Movie',
+            sourceId,
+            categoryId: 'controlled'
+        };
+        watch.contentType = 'movie';
+        watch.sourceUrl = url;
+        watch.currentUrl = url;
+        watch.playbackQuality = 'auto';
+        watch.resumeTime = 0;
+        watch.updateQualityMenu();
+        window.app.navigateTo('watch', true);
+        await watch.loadVideo(url, { skipProbe: true });
+    }, { url: `${fixtureBaseUrl}/browser-only.mp4`, sourceId: m3uSource.id });
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-quality-btn').click();
+    await page.locator('#watch-quality-menu [data-quality="480p"]').click();
+    await expect.poll(() => page.locator('#watch-quality-btn').textContent(), {
+        timeout: 30_000
+    }).toBe('Auto');
+    await expect.poll(() => page.evaluate(() => window.app?.pages?.watch?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(1.5);
+    await expect(page.locator('#watch-transcode-status')).toContainText('480p unavailable');
+    expect(qualitySessionSources.filter(path => path === '/browser-only.mp4')).toHaveLength(3);
 
     const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
     expect(reset.status).toBe(204);
