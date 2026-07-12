@@ -112,6 +112,9 @@ async function run() {
 
         try {
             await waitForServer(`http://127.0.0.1:${appPort}/api/version`);
+            const statusResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/oidc/status`);
+            assert.equal(statusResponse.status, 200);
+            assert.deepEqual(await statusResponse.json(), { enabled: true });
             const loginResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/oidc/login`, {
                 redirect: 'manual'
             });

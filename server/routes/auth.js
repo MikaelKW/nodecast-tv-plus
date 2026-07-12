@@ -42,6 +42,19 @@ function authenticateOidc(options) {
 }
 
 /**
+ * Report whether the optional OIDC provider is ready. This deliberately
+ * exposes only a boolean so the public login page never receives provider
+ * credentials or internal configuration details.
+ */
+router.get('/oidc/status', async (req, res) => {
+    try {
+        res.json({ enabled: Boolean(await oidcReady) });
+    } catch {
+        res.json({ enabled: false });
+    }
+});
+
+/**
  * Start OIDC Login
  * GET /api/auth/oidc/login
  */
