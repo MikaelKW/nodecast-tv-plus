@@ -217,6 +217,12 @@ app.listen(PORT, async () => {
         console.error('Plugin initialization failed:', err);
     });
 
+    // Test environments run explicit syncs and should not start persistent background work.
+    if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {
+        console.log('[Test] Background sync and hardware detection disabled');
+        return;
+    }
+
     // Trigger background sync with delay to allow server to settle
     setTimeout(async () => {
         await syncService.syncAll().catch(console.error);

@@ -8,6 +8,8 @@
         "start": "node server/index.js",
         "dev": "node --watch server/index.js",
         "check": "node scripts/check-syntax.js",
+        "test:e2e": "playwright test",
+        "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:security": "node scripts/security-test.js",
         "test:smoke": "node scripts/smoke-test.js",
         "test": "npm run check && npm run test:security && npm run test:smoke"
@@ -32,5 +34,8 @@
     },
     "engines": {
         "node": ">=18.0.0"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.61.1"
     }
 }

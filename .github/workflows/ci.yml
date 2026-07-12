@@ -36,6 +36,20 @@ jobs:
       - name: Run application checks
         run: npm test
 
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser and media integration tests
+        run: npm run test:e2e
+
+      - name: Upload browser test diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
       - name: Block high and critical dependency advisories
         run: npm audit --audit-level=high --omit=dev
 

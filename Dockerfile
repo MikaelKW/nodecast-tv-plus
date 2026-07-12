@@ -41,7 +41,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies (better-sqlite3 will build from source using g++ installed above)
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Copy application files
 COPY . .

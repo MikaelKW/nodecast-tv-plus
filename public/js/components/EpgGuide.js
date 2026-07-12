@@ -201,7 +201,9 @@ class EpgGuide {
         const sources = allSources.filter(s => (s.type === 'epg' || s.type === 'xtream') && s.enabled);
 
         if (sources.length === 0) {
-            throw new Error('No EPG sources or Xtream accounts configured');
+            this.channels = [];
+            this.programmes = [];
+            return;
         }
 
         // Build query params for server-side caching
