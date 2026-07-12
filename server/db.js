@@ -3,7 +3,9 @@ const path = require('path');
 const { existsSync, mkdirSync } = require('fs');
 
 // Ensure data directory exists (sync is fine for startup)
-const dataDir = path.join(__dirname, '..', 'data');
+const dataDir = process.env.NODECAST_DATA_DIR
+  ? path.resolve(process.env.NODECAST_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 if (!existsSync(dataDir)) {
   mkdirSync(dataDir, { recursive: true });
 }

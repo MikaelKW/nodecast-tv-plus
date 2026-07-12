@@ -27,6 +27,12 @@ class SyncService {
      * Should be called once on server startup after initial sync
      */
     async startSyncTimer() {
+        if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {
+            this.stopSyncTimer();
+            console.log('[Test] Background sync timer disabled');
+            return;
+        }
+
         // Get interval from settings
         const currentSettings = await settings.get();
         const intervalHours = parseInt(currentSettings.epgRefreshInterval) || 24;
