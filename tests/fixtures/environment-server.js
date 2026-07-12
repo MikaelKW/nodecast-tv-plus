@@ -164,6 +164,18 @@ async function start() {
             return res.end();
         }
 
+        if (pathname === '/oidc/.well-known/openid-configuration') {
+            const issuer = `http://127.0.0.1:${fixturePort}/oidc`;
+            const body = JSON.stringify({
+                issuer,
+                authorization_endpoint: `${issuer}/authorize`,
+                token_endpoint: `${issuer}/token`,
+                userinfo_endpoint: `${issuer}/userinfo`
+            });
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+            return res.end(body);
+        }
+
         if (pathname === '/logo.svg') {
             res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Access-Control-Allow-Origin': '*' });
             return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#6941c6"/><text x="40" y="47" text-anchor="middle" fill="white" font-size="20">TEST</text></svg>');
@@ -185,6 +197,13 @@ async function start() {
     process.env.NODECAST_CACHE_DIR = cacheDir;
     process.env.NODECAST_DISABLE_BACKGROUND_JOBS = 'true';
     process.env.ALLOW_LOCAL_MEDIA_URLS = 'true';
+    process.env.OIDC_ISSUER_URL = `http://127.0.0.1:${fixturePort}/oidc`;
+    process.env.OIDC_CLIENT_ID = 'controlled-e2e-client';
+    process.env.OIDC_CLIENT_SECRET = crypto.randomBytes(32).toString('hex');
+    process.env.OIDC_CALLBACK_URL = `http://127.0.0.1:${appPort}/api/auth/oidc/callback`;
+    process.env.OIDC_AUTH_URL = '';
+    process.env.OIDC_TOKEN_URL = '';
+    process.env.OIDC_USERINFO_URL = '';
 
     require('../../server/index');
 
