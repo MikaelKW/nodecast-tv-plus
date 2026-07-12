@@ -27,6 +27,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Boolean(
+        window.app?.currentUser && window.app?.sourceManager && window.app?.channelList
+    ))).toBe(true);
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
