@@ -155,6 +155,20 @@ OIDC_CLIENT_SECRET=your_client_secret
 OIDC_CALLBACK_URL=http://localhost:3000/api/auth/oidc/callback # Adjust for your domain
 ```
 
+NodeCast TV Plus retrieves the provider endpoints from
+`OIDC_ISSUER_URL/.well-known/openid-configuration`, so standards-compliant
+providers such as Authentik and Keycloak do not require provider-specific URL
+paths. OIDC URLs must use HTTPS except when testing through localhost.
+
+If discovery is unavailable in a special deployment, the individual endpoints
+can be overridden explicitly:
+
+```env
+OIDC_AUTH_URL=https://your-idp.com/authorize
+OIDC_TOKEN_URL=https://your-idp.com/token
+OIDC_USERINFO_URL=https://your-idp.com/userinfo
+```
+
 **Note:** New users signing in via SSO are automatically assigned the **Viewer** role. You must manually promote them to Admin if desired.
 
 ### Usage
