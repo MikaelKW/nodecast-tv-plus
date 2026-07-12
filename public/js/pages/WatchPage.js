@@ -638,7 +638,7 @@ class WatchPage {
         }
         if (this.video) {
             this.video.pause();
-            this.video.src = '';
+            this.video.removeAttribute('src');
             this.video.load();
         }
 
@@ -855,7 +855,7 @@ class WatchPage {
     onError(e) {
         // Only log actual fatal errors, not benign stream recovery events
         const error = this.video?.error;
-        if (error && error.code) {
+        if (error && error.code && this.video.currentSrc) {
             console.error('[WatchPage] Video error:', error.code, error.message);
         }
     }

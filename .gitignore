@@ -10,3 +10,6 @@ dist/
 release/
 .vscode
 transcode-cache/
+.test-data/
+playwright-report/
+test-results/
