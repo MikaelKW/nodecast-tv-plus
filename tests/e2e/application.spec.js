@@ -76,5 +76,26 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(await video.evaluate(element => element.paused)).toBe(false);
     await expect(page.locator('.channel-item.active .channel-name')).toContainText('NodeCast Test Pattern');
 
+    const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
+    expect(reset.status).toBe(204);
+
+    await page.evaluate(async url => {
+        const firstPlay = window.app.player.play({ name: 'First test channel' }, url);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const secondPlay = window.app.player.play({ name: 'Second test channel' }, url);
+        await Promise.allSettled([firstPlay, secondPlay]);
+    }, `${fixtureBaseUrl}/slow-sample.mp4`);
+
+    await expect.poll(async () => {
+        const response = await fetch(`${fixtureBaseUrl}/connection-stats`);
+        const current = await response.json();
+        return current.total >= 2 && current.active <= 1;
+    }, { timeout: 15_000 }).toBe(true);
+
+    const stats = await (await fetch(`${fixtureBaseUrl}/connection-stats`)).json();
+    expect(stats.total).toBeGreaterThanOrEqual(2);
+    expect(stats.aborted).toBeGreaterThanOrEqual(1);
+    expect(stats.maxActive).toBe(1);
+
     expect(browserErrors, browserErrors.join('\n')).toEqual([]);
 });
