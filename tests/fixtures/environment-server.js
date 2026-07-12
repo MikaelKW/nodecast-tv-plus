@@ -6,7 +6,9 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
-const testRoot = path.join(projectRoot, '.test-data', 'playwright');
+// Use a process-specific directory so repeated local/CI runs can never race
+// over the same database files during server teardown.
+const testRoot = path.join(projectRoot, '.test-data', `playwright-${process.pid}`);
 const dataDir = path.join(testRoot, 'data');
 const cacheDir = path.join(testRoot, 'cache');
 const mediaPath = path.join(testRoot, 'sample.mp4');
@@ -140,6 +142,14 @@ async function start() {
     const closeFixture = () => fixtureServer.close();
     process.on('SIGINT', closeFixture);
     process.on('SIGTERM', closeFixture);
+    process.on('exit', () => {
+        try {
+            assertSafeTestPath(testRoot);
+            fs.rmSync(testRoot, { recursive: true, force: true });
+        } catch {
+            // CI workspaces are disposable; a forced process stop may skip cleanup.
+        }
+    });
 }
 
 start().catch(error => {
