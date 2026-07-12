@@ -14,6 +14,7 @@ const cacheDir = path.join(testRoot, 'cache');
 const mediaPath = path.join(testRoot, 'sample.mp4');
 const appPort = Number(process.env.NODECAST_TEST_APP_PORT || 3210);
 const fixturePort = Number(process.env.NODECAST_TEST_FIXTURE_PORT || 3211);
+const connectionStats = { active: 0, maxActive: 0, total: 0, aborted: 0 };
 
 function assertSafeTestPath(target) {
     const relative = path.relative(projectRoot, target);
@@ -74,6 +75,38 @@ function sendFile(req, res, filePath, contentType) {
     return fs.createReadStream(filePath).pipe(res);
 }
 
+function sendSlowFile(req, res, filePath, contentType) {
+    const stat = fs.statSync(filePath);
+    connectionStats.active += 1;
+    connectionStats.total += 1;
+    connectionStats.maxActive = Math.max(connectionStats.maxActive, connectionStats.active);
+
+    let settled = false;
+    const settle = () => {
+        if (settled) return;
+        settled = true;
+        connectionStats.active -= 1;
+        if (!res.writableEnded) connectionStats.aborted += 1;
+    };
+    res.on('close', settle);
+
+    res.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': contentType,
+        'Content-Length': stat.size
+    });
+
+    const stream = fs.createReadStream(filePath, { highWaterMark: 1024 });
+    stream.on('data', chunk => {
+        stream.pause();
+        res.write(chunk);
+        setTimeout(() => stream.resume(), 50);
+    });
+    stream.on('end', () => res.end());
+    stream.on('error', error => res.destroy(error));
+    res.on('close', () => stream.destroy());
+}
+
 async function start() {
     assertSafeTestPath(testRoot);
     await fsp.rm(testRoot, { recursive: true, force: true });
@@ -114,6 +147,22 @@ async function start() {
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');
+        if (pathname === '/slow-sample.mp4') return sendSlowFile(req, res, mediaPath, 'video/mp4');
+
+        if (pathname === '/connection-stats') {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            return res.end(JSON.stringify(connectionStats));
+        }
+
+        if (pathname === '/connection-stats/reset' && req.method === 'POST') {
+            if (connectionStats.active !== 0) {
+                res.writeHead(409, { 'Access-Control-Allow-Origin': '*' });
+                return res.end('Connections are still active');
+            }
+            Object.assign(connectionStats, { active: 0, maxActive: 0, total: 0, aborted: 0 });
+            res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+            return res.end();
+        }
 
         if (pathname === '/logo.svg') {
             res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Access-Control-Allow-Origin': '*' });
