@@ -3698,6 +3698,96 @@ kbd {
   content: "✓ ";
 }
 
+/* Session-only playback quality menu */
+.watch-quality-wrapper {
+  position: relative;
+}
+
+.quality-control-btn {
+  width: auto;
+  min-width: 52px;
+  padding: 0 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.watch-quality-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: var(--space-sm);
+  min-width: 180px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+}
+
+.watch-quality-menu.hidden {
+  display: none;
+}
+
+.quality-menu-title {
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.quality-option {
+  display: block;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text-primary);
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.quality-option:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.quality-option.active {
+  color: var(--color-accent);
+}
+
+.quality-option.active::before {
+  content: "\2713\00a0";
+}
+
+@media (max-width: 480px) {
+  .watch-controls {
+    gap: 0;
+  }
+
+  .watch-btn {
+    width: 34px;
+    height: 38px;
+  }
+
+  .watch-controls .watch-btn-lg {
+    width: 44px;
+    height: 44px;
+  }
+
+  .quality-control-btn {
+    min-width: 48px;
+    padding: 0 4px;
+  }
+
+  #btn-pip,
+  #watch-pip {
+    display: none;
+  }
+}
+
 .watch-btn-lg {
   width: 64px;
   height: 64px;

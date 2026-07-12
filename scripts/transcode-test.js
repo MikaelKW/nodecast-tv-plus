@@ -10,6 +10,8 @@ const ffmpegPath = require('ffmpeg-static');
 const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const { TranscodeSession } = require('../server/services/transcodeSession');
+const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
+const PlaybackQuality = require('../public/js/components/PlaybackQuality');
 
 function probe(url) {
     return new Promise((resolve, reject) => {
@@ -64,6 +66,21 @@ async function createTransientServer(mediaPath, initialStatus) {
 async function main() {
     assert.ok(ffmpegPath, 'ffmpeg-static is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
+
+    assert.equal(parseMaxResolutionOverride(undefined), null);
+    assert.equal(parseMaxResolutionOverride('720p'), '720p');
+    assert.throws(() => parseMaxResolutionOverride('1440p'), /maxResolution/);
+    assert.throws(() => parseMaxResolutionOverride({}), /maxResolution/);
+
+    const adaptiveLevels = [
+        { height: 1080, bitrate: 5_000_000 },
+        { height: 480, bitrate: 1_000_000 },
+        { height: 720, bitrate: 3_000_000 }
+    ];
+    assert.equal(PlaybackQuality.findAdaptiveLevel(adaptiveLevels, '720p'), 2);
+    assert.equal(PlaybackQuality.findAdaptiveLevel(adaptiveLevels, '480p'), 1);
+    assert.equal(PlaybackQuality.findAdaptiveLevel(adaptiveLevels, 'auto'), -1);
+    assert.equal(PlaybackQuality.findAdaptiveLevel([{ height: 1080 }], '720p'), -1);
 
     const capped = new TranscodeSession('https://example.com/source', {
         maxResolution: '4k',
