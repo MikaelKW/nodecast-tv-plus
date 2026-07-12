@@ -232,6 +232,19 @@
                       </div>
                     </div>
 
+                    <div class="watch-quality-wrapper">
+                      <button class="watch-btn quality-control-btn" id="player-quality-btn" title="Playback quality"
+                        aria-haspopup="true" aria-expanded="false">Auto</button>
+                      <div class="watch-quality-menu hidden" id="player-quality-menu">
+                        <div class="quality-menu-title">Playback quality</div>
+                        <button class="quality-option active" data-quality="auto">Auto / Original</button>
+                        <button class="quality-option" data-quality="4k">Up to 4K</button>
+                        <button class="quality-option" data-quality="1080p">Up to 1080p</button>
+                        <button class="quality-option" data-quality="720p">Up to 720p</button>
+                        <button class="quality-option" data-quality="480p">Up to 480p</button>
+                      </div>
+                    </div>
+
                     <button class="watch-btn" id="btn-pip" title="Picture-in-Picture">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
                         <path
@@ -907,6 +920,18 @@
                     </div>
                   </div>
                 </div>
+                <div class="watch-quality-wrapper">
+                  <button class="watch-btn quality-control-btn" id="watch-quality-btn" title="Playback quality"
+                    aria-haspopup="true" aria-expanded="false">Auto</button>
+                  <div class="watch-quality-menu hidden" id="watch-quality-menu">
+                    <div class="quality-menu-title">Playback quality</div>
+                    <button class="quality-option active" data-quality="auto">Auto / Original</button>
+                    <button class="quality-option" data-quality="4k">Up to 4K</button>
+                    <button class="quality-option" data-quality="1080p">Up to 1080p</button>
+                    <button class="quality-option" data-quality="720p">Up to 720p</button>
+                    <button class="quality-option" data-quality="480p">Up to 480p</button>
+                  </div>
+                </div>
                 <button class="watch-btn" id="watch-pip" title="Picture-in-Picture">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
                     <path
@@ -1097,7 +1122,8 @@
   <!-- JavaScript -->
   <script src="/js/icons.js"></script>
   <script src="/js/api.js?v=2"></script>
-  <script src="/js/components/VideoPlayer.js?v=2"></script>
+  <script src="/js/components/PlaybackQuality.js?v=1"></script>
+  <script src="/js/components/VideoPlayer.js?v=3"></script>
   <script src="/js/components/ChannelList.js?v=3"></script>
   <script src="/js/components/SourceManager.js?v=2"></script>
   <script src="/js/components/EpgGuide.js?v=2"></script>
@@ -1107,7 +1133,7 @@
   <script src="/js/pages/MoviesPage.js?v=4"></script>
   <script src="/js/pages/SeriesPage.js?v=1"></script>
   <script src="/js/pages/Settings.js?v=2"></script>
-  <script src="/js/pages/WatchPage.js?v=1"></script>
+  <script src="/js/pages/WatchPage.js?v=2"></script>
   <script src="/js/app.js?v=4"></script>
 </body>
 
