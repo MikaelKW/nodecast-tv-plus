@@ -4,6 +4,7 @@ const passport = require('passport');
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { Strategy: LocalStrategy } = require('passport-local');
 const securityConfig = require('./config/security');
+const { resolveOidcEndpoints } = require('./services/oidcDiscovery');
 
 /**
  * Authentication and Authorization Module
@@ -184,21 +185,34 @@ function configureSessionSerialization(getUserById) {
 /**
  * Configure Passport OpenID Connect Strategy
  */
-function configureOidcStrategy(findUserByOidcId, findUserByEmail, createUser) {
+async function configureOidcStrategy(findUserByOidcId, findUserByEmail, createUser) {
     if (!process.env.OIDC_ISSUER_URL || !process.env.OIDC_CLIENT_ID || !process.env.OIDC_CLIENT_SECRET) {
         console.warn('OIDC configuration missing - SSO disabled');
-        return;
+        return false;
     }
 
     const { Strategy: OpenIDConnectStrategy } = require('passport-openidconnect');
 
+    let endpoints;
+    try {
+        endpoints = await resolveOidcEndpoints({
+            issuerUrl: process.env.OIDC_ISSUER_URL,
+            authorizationUrl: process.env.OIDC_AUTH_URL,
+            tokenUrl: process.env.OIDC_TOKEN_URL,
+            userInfoUrl: process.env.OIDC_USERINFO_URL
+        });
+    } catch (error) {
+        console.error(`[OIDC] Configuration failed - SSO disabled: ${error.message}`);
+        return false;
+    }
+
     passport.use(new OpenIDConnectStrategy({
-        issuer: process.env.OIDC_ISSUER_URL || 'https://mock-issuer.com', // Dummy default for mock
-        authorizationURL: process.env.OIDC_AUTH_URL || `${process.env.OIDC_ISSUER_URL}/protocol/openid-connect/auth`,
-        tokenURL: process.env.OIDC_TOKEN_URL || `${process.env.OIDC_ISSUER_URL}/protocol/openid-connect/token`,
-        userInfoURL: process.env.OIDC_USERINFO_URL || `${process.env.OIDC_ISSUER_URL}/protocol/openid-connect/userinfo`,
-        clientID: process.env.OIDC_CLIENT_ID || 'mock-client-id',
-        clientSecret: process.env.OIDC_CLIENT_SECRET || 'mock-secret',
+        issuer: process.env.OIDC_ISSUER_URL,
+        authorizationURL: endpoints.authorizationURL,
+        tokenURL: endpoints.tokenURL,
+        userInfoURL: endpoints.userInfoURL,
+        clientID: process.env.OIDC_CLIENT_ID,
+        clientSecret: process.env.OIDC_CLIENT_SECRET,
         callbackURL: process.env.OIDC_CALLBACK_URL || '/api/auth/oidc/callback',
         scope: ['openid', 'profile', 'email']
     },
@@ -275,6 +289,9 @@ function configureOidcStrategy(findUserByOidcId, findUserByEmail, createUser) {
                 return done(err);
             }
         }));
+
+    console.log(`[OIDC] Strategy configured using ${endpoints.source} endpoints`);
+    return true;
 }
 
 /**
