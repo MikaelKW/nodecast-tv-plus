@@ -22,6 +22,9 @@ class VideoPlayer {
         this.overlay = document.getElementById('player-overlay');
         this.nowPlaying = document.getElementById('now-playing');
         this.hls = null;
+        this._playId = 0;
+        this._playAbortController = null;
+        this._pendingConnectionRequest = null;
         this.currentChannel = null;
         this.overlayTimer = null;
         this.overlayDuration = 5000; // 5 seconds
@@ -813,23 +816,33 @@ class VideoPlayer {
     /**
      * Start a HLS transcode session
      */
-    async startTranscodeSession(url, options = {}) {
+    async requestPlaybackResource(url, options = {}) {
+        const request = fetch(url, options);
+        this._pendingConnectionRequest = request;
         try {
-            console.log('[Player] Starting HLS transcode session...', options);
-            const res = await fetch('/api/transcode/session', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, ...options })
-            });
-            if (!res.ok) throw new Error('Failed to start session');
-            const session = await res.json();
-            this.currentSessionId = session.sessionId;
-            return session.playlistUrl;
-        } catch (err) {
-            console.error('[Player] Session start failed:', err);
-            // Fallback to direct transcode if session fails
-            return `/api/transcode?url=${encodeURIComponent(url)}`;
+            return await request;
+        } finally {
+            if (this._pendingConnectionRequest === request) {
+                this._pendingConnectionRequest = null;
+            }
         }
+    }
+
+    async startTranscodeSession(url, options = {}, signal = null) {
+        console.log('[Player] Starting HLS transcode session...', options);
+        const res = await this.requestPlaybackResource('/api/transcode/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, ...options }),
+            signal
+        });
+        if (!res.ok) {
+            const detail = await res.json().catch(() => ({}));
+            throw new Error(detail.reason || detail.error || 'Failed to start session');
+        }
+        const session = await res.json();
+        this.currentSessionId = session.sessionId;
+        return session.playlistUrl;
     }
 
     /**
@@ -837,14 +850,14 @@ class VideoPlayer {
      */
     async stopTranscodeSession() {
         if (this.currentSessionId) {
-            console.log('[Player] Stopping transcode session:', this.currentSessionId);
+            const sessionId = this.currentSessionId;
+            this.currentSessionId = null;
+            console.log('[Player] Stopping transcode session:', sessionId);
             try {
-                // Fire and forget cleanup
-                fetch(`/api/transcode/${this.currentSessionId}`, { method: 'DELETE' });
+                await fetch(`/api/transcode/${sessionId}`, { method: 'DELETE' });
             } catch (err) {
                 console.error('Failed to stop session:', err);
             }
-            this.currentSessionId = null;
         }
     }
 
@@ -852,14 +865,29 @@ class VideoPlayer {
      * Play a channel
      */
     async play(channel, streamUrl) {
+        const playId = ++this._playId;
+        const previousPendingRequest = this._pendingConnectionRequest;
+        this._playAbortController?.abort();
+        const playAbortController = new AbortController();
+        this._playAbortController = playAbortController;
         this.currentChannel = channel;
 
         try {
+            // Wait for an aborted probe/session request to settle before opening
+            // another provider connection.
+            if (previousPendingRequest) {
+                await previousPendingRequest.catch(() => {});
+            }
+            if (this._playId !== playId) return;
+
             // Stop any WatchPage playback (movies/series) before starting Live TV
             window.app?.pages?.watch?.stop?.();
 
-            // Stop current playback
-            this.stop();
+            // Provider accounts often allow only one active stream. Ensure the
+            // previous FFmpeg session is gone before beginning the next one.
+            await this.stopTranscodeSession();
+            if (this._playId !== playId) return;
+            this.stop({ keepPlaybackRequest: true, skipSessionCleanup: true });
             this.updateTranscodeStatus('hidden');
 
             // Hide "select a channel" overlay
@@ -876,8 +904,12 @@ class VideoPlayer {
             if (this.settings.autoTranscode) {
                 console.log('[Player] Auto Transcode enabled. Probing stream...');
                 try {
-                    const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+                    const probeRes = await this.requestPlaybackResource(
+                        `/api/probe?url=${encodeURIComponent(streamUrl)}`,
+                        { signal: playAbortController.signal }
+                    );
                     const info = await probeRes.json();
+                    if (this._playId !== playId) return;
                     console.log(`[Player] Probe result: video=${info.video}, audio=${info.audio}, ${info.width}x${info.height}, compatible=${info.compatible}`);
 
                     // Store probe result for quality badge display
@@ -921,8 +953,10 @@ class VideoPlayer {
                             videoMode,
                             videoCodec: info.video,
                             audioCodec: info.audio,
-                            audioChannels: info.audioChannels
-                        });
+                            audioChannels: info.audioChannels,
+                            videoHeight: info.height
+                        }, playAbortController.signal);
+                        if (this._playId !== playId) return;
                         this.currentUrl = playlistUrl; // Update currentUrl for HLS reload
 
                         this.playHls(playlistUrl);
@@ -951,6 +985,7 @@ class VideoPlayer {
                     // Compatible - fall through to normal HLS.js path
                     console.log('[Player] Auto: Using HLS.js (compatible)');
                 } catch (err) {
+                    if (err.name === 'AbortError' || this._playId !== playId) return;
                     console.warn('[Player] Probe failed, using normal playback:', err.message);
                     // Continue with normal playback on probe failure
                 }
@@ -962,7 +997,12 @@ class VideoPlayer {
                 const statusMode = this.settings.upscaleEnabled ? 'upscaling' : 'transcoding';
                 console.log(`[Player] ${statusText} enabled. Starting session (encode)...`);
                 this.updateTranscodeStatus(statusMode, statusText);
-                const playlistUrl = await this.startTranscodeSession(streamUrl, { videoMode: 'encode' });
+                const playlistUrl = await this.startTranscodeSession(
+                    streamUrl,
+                    { videoMode: 'encode' },
+                    playAbortController.signal
+                );
+                if (this._playId !== playId) return;
                 this.currentUrl = playlistUrl;
 
                 // Load HLS
@@ -1008,12 +1048,24 @@ class VideoPlayer {
                 // Probe to get video codec for HEVC tag handling
                 let videoCodec = 'unknown';
                 try {
-                    const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+                    const probeRes = await this.requestPlaybackResource(
+                        `/api/probe?url=${encodeURIComponent(streamUrl)}`,
+                        { signal: playAbortController.signal }
+                    );
                     const info = await probeRes.json();
+                    if (this._playId !== playId) return;
                     videoCodec = info.video;
-                } catch (e) { console.warn('Probe failed for force audio, assuming h264'); }
+                } catch (e) {
+                    if (e.name === 'AbortError' || this._playId !== playId) return;
+                    console.warn('Probe failed for force audio, assuming h264');
+                }
 
-                const playlistUrl = await this.startTranscodeSession(streamUrl, { videoMode: 'copy', videoCodec });
+                const playlistUrl = await this.startTranscodeSession(
+                    streamUrl,
+                    { videoMode: 'copy', videoCodec },
+                    playAbortController.signal
+                );
+                if (this._playId !== playId) return;
                 this.currentUrl = playlistUrl;
 
                 console.log('[Player] Playing transcoded HLS stream:', playlistUrl);
@@ -1183,6 +1235,7 @@ class VideoPlayer {
             window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
 
         } catch (err) {
+            if (err.name === 'AbortError' || this._playId !== playId) return;
             console.error('Error playing channel:', err);
             this.showError('Failed to play channel');
         }
@@ -1389,9 +1442,17 @@ class VideoPlayer {
     /**
      * Stop playback
      */
-    stop() {
+    stop({ keepPlaybackRequest = false, skipSessionCleanup = false } = {}) {
+        if (!keepPlaybackRequest) {
+            this._playId += 1;
+            this._playAbortController?.abort();
+            this._playAbortController = null;
+        }
+
         // Stop any running transcode session first
-        this.stopTranscodeSession();
+        if (!skipSessionCleanup) {
+            void this.stopTranscodeSession();
+        }
 
         if (this.hls) {
             this.hls.destroy();

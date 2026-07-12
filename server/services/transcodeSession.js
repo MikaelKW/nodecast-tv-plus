@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const EventEmitter = require('events');
 const hwDetect = require('./hwDetect');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
+const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
 
 // Session storage
 const sessions = new Map();
@@ -191,13 +192,12 @@ class TranscodeSession extends EventEmitter {
 
         // Input options (common)
         args.push(
-            '-probesize', '5000000',
-            '-analyzeduration', '5000000',
+            '-probesize', '2000000',
+            '-analyzeduration', '3000000',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
-            '-reconnect', '1',
-            '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '3'
+            ...appendHttpReconnectArgs([]),
+            '-seekable', '0'
         );
 
         args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST, '-i', this.url);
@@ -387,10 +387,16 @@ class TranscodeSession extends EventEmitter {
     buildScaleFilter(encoder, height) {
         const useUpscale = this.options.upscaleEnabled;
         const upscaleMethod = this.options.upscaleMethod || 'hardware';
+        const sourceHeight = Number(this.options.videoHeight);
+        const effectiveHeight = !useUpscale && Number.isInteger(sourceHeight) && sourceHeight > 0
+            ? Math.min(height, sourceHeight)
+            : height;
 
         // Log upscaling status
         if (useUpscale) {
-            console.log(`[TranscodeSession ${this.id}] Upscaling: ${upscaleMethod} method to ${height}p`);
+            console.log(`[TranscodeSession ${this.id}] Upscaling: ${upscaleMethod} method to ${effectiveHeight}p`);
+        } else if (effectiveHeight < height) {
+            console.log(`[TranscodeSession ${this.id}] Source ${sourceHeight}p is below the ${height}p cap; preserving its resolution`);
         }
 
         // Hardware scaling filters (for both upscale and downscale)
@@ -399,22 +405,22 @@ class TranscodeSession extends EventEmitter {
                 case 'nvenc':
                     // NVIDIA CUDA scaling with Lanczos
                     // Force nv12 (8-bit) output to handle 10-bit inputs (fixes "10 bit encode not supported")
-                    return `scale_cuda=-2:${height}:interp_algo=lanczos:format=nv12`;
+                    return `scale_cuda=-2:${effectiveHeight}:interp_algo=lanczos:format=nv12`;
                 case 'vaapi':
-                    return `scale_vaapi=w=-2:h=${height}:format=nv12`;
+                    return `scale_vaapi=w=-2:h=${effectiveHeight}:format=nv12`;
                 case 'qsv':
-                    return `scale_qsv=w=-2:h=${height}:format=nv12`;
+                    return `scale_qsv=w=-2:h=${effectiveHeight}:format=nv12`;
                 case 'amf':
                     // AMF uses CPU decode, so use software scale
-                    return useUpscale ? `scale=-2:${height}:flags=lanczos` : `scale=-2:${height}`;
+                    return useUpscale ? `scale=-2:${effectiveHeight}:flags=lanczos` : `scale=-2:${effectiveHeight}`;
                 case 'software':
                 default:
-                    return useUpscale ? `scale=-2:${height}:flags=lanczos` : `scale=-2:${height}`;
+                    return useUpscale ? `scale=-2:${effectiveHeight}:flags=lanczos` : `scale=-2:${effectiveHeight}`;
             }
         }
 
         // Software Lanczos scaling (high quality, slower)
-        return `scale=-2:${height}:flags=lanczos`;
+        return `scale=-2:${effectiveHeight}:flags=lanczos`;
     }
 
     /**
@@ -555,7 +561,26 @@ class TranscodeSession extends EventEmitter {
             if (await this.isPlaylistReady()) {
                 return true;
             }
+            if (this.status === 'error' || this.status === 'stopped') {
+                return false;
+            }
             await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        return false;
+    }
+
+    /**
+     * Start FFmpeg and retry once when a provider rejects the initial
+     * connection before any playlist data is produced.
+     */
+    async startAndWaitForPlaylist(timeoutMs = 10000, maxAttempts = 2) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            await this.start();
+            if (await this.waitForPlaylist(timeoutMs)) return true;
+            if (this.status !== 'error' || attempt === maxAttempts) return false;
+
+            console.warn(`[TranscodeSession ${this.id}] Initial connection failed; retrying once`);
+            await new Promise(resolve => setTimeout(resolve, 250));
         }
         return false;
     }
