@@ -7,6 +7,7 @@ const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 
 router.use(auth.requireAuth);
 
@@ -33,7 +34,7 @@ transcodeSession.startCleanupInterval();
  * Body: { url: string, seekOffset?: number }
  */
 router.post('/session', async (req, res) => {
-    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels } = req.body;
+    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels, videoHeight } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
@@ -50,8 +51,20 @@ router.post('/session', async (req, res) => {
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
+    let session = null;
+    let clientDisconnected = false;
+    let disconnectCleanup = null;
+    const cleanupDisconnectedSession = () => {
+        if (res.writableEnded || clientDisconnected) return;
+        clientDisconnected = true;
+        if (session) {
+            disconnectCleanup = transcodeSession.removeSession(session.id);
+        }
+    };
+    res.on('close', cleanupDisconnectedSession);
+
     try {
-        const session = await transcodeSession.createSession(validatedUrl, {
+        session = await transcodeSession.createSession(validatedUrl, {
             ffmpegPath,
             userAgent,
             seekOffset: seekOffset || 0,
@@ -66,13 +79,19 @@ router.post('/session', async (req, res) => {
             videoMode: videoMode, // 'copy' or 'encode'
             videoCodec: videoCodec, // 'h264', 'hevc', etc.
             audioCodec: audioCodec, // 'aac', 'ac3', etc.
-            audioChannels: audioChannels // number of channels (2=stereo)
+            audioChannels: audioChannels, // number of channels (2=stereo)
+            videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
+                ? videoHeight
+                : 0
         });
 
-        await session.start();
+        // Wait for the first segment, retrying one immediate provider rejection.
+        const ready = await session.startAndWaitForPlaylist(15000);
 
-        // Wait for playlist to be ready (first segments generated)
-        const ready = await session.waitForPlaylist(15000);
+        if (clientDisconnected) {
+            await (disconnectCleanup || transcodeSession.removeSession(session.id));
+            return;
+        }
 
         if (!ready) {
             await transcodeSession.removeSession(session.id);
@@ -86,8 +105,11 @@ router.post('/session', async (req, res) => {
         });
 
     } catch (err) {
+        if (clientDisconnected) return;
         console.error('[Transcode] Session creation failed:', redactText(err?.stack || err));
         res.status(500).json({ error: 'Failed to create session', details: err.message });
+    } finally {
+        res.off('close', cleanupDisconnectedSession);
     }
 });
 
@@ -210,9 +232,7 @@ router.get('/', async (req, res) => {
         // Limit max demux delay to prevent buffering issues
         '-max_delay', '2000000',
         // Reconnect settings for network drops (useful for live streams)
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '3',
+        ...appendHttpReconnectArgs([]),
         // Prevent Range/HEAD requests that some providers reject with 405
         '-seekable', '0',
         '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
 const auth = require('../auth');
+const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 
 router.use(auth.requireAuth);
@@ -24,6 +25,7 @@ router.use(auth.requireAuth);
 // Probe cache (URL → result)
 const probeCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const FAILURE_CACHE_TTL = 30 * 1000;
 
 // Browser-compatible codecs
 const BROWSER_VIDEO_CODECS = ['h264', 'avc', 'avc1'];
@@ -32,49 +34,69 @@ const BROWSER_AUDIO_CODECS = ['aac', 'mp3', 'opus', 'vorbis'];
 /**
  * Probe stream with ffprobe
  */
-function probeStream(url, ffprobePath, userAgent = null, timeout = 15000) {
+function probeStream(url, ffprobePath, userAgent = null, timeout = 15000, signal = null) {
     return new Promise((resolve, reject) => {
         const args = [
             '-v', 'error',
             '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
             '-user_agent', userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        ];
+        appendHttpReconnectArgs(args);
+        args.push(
             '-print_format', 'json',
             '-show_streams',
             '-show_format',
             '-probesize', '5000000',
             '-analyzeduration', '5000000',
             url
-        ];
+        );
 
         const proc = spawn(ffprobePath, args);
         let stdout = '';
         let stderr = '';
+        let settled = false;
+
+        const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abortProbe);
+            callback(value);
+        };
+
+        const abortProbe = () => {
+            proc.kill('SIGKILL');
+            const error = new Error('Probe cancelled');
+            error.name = 'AbortError';
+            finish(reject, error);
+        };
 
         const timer = setTimeout(() => {
             proc.kill('SIGKILL');
-            reject(new Error('Probe timeout'));
+            finish(reject, new Error('Probe timeout'));
         }, timeout);
+
+        if (signal?.aborted) return abortProbe();
+        signal?.addEventListener('abort', abortProbe, { once: true });
 
         proc.stdout.on('data', (data) => { stdout += data; });
         proc.stderr.on('data', (data) => { stderr += data; });
 
         proc.on('close', (code) => {
-            clearTimeout(timer);
             if (code !== 0) {
-                reject(new Error(`ffprobe exited with code ${code}: ${stderr}`));
+                finish(reject, new Error(`ffprobe exited with code ${code}: ${stderr}`));
                 return;
             }
             try {
                 const result = JSON.parse(stdout);
-                resolve(result);
+                finish(resolve, result);
             } catch (e) {
-                reject(new Error('Failed to parse ffprobe output'));
+                finish(reject, new Error('Failed to parse ffprobe output'));
             }
         });
 
         proc.on('error', (err) => {
-            clearTimeout(timer);
-            reject(err);
+            finish(reject, err);
         });
     });
 }
@@ -175,19 +197,25 @@ router.get('/', async (req, res) => {
 
     // Check cache
     const cached = probeCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    if (cached && Date.now() < cached.expiresAt) {
         console.log(`[Probe] Cache hit for: ${redactUrl(validatedUrl)}`);
         return res.json(cached.result);
     }
 
     console.log(`[Probe] Probing: ${redactUrl(validatedUrl)} ${ua ? '(custom UA)' : ''}`);
 
+    const probeAbortController = new AbortController();
+    const cancelDisconnectedProbe = () => {
+        if (!res.writableEnded) probeAbortController.abort();
+    };
+    res.on('close', cancelDisconnectedProbe);
+
     try {
-        const probeResult = await probeStream(validatedUrl, ffprobePath, ua);
+        const probeResult = await probeStream(validatedUrl, ffprobePath, ua, 15000, probeAbortController.signal);
         const analysis = analyzeProbeResult(probeResult, validatedUrl);
 
         // Cache result
-        probeCache.set(cacheKey, { result: analysis, timestamp: Date.now() });
+        probeCache.set(cacheKey, { result: analysis, expiresAt: Date.now() + CACHE_TTL });
 
         console.log(`[Probe] Result: video=${analysis.video}, audio=${analysis.audio}, ` +
             `container=${analysis.container}, compatible=${analysis.compatible}, ` +
@@ -195,10 +223,12 @@ router.get('/', async (req, res) => {
 
         res.json(analysis);
     } catch (err) {
+        if (err.name === 'AbortError' || probeAbortController.signal.aborted) return;
         console.error('[Probe] Failed:', redactText(err.message));
 
-        // On error, assume transcode needed to be safe
-        res.json({
+        // Briefly cache failures so a browser retry does not immediately open
+        // another connection to an already rate-limited provider.
+        const fallback = {
             video: 'unknown',
             audio: 'unknown',
             container: 'unknown',
@@ -206,7 +236,11 @@ router.get('/', async (req, res) => {
             needsRemux: false,
             needsTranscode: true,
             error: err.message
-        });
+        };
+        probeCache.set(cacheKey, { result: fallback, expiresAt: Date.now() + FAILURE_CACHE_TTL });
+        res.json(fallback);
+    } finally {
+        res.off('close', cancelDisconnectedProbe);
     }
 });
 

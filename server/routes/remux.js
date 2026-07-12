@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const db = require('../db');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 
 router.use(auth.requireAuth);
 
@@ -56,9 +57,7 @@ router.get('/', async (req, res) => {
         // Limit max demux delay to prevent buffering issues with bad timestamps
         '-max_delay', '5000000',
         // Reconnect settings for network drops
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
+        ...appendHttpReconnectArgs([]),
         // Prevent Range/HEAD requests that some providers reject with 405
         '-seekable', '0',
         '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
