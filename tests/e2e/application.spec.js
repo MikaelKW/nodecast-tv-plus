@@ -22,6 +22,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const password = crypto.randomBytes(24).toString('base64url');
     await page.goto('/login.html');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
+    await expect(page.locator('#sso-login-section')).toBeHidden();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
@@ -96,6 +97,11 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(stats.total).toBeGreaterThanOrEqual(2);
     expect(stats.aborted).toBeGreaterThanOrEqual(1);
     expect(stats.maxActive).toBe(1);
+
+    // The setup screen hides SSO, while a configured provider is offered on
+    // subsequent login visits.
+    await page.goto('/login.html');
+    await expect(page.locator('#sso-login-section')).toBeVisible();
 
     expect(browserErrors, browserErrors.join('\n')).toEqual([]);
 });

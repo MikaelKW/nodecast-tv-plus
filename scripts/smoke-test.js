@@ -66,7 +66,13 @@ async function run() {
             NODE_ENV: 'test',
             PORT: String(port),
             JWT_SECRET: 'ci-smoke-test-jwt-secret-not-for-production',
-            SESSION_SECRET: 'ci-smoke-test-session-secret-not-for-production'
+            SESSION_SECRET: 'ci-smoke-test-session-secret-not-for-production',
+            OIDC_ISSUER_URL: '',
+            OIDC_CLIENT_ID: '',
+            OIDC_CLIENT_SECRET: '',
+            OIDC_AUTH_URL: '',
+            OIDC_TOKEN_URL: '',
+            OIDC_USERINFO_URL: ''
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -84,6 +90,10 @@ async function run() {
         assert.equal(setupResponse.status, 200);
         const setup = await setupResponse.json();
         assert.equal(typeof setup.setupRequired, 'boolean');
+
+        const oidcStatusResponse = await fetch(`${baseUrl}/api/auth/oidc/status`);
+        assert.equal(oidcStatusResponse.status, 200);
+        assert.deepEqual(await oidcStatusResponse.json(), { enabled: false });
 
         for (const protectedPath of [
             '/api/sources',
