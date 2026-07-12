@@ -3,7 +3,8 @@ const { join, relative } = require('path');
 const { spawnSync } = require('child_process');
 
 const projectRoot = join(__dirname, '..');
-const sourceDirectories = ['public/js', 'server', 'scripts'];
+const sourceDirectories = ['public/js', 'server', 'scripts', 'tests'];
+const rootFiles = ['playwright.config.js'];
 const ignoredFiles = new Set();
 
 function collectJavaScriptFiles(directory) {
@@ -25,7 +26,7 @@ function collectJavaScriptFiles(directory) {
     return files;
 }
 
-const files = sourceDirectories.flatMap(collectJavaScriptFiles).sort();
+const files = [...rootFiles, ...sourceDirectories.flatMap(collectJavaScriptFiles)].sort();
 let failed = false;
 
 for (const file of files) {
