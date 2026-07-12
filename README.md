@@ -2,9 +2,17 @@
   <img src="public/img/logo-banner.png" alt="NodeCast TV Plus" height="80" />
 </p>
 
+<p align="center">
+  <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
+  <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
+  <a href="https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
+</p>
+
 # NodeCast TV Plus
 
 NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv), focused on additional features, usability improvements, and reliability fixes. It is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support.
+
+NodeCast TV Plus is a player only: it does not include, sell, or provide television channels or other media. Use it only with sources you are legally entitled to access.
 
 ## Features
 
@@ -12,7 +20,7 @@ NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/tech
 - **📅 TV Guide (EPG)**: Interactive grid guide with 24h timeline, search, and dynamic resizing.
 - **🎬 VOD Support**: Dedicated sections for Movies and TV Series with rich metadata, posters, and seasonal episode lists.
 - **❤️ Favorites System**: Unified favorites for channels, movies, and series with instant synchronization.
-- **🔐 Authentication**: User login system with admin and viewer roles ([details](https://github.com/technomancer702/nodecast-tv/pull/23)).
+- **🔐 Authentication**: User login system with admin and viewer roles.
 - **🆔 OIDC SSO**: Support for Single Sign-On via OIDC providers (Authentik, Keycloak, etc.).
 - **⚡ High Performance**: Optimized for large playlists (7000+ channels) using virtual scrolling and batch rendering.
 - **⚙️ Management**: 
@@ -39,12 +47,52 @@ NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/tech
 
 ## Getting Started
 
-### Prerequisites
+### Recommended: run the published container
 
-- Node.js (v14 or higher)
+The official container supports `linux/amd64` and `linux/arm64` and is published at
+[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus).
+
+1. Create a directory for the deployment and download [`.env.example`](.env.example) as `.env`:
+
+   ```bash
+   mkdir nodecast-tv-plus && cd nodecast-tv-plus
+   curl -fsSL https://raw.githubusercontent.com/MikaelKW/nodecast-tv-plus/main/.env.example -o .env
+   ```
+
+   You can also download and rename the file manually.
+
+2. Generate two different secrets. This Docker-only command can be run twice:
+
+   ```bash
+   docker run --rm node:20-alpine node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+   ```
+
+   Put one value in `JWT_SECRET` and the other in `SESSION_SECRET`. Never commit the resulting `.env` file.
+
+3. Start the application:
+
+   ```bash
+   docker run -d \
+     --name nodecast-tv-plus \
+     --restart unless-stopped \
+     --env-file .env \
+     -p 3000:3000 \
+     -v nodecast-tv-plus-data:/app/data \
+     ghcr.io/mikaelkw/nodecast-tv-plus:latest
+   ```
+
+4. Open `http://localhost:3000` and create the initial administrator account.
+
+To update later, pull the current image and recreate the container while keeping the same data volume and `.env` file.
+
+### Build and run from source
+
+#### Prerequisites
+
+- Node.js 18 or higher (Node.js 20 recommended)
 - npm
 
-### Installation
+#### Installation
 
 1.  Clone the repository:
     ```bash
@@ -54,7 +102,7 @@ NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/tech
 
 2.  Install dependencies:
     ```bash
-    npm install
+    npm ci
     ```
 
 3.  Start the development server:
@@ -76,9 +124,9 @@ npm run test:real-world  # imports the public IPTV-org sports playlist
 
 The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
 
-### Docker Deployment
+### Docker Compose for local builds
 
-You can run NodeCast TV Plus easily using Docker.
+The included [`docker-compose.yml`](docker-compose.yml) builds the image from the current local checkout. This is useful when developing or testing code changes; ordinary installations should use the published container above.
 
 1.  Create a `docker-compose.yml` file (or copy the one from this repo):
 
@@ -107,12 +155,21 @@ You can run NodeCast TV Plus easily using Docker.
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
     ```
 
-2.  Run the container:
+2.  Build and run the container:
     ```bash
-    docker-compose up -d
+    docker compose up -d --build
     ```
 
 The application will be available at `http://localhost:3000`.
+
+### Container platforms
+
+Published images are built for:
+
+- `linux/amd64` — standard Intel/AMD 64-bit systems
+- `linux/arm64` — 64-bit ARM systems
+
+Hardware-accelerated transcoding still depends on compatible host hardware, drivers, and container device access.
 
 
 ### Hardware Acceleration Setup
@@ -361,28 +418,28 @@ nodecast-tv-plus/
 │   │   └── api.js       # API Client
 │   └── index.html       # Main entry point
 ├── server/              # Backend server
-│   ├── routes/          # API Endpoints (proxy, transcode)
-│   ├── services/        # Playlist parsers, SyncService, etc.
-│   ├── db/              # Database Logic
-│   │   ├── index.js     # Legacy DB Wrapper
-│   │   └── sqlite.js    # SQLite Connection & Schema
+│   ├── config/          # Runtime and security configuration
+│   ├── routes/          # API endpoints
+│   ├── services/        # Playlist, OIDC, hardware, and transcode services
+│   ├── db.js            # Application data access layer
+│   ├── db/sqlite.js     # SQLite connection and schema
 │   └── index.js         # Server Entry Point
+├── scripts/             # Automated checks and maintenance scripts
+├── tests/               # Browser fixtures and integration tests
 └── data/                # Persistent storage (content.db, playlists)
 ```
 
+## Support and contributing
+
+- [Report a bug](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=bug_report.md)
+- [Request a feature](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=feature_request.md)
+- [View open issues](https://github.com/MikaelKW/nodecast-tv-plus/issues)
+- [View pull requests](https://github.com/MikaelKW/nodecast-tv-plus/pulls)
+
+Code changes should normally target the `develop` branch and pass the repository's automated checks before promotion to `testing` and `main`.
+
+When reporting problems, redact provider credentials, private playlist URLs, tokens, cookies, and other sensitive information from screenshots and logs.
+
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
-
-You are free to:
--   **Run** the program for any purpose
--   **Study** how the program works and change it
--   **Redistribute** copies
--   **Distribute** copies of your modified versions
-
-Under the condition that:
--   You typically must distinguish your modifications from the original work
--   You provide the source code to recipients
--   You license any derivative works under the same GPL-3.0 license
-
-See the [LICENSE](LICENSE) file for details.
+NodeCast TV Plus is distributed under the **GNU General Public License v3.0 only (`GPL-3.0-only`)**. See the authoritative [LICENSE](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE) file for the complete terms.
