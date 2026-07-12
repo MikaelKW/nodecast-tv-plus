@@ -30,6 +30,8 @@ class VideoPlayer {
         this.overlayDuration = 5000; // 5 seconds
         this.isUsingProxy = false;
         this.currentUrl = null;
+        this.sourceUrl = null;
+        this.playbackQuality = 'auto';
         this.settingsLoaded = false;
 
         // Settings - start with defaults, load from server async
@@ -315,12 +317,32 @@ class VideoPlayer {
             this.toggleCaptionsMenu();
         });
 
+        // Session-only playback quality
+        this.qualityBtn = document.getElementById('player-quality-btn');
+        this.qualityMenu = document.getElementById('player-quality-menu');
+        this.qualityBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = this.qualityBtn?.getAttribute('aria-expanded') !== 'true';
+            this.qualityMenu?.classList.toggle('hidden', !willOpen);
+            this.qualityBtn?.setAttribute('aria-expanded', String(Boolean(willOpen)));
+        });
+        this.qualityMenu?.querySelectorAll('.quality-option').forEach(option => {
+            option.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.changePlaybackQuality(option.dataset.quality);
+            });
+        });
+
         // Close captions menu when clicking outside
         document.addEventListener('click', (e) => {
             if (this.captionsMenuOpen &&
                 !this.captionsMenu.contains(e.target) &&
                 !this.captionsBtn.contains(e.target)) {
                 this.closeCaptionsMenu();
+            }
+            if (this.qualityMenu && !this.qualityMenu.classList.contains('hidden') &&
+                !this.qualityMenu.contains(e.target) && e.target !== this.qualityBtn) {
+                this.closeQualityMenu();
             }
         });
 
@@ -864,13 +886,18 @@ class VideoPlayer {
     /**
      * Play a channel
      */
-    async play(channel, streamUrl) {
+    async play(channel, streamUrl, { preserveQuality = false } = {}) {
         const playId = ++this._playId;
         const previousPendingRequest = this._pendingConnectionRequest;
         this._playAbortController?.abort();
         const playAbortController = new AbortController();
         this._playAbortController = playAbortController;
         this.currentChannel = channel;
+        this.sourceUrl = streamUrl;
+        if (!preserveQuality) {
+            this.playbackQuality = 'auto';
+            this.updateQualityMenu();
+        }
 
         try {
             // Wait for an aborted probe/session request to settle before opening
@@ -938,7 +965,27 @@ class VideoPlayer {
                         }
                     }
 
-                    if (info.needsTranscode || this.settings.upscaleEnabled) {
+                    if (this.playbackQuality !== 'auto') {
+                        const label = PlaybackQuality.getLabel(this.playbackQuality);
+                        console.log(`[Player] Applying session quality cap: ${label}`);
+                        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+                        const playlistUrl = await this.startTranscodeSession(streamUrl, {
+                            videoMode: 'encode',
+                            maxResolution: this.playbackQuality,
+                            videoCodec: info.video,
+                            audioCodec: info.audio,
+                            audioChannels: info.audioChannels,
+                            videoHeight: info.height
+                        }, playAbortController.signal);
+                        if (this._playId !== playId) return;
+                        this.currentUrl = playlistUrl;
+                        this.playHls(playlistUrl);
+                        this.updateNowPlaying(channel);
+                        this.showNowPlayingOverlay();
+                        this.fetchEpgData(channel);
+                        window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+                        return;
+                    } else if (info.needsTranscode || this.settings.upscaleEnabled) {
                         // Incompatible audio (AC3/EAC3/DTS) or Upscaling enabled - use transcode session
                         console.log(`[Player] Auto: Using HLS transcode session (${this.settings.upscaleEnabled ? 'Upscaling' : 'Incompatible audio/video'})`);
 
@@ -989,6 +1036,26 @@ class VideoPlayer {
                     console.warn('[Player] Probe failed, using normal playback:', err.message);
                     // Continue with normal playback on probe failure
                 }
+            }
+
+            // A manual quality cap requires video encoding even when smart probing
+            // is disabled or unavailable.
+            if (this.playbackQuality !== 'auto') {
+                const label = PlaybackQuality.getLabel(this.playbackQuality);
+                this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+                const playlistUrl = await this.startTranscodeSession(
+                    streamUrl,
+                    { videoMode: 'encode', maxResolution: this.playbackQuality },
+                    playAbortController.signal
+                );
+                if (this._playId !== playId) return;
+                this.currentUrl = playlistUrl;
+                this.playHls(playlistUrl);
+                this.updateNowPlaying(channel);
+                this.showNowPlayingOverlay();
+                this.fetchEpgData(channel);
+                window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+                return;
             }
 
             // CHECK: Force Video Transcode (Full) or Upscaling
@@ -1152,6 +1219,14 @@ class VideoPlayer {
                     });
                 });
 
+                this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+                    const height = Number(this.hls?.levels?.[data.level]?.height) || 0;
+                    if (height > 0) {
+                        this.currentStreamInfo = { ...this.currentStreamInfo, height };
+                        this.updateQualityBadge();
+                    }
+                });
+
                 // Re-attach error handler for the new Hls instance
                 this.hls.on(Hls.Events.ERROR, (event, data) => {
                     if (data.fatal) {
@@ -1254,9 +1329,20 @@ class VideoPlayer {
         this.hls.attachMedia(this.video);
 
         this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (!this.currentSessionId && this.playbackQuality !== 'auto') {
+                this.applyAdaptiveQuality(this.playbackQuality);
+            }
             this.video.play().catch(e => {
                 if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
             });
+        });
+
+        this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const height = Number(this.hls?.levels?.[data.level]?.height) || 0;
+            if (height > 0) {
+                this.currentStreamInfo = { ...this.currentStreamInfo, height };
+                this.updateQualityBadge();
+            }
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
@@ -1311,6 +1397,58 @@ class VideoPlayer {
             badge.classList.remove('hidden');
         } else {
             badge.classList.add('hidden');
+        }
+    }
+
+    closeQualityMenu() {
+        this.qualityMenu?.classList.add('hidden');
+        this.qualityBtn?.setAttribute('aria-expanded', 'false');
+    }
+
+    updateQualityMenu() {
+        if (this.qualityBtn) {
+            this.qualityBtn.textContent = PlaybackQuality.getLabel(this.playbackQuality);
+        }
+        this.qualityMenu?.querySelectorAll('.quality-option').forEach(option => {
+            option.classList.toggle('active', option.dataset.quality === this.playbackQuality);
+        });
+    }
+
+    applyAdaptiveQuality(value) {
+        if (!this.hls || this.currentSessionId || !Array.isArray(this.hls.levels)) return false;
+        if (value === 'auto') {
+            this.hls.autoLevelCapping = -1;
+            this.hls.currentLevel = -1;
+            this.hls.nextLevel = -1;
+            return true;
+        }
+
+        const level = PlaybackQuality.findAdaptiveLevel(this.hls.levels, value);
+        if (level < 0) return false;
+        this.hls.autoLevelCapping = level;
+        this.hls.currentLevel = -1;
+        this.hls.nextLevel = level;
+        return true;
+    }
+
+    async changePlaybackQuality(value) {
+        if (!PlaybackQuality.isValid(value) || value === this.playbackQuality || !this.sourceUrl) {
+            this.closeQualityMenu();
+            return;
+        }
+
+        const requestedHeight = PlaybackQuality.getHeight(value);
+        const currentHeight = Number(this.currentStreamInfo?.height) || 0;
+        const canKeepOriginal = !this.currentSessionId && (
+            value === 'auto' || (currentHeight > 0 && currentHeight <= requestedHeight)
+        );
+        const canSwitchNatively = this.applyAdaptiveQuality(value) || canKeepOriginal;
+        this.playbackQuality = value;
+        this.updateQualityMenu();
+        this.closeQualityMenu();
+
+        if (!canSwitchNatively) {
+            await this.play(this.currentChannel, this.sourceUrl, { preserveQuality: true });
         }
     }
 

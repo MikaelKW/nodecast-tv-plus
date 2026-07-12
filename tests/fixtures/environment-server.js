@@ -33,7 +33,7 @@ function generateMedia() {
     const ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
     const result = spawnSync(ffmpegPath, [
         '-hide_banner', '-loglevel', 'error', '-y',
-        '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
+        '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25',
         '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
         '-t', '8', '-shortest',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p',

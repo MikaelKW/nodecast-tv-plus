@@ -68,9 +68,14 @@ class WatchPage {
         // Transcode Status
         this.transcodeStatusEx = document.getElementById('watch-transcode-status');
         this.qualityBadgeEl = document.getElementById('watch-quality-badge');
+        this.qualityBtn = document.getElementById('watch-quality-btn');
+        this.qualityMenu = document.getElementById('watch-quality-menu');
 
         // State
         this.hls = null;
+        this.sourceUrl = null;
+        this.playbackQuality = 'auto';
+        this.qualityChanging = false;
         this.content = null;
         this.contentType = null; // 'movie' or 'series'
         this.seriesInfo = null;
@@ -222,10 +227,27 @@ class WatchPage {
             this.toggleCaptionsMenu();
         });
 
+        this.qualityBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = this.qualityBtn?.getAttribute('aria-expanded') !== 'true';
+            this.qualityMenu?.classList.toggle('hidden', !willOpen);
+            this.qualityBtn?.setAttribute('aria-expanded', String(Boolean(willOpen)));
+        });
+        this.qualityMenu?.querySelectorAll('.quality-option').forEach(option => {
+            option.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.changePlaybackQuality(option.dataset.quality);
+            });
+        });
+
         // Close captions menu when clicking outside
         document.addEventListener('click', (e) => {
             if (this.captionsMenuOpen && !this.captionsMenu?.contains(e.target) && e.target !== this.captionsBtn) {
                 this.closeCaptionsMenu();
+            }
+            if (this.qualityMenu && !this.qualityMenu.classList.contains('hidden') &&
+                !this.qualityMenu.contains(e.target) && e.target !== this.qualityBtn) {
+                this.closeQualityMenu();
             }
         });
 
@@ -254,6 +276,9 @@ class WatchPage {
         this.resumeTime = content.resumeTime || 0;
         this.containerExtension = content.containerExtension || 'mp4';
         this.returnPage = content.type === 'movie' ? 'movies' : 'series';
+        this.sourceUrl = streamUrl;
+        this.playbackQuality = 'auto';
+        this.updateQualityMenu();
 
         // Stop any Live TV playback before starting movie/series
         this.app?.player?.stop?.();
@@ -344,6 +369,7 @@ class WatchPage {
             return session.playlistUrl;
         } catch (err) {
             console.error('[WatchPage] Session start failed:', err);
+            if (options.maxResolution) throw err;
             // Fallback to direct transcode if session fails
             return `/api/transcode?url=${encodeURIComponent(url)}`;
         }
@@ -354,14 +380,14 @@ class WatchPage {
      */
     async stopTranscodeSession() {
         if (this.currentSessionId) {
-            console.log('[WatchPage] Stopping transcode session:', this.currentSessionId);
+            const sessionId = this.currentSessionId;
+            this.currentSessionId = null;
+            console.log('[WatchPage] Stopping transcode session:', sessionId);
             try {
-                // Fire and forget cleanup
-                fetch(`/api/transcode/${this.currentSessionId}`, { method: 'DELETE' });
+                await fetch(`/api/transcode/${sessionId}`, { method: 'DELETE' });
             } catch (err) {
                 console.error('Failed to stop session:', err);
             }
-            this.currentSessionId = null;
         }
     }
 
@@ -409,12 +435,90 @@ class WatchPage {
         }
     }
 
-    async loadVideo(url) {
+    closeQualityMenu() {
+        this.qualityMenu?.classList.add('hidden');
+        this.qualityBtn?.setAttribute('aria-expanded', 'false');
+    }
+
+    updateQualityMenu() {
+        if (this.qualityBtn) {
+            this.qualityBtn.textContent = PlaybackQuality.getLabel(this.playbackQuality);
+        }
+        this.qualityMenu?.querySelectorAll('.quality-option').forEach(option => {
+            option.classList.toggle('active', option.dataset.quality === this.playbackQuality);
+        });
+    }
+
+    applyAdaptiveQuality(value) {
+        if (!this.hls || this.currentSessionId || !Array.isArray(this.hls.levels)) return false;
+        if (value === 'auto') {
+            this.hls.autoLevelCapping = -1;
+            this.hls.currentLevel = -1;
+            this.hls.nextLevel = -1;
+            return true;
+        }
+
+        const level = PlaybackQuality.findAdaptiveLevel(this.hls.levels, value);
+        if (level < 0) return false;
+        this.hls.autoLevelCapping = level;
+        this.hls.currentLevel = -1;
+        this.hls.nextLevel = level;
+        return true;
+    }
+
+    async changePlaybackQuality(value) {
+        if (!PlaybackQuality.isValid(value) || value === this.playbackQuality || !this.sourceUrl || this.qualityChanging) {
+            this.closeQualityMenu();
+            return;
+        }
+
+        const previousQuality = this.playbackQuality;
+        const requestedHeight = PlaybackQuality.getHeight(value);
+        const currentHeight = Number(this.currentStreamInfo?.height) || 0;
+        const canKeepOriginal = !this.currentSessionId && (
+            value === 'auto' || (currentHeight > 0 && currentHeight <= requestedHeight)
+        );
+        const canSwitchNatively = this.applyAdaptiveQuality(value) || canKeepOriginal;
+        this.playbackQuality = value;
+        this.updateQualityMenu();
+        this.closeQualityMenu();
+
+        if (canSwitchNatively) return;
+
+        this.qualityChanging = true;
+        const resumeAt = Number.isFinite(this.video?.currentTime) ? this.video.currentTime : 0;
+        try {
+            this.stopHistoryTracking();
+            this.saveProgress();
+            await this.stopTranscodeSession();
+            if (this.hls) {
+                this.hls.destroy();
+                this.hls = null;
+            }
+            this.video.pause();
+            this.video.removeAttribute('src');
+            this.video.load();
+            this.currentStreamInfo = null;
+            this.resumeTime = resumeAt;
+            await this.loadVideo(this.sourceUrl, { skipStop: true });
+        } catch (err) {
+            console.warn('[WatchPage] Quality change failed; restoring the previous stream:', err.message);
+            this.playbackQuality = previousQuality;
+            this.updateQualityMenu();
+            this.resumeTime = resumeAt;
+            await this.loadVideo(this.sourceUrl, { skipStop: true });
+        } finally {
+            this.startHistoryTracking();
+            this.qualityChanging = false;
+        }
+    }
+
+    async loadVideo(url, { skipStop = false } = {}) {
         // Store the URL for copy functionality
         this.currentUrl = url;
 
         // Stop any existing playback
-        this.stop();
+        if (!skipStop) this.stop();
 
         // Show loading spinner
         this.showLoading();
@@ -445,7 +549,22 @@ class WatchPage {
                 this.currentStreamInfo = info;
                 this.updateQualityBadge();
 
-                if (info.needsTranscode || settings.upscaleEnabled) {
+                if (this.playbackQuality !== 'auto') {
+                    const label = PlaybackQuality.getLabel(this.playbackQuality);
+                    console.log(`[WatchPage] Applying session quality cap: ${label}`);
+                    this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+                    const playlistUrl = await this.startTranscodeSession(url, {
+                        videoMode: 'encode',
+                        maxResolution: this.playbackQuality,
+                        videoCodec: info.video,
+                        audioCodec: info.audio,
+                        audioChannels: info.audioChannels,
+                        videoHeight: info.height
+                    });
+                    this.playHls(playlistUrl);
+                    this.setVolumeFromStorage();
+                    return;
+                } else if (info.needsTranscode || settings.upscaleEnabled) {
                     console.log(`[WatchPage] Auto: Using HLS transcode session (${settings.upscaleEnabled ? 'Upscaling' : 'Incompatible audio/video'})`);
 
                     // Heuristic: If video is h264/compat, copy video. Usage: Audio fix. 
@@ -485,6 +604,18 @@ class WatchPage {
                 console.warn('[WatchPage] Probe failed, using normal playback:', err.message);
                 // Continue with normal playback on probe failure
             }
+        }
+
+        if (this.playbackQuality !== 'auto') {
+            const label = PlaybackQuality.getLabel(this.playbackQuality);
+            this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+            const playlistUrl = await this.startTranscodeSession(url, {
+                videoMode: 'encode',
+                maxResolution: this.playbackQuality
+            });
+            this.playHls(playlistUrl);
+            this.setVolumeFromStorage();
+            return;
         }
 
         // Priority 1: Force Video Transcode (Full) or Upscaling
@@ -591,9 +722,20 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (!this.currentSessionId && this.playbackQuality !== 'auto') {
+                this.applyAdaptiveQuality(this.playbackQuality);
+            }
             this.video.play().catch(e => {
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
+        });
+
+        this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const height = Number(this.hls?.levels?.[data.level]?.height) || 0;
+            if (height > 0) {
+                this.currentStreamInfo = { ...this.currentStreamInfo, height };
+                this.updateQualityBadge();
+            }
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
