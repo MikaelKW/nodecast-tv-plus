@@ -18,25 +18,41 @@ auth.configureSessionSerialization(
     async (id) => await db.users.getById(id)
 );
 
-// Configure OIDC Strategy
-auth.configureOidcStrategy(
+// Configure OIDC Strategy. Discovery can require a network request, so OIDC
+// routes wait for this promise before asking Passport to authenticate.
+const oidcReady = auth.configureOidcStrategy(
     async (oidcId) => await db.users.getByOidcId(oidcId),
     async (email) => await db.users.getByEmail(email),
     async (userData) => await db.users.create(userData)
 );
 
+function authenticateOidc(options) {
+    return async (req, res, next) => {
+        try {
+            const enabled = await oidcReady;
+            if (!enabled) {
+                return res.status(503).json({ error: 'Single sign-on is not available.' });
+            }
+            return auth.passport.authenticate('openidconnect', options)(req, res, next);
+        } catch (error) {
+            console.error('[OIDC] Authentication initialization failed:', error.message);
+            return res.status(503).json({ error: 'Single sign-on is not available.' });
+        }
+    };
+}
+
 /**
  * Start OIDC Login
  * GET /api/auth/oidc/login
  */
-router.get('/oidc/login', auth.passport.authenticate('openidconnect'));
+router.get('/oidc/login', authenticateOidc());
 
 /**
  * OIDC Callback
  * GET /api/auth/oidc/callback
  */
 router.get('/oidc/callback',
-    auth.passport.authenticate('openidconnect', { session: false, failureRedirect: '/login.html?error=SSO+Failed' }),
+    authenticateOidc({ session: false, failureRedirect: '/login.html?error=SSO+Failed' }),
     (req, res) => {
         // Successful authentication
         const token = auth.generateToken(req.user);
