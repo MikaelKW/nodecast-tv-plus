@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
+const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
@@ -34,15 +35,17 @@ transcodeSession.startCleanupInterval();
  * Body: { url: string, seekOffset?: number }
  */
 router.post('/session', async (req, res) => {
-    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels, videoHeight } = req.body;
+    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels, videoHeight, maxResolution } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
     }
 
     let validatedUrl;
+    let resolutionOverride;
     try {
         validatedUrl = validateHttpUrl(url);
+        resolutionOverride = parseMaxResolutionOverride(maxResolution);
     } catch (err) {
         return res.status(400).json({ error: err.message });
     }
@@ -69,11 +72,12 @@ router.post('/session', async (req, res) => {
             userAgent,
             seekOffset: seekOffset || 0,
             hwEncoder: settings.hwEncoder || 'software',
-            maxResolution: settings.maxResolution || '1080p',
+            maxResolution: resolutionOverride || settings.maxResolution || '1080p',
             quality: settings.quality || 'medium',
             audioMixPreset: settings.audioMixPreset || 'auto', // Audio downmix preset
             // Upscaling options
-            upscaleEnabled: settings.upscaleEnabled || false,
+            // A session quality cap must never upscale a lower-resolution source.
+            upscaleEnabled: resolutionOverride ? false : (settings.upscaleEnabled || false),
             upscaleMethod: settings.upscaleMethod || 'hardware',
             upscaleTarget: settings.upscaleTarget || '1080p',
             videoMode: videoMode, // 'copy' or 'encode'

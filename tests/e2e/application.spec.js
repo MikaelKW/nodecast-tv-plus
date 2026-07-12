@@ -77,6 +77,84 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(await video.evaluate(element => element.paused)).toBe(false);
     await expect(page.locator('.channel-item.active .channel-name')).toContainText('NodeCast Test Pattern');
 
+    // A fixed-resolution source should restart through the local FFmpeg session
+    // when the user applies a lower session-only quality cap.
+    await expect.poll(() => page.evaluate(() => (
+        window.app?.player?.qualityBtn === document.getElementById('player-quality-btn')
+    ))).toBe(true);
+    await video.hover();
+    await expect(page.locator('#player-quality-btn')).toBeVisible();
+    await page.locator('#player-quality-btn').click();
+    await expect(page.locator('#player-quality-btn')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#player-quality-menu')).toBeVisible();
+    await page.locator('#player-quality-menu [data-quality="480p"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('480p');
+    await expect(page.locator('#player-transcode-status')).toContainText('Up to 480p');
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(480);
+    await expect(page.locator('#player-quality-badge')).toHaveText('480p');
+
+    // Returning to Auto stops the temporary session and restores the provider's
+    // original stream without changing the saved global transcoding setting.
+    await video.hover();
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="auto"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('Auto');
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect.poll(async () => video.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await video.hover();
+    const mobileQualityBounds = await page.locator('#player-quality-btn').boundingBox();
+    expect(mobileQualityBounds).toBeTruthy();
+    expect(mobileQualityBounds.x).toBeGreaterThanOrEqual(0);
+    expect(mobileQualityBounds.x + mobileQualityBounds.width).toBeLessThanOrEqual(390);
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    // Exercise the separate movie/series player and verify that a quality
+    // restart preserves the current playback position.
+    await page.evaluate(async ({ url, sourceId }) => {
+        await window.app.pages.watch.play({
+            id: 'controlled-movie',
+            type: 'movie',
+            title: 'Controlled Movie',
+            sourceId,
+            categoryId: 'controlled'
+        }, url);
+    }, { url: `${fixtureBaseUrl}/sample.mp4`, sourceId: m3uSource.id });
+    const watchVideo = page.locator('#watch-video');
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-quality-btn').click();
+    await page.locator('#watch-quality-menu [data-quality="480p"]').click();
+    await expect(page.locator('#watch-quality-btn')).toHaveText('480p');
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.pages?.watch?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(1.5);
+    await expect.poll(async () => watchVideo.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(480);
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-quality-btn').click();
+    await page.locator('#watch-quality-menu [data-quality="auto"]').click();
+    await expect.poll(() => page.evaluate(() => window.app?.pages?.watch?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+
     const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
     expect(reset.status).toBe(204);
 
