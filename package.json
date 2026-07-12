@@ -9,10 +9,11 @@
         "dev": "node --watch server/index.js",
         "check": "node scripts/check-syntax.js",
         "test:e2e": "playwright test",
+        "test:hardware": "node scripts/hw-detect-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:security": "node scripts/security-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run test:security && npm run test:smoke"
+        "test": "npm run check && npm run test:security && npm run test:hardware && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",

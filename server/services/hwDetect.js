@@ -10,7 +10,9 @@
  */
 
 const { execSync, exec } = require('child_process');
+const fs = require('fs');
 const os = require('os');
+const path = require('path');
 
 // Cache detection results
 let hwCapabilities = null;
@@ -25,6 +27,36 @@ const NVDEC_MIN_COMPUTE = {
     av1: 8.0,    // Ada Lovelace+
 };
 
+const INTEL_PCI_VENDOR_ID = '0x8086';
+
+/**
+ * Detect an accessible Intel DRM render node without depending on lspci.
+ * Linux exposes the PCI vendor ID for each render node through sysfs, which
+ * is available in containers when the corresponding /dev/dri node is mapped.
+ */
+function findIntelRenderDevice({
+    drmRoot = '/sys/class/drm',
+    deviceRoot = '/dev/dri'
+} = {}) {
+    try {
+        const renderNodes = fs.readdirSync(drmRoot)
+            .filter(entry => /^renderD\d+$/.test(entry));
+
+        for (const renderNode of renderNodes) {
+            const devicePath = path.join(deviceRoot, renderNode);
+            if (!fs.existsSync(devicePath)) continue;
+
+            const vendorPath = path.join(drmRoot, renderNode, 'device', 'vendor');
+            const vendorId = fs.readFileSync(vendorPath, 'utf8').trim().toLowerCase();
+            if (vendorId === INTEL_PCI_VENDOR_ID) return devicePath;
+        }
+    } catch {
+        // Missing or unreadable sysfs data means QSV cannot be confirmed.
+    }
+
+    return null;
+}
+
 /**
  * Detect NVIDIA GPU and its capabilities
  */
@@ -33,7 +65,7 @@ async function detectNvidia() {
         // Query GPU info via nvidia-smi
         const result = execSync(
             'nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader',
-            { timeout: 5000, encoding: 'utf-8', windowsHide: true }
+            { timeout: 5000, encoding: 'utf-8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
         );
 
         const lines = result.trim().split('\n');
@@ -131,17 +163,8 @@ async function detectQuickSync() {
             );
             hasIntelGpu = result.toLowerCase().includes('intel');
         } else if (os.platform() === 'linux') {
-            // Linux: Check lspci
-            try {
-                const result = execSync('lspci | grep -i "vga\\|display" | grep -i intel', {
-                    timeout: 5000,
-                    encoding: 'utf-8',
-                    shell: true
-                });
-                hasIntelGpu = result.trim().length > 0;
-            } catch {
-                hasIntelGpu = false;
-            }
+            // Linux/container: inspect the mapped DRM render node through sysfs.
+            hasIntelGpu = Boolean(findIntelRenderDevice());
         }
 
         if (!hasIntelGpu) {
@@ -277,5 +300,6 @@ module.exports = {
     detectNvidia,
     detectAMF,
     detectVAAPI,
-    detectQuickSync
+    detectQuickSync,
+    findIntelRenderDevice
 };
