@@ -1144,8 +1144,9 @@ class VideoPlayer {
                         }
                     }
                 });
-            } else if (this.video.canPlayType('application/vnd.apple.mpegurl') === 'probably' ||
-                this.video.canPlayType('application/vnd.apple.mpegurl') === 'maybe') {
+            } else if (looksLikeHls && (
+                this.video.canPlayType('application/vnd.apple.mpegurl') === 'probably' ||
+                this.video.canPlayType('application/vnd.apple.mpegurl') === 'maybe')) {
                 // Priority 2: Native HLS support (Safari on iOS/macOS where HLS.js may not work)
                 this.updateTranscodeStatus('direct', 'Direct Native');
                 this.video.src = finalUrl;

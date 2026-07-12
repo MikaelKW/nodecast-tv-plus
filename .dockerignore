@@ -1,0 +1,14 @@
+.git
+.github
+.test-data
+.env
+coverage
+data
+dist
+node_modules
+playwright-report
+release
+test-results
+tests
+transcode-cache
+*.log

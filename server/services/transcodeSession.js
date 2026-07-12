@@ -23,7 +23,9 @@ const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = re
 const sessions = new Map();
 
 // Cache directory for transcoded segments
-const CACHE_DIR = path.join(process.cwd(), 'transcode-cache');
+const CACHE_DIR = process.env.NODECAST_CACHE_DIR
+    ? path.resolve(process.env.NODECAST_CACHE_DIR)
+    : path.join(process.cwd(), 'transcode-cache');
 
 // Session settings
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle timeout

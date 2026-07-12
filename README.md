@@ -64,6 +64,18 @@ NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/tech
 
 4.  Open your browser at `http://localhost:3000`.
 
+### Testing changes
+
+The project includes three levels of checks:
+
+```bash
+npm test                 # syntax, security, and server smoke tests
+npm run test:e2e         # isolated browser, M3U, EPG, API, and playback test
+npm run test:real-world  # imports the public IPTV-org sports playlist
+```
+
+The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
+
 ### Docker Deployment
 
 You can run NodeCast TV Plus easily using Docker.
