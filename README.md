@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
+  <a href="https://github.com/MikaelKW/nodecast-tv-plus/releases"><img src="https://img.shields.io/github/v/release/MikaelKW/nodecast-tv-plus?display_name=tag" alt="Latest release" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
 </p>
@@ -13,6 +14,8 @@
 NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv), focused on additional features, usability improvements, and reliability fixes. It is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support.
 
 NodeCast TV Plus is a player only: it does not include, sell, or provide television channels or other media. Use it only with sources you are legally entitled to access.
+
+Release history and upgrade details are available in the [changelog](CHANGELOG.md). Stable, immutable versions are published on the [Releases](https://github.com/MikaelKW/nodecast-tv-plus/releases) page.
 
 ## Features
 
@@ -78,12 +81,12 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
      --env-file .env \
      -p 3000:3000 \
      -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:latest
+     ghcr.io/mikaelkw/nodecast-tv-plus:2.2.0
    ```
 
 4. Open `http://localhost:3000` and create the initial administrator account.
 
-To update later, pull the current image and recreate the container while keeping the same data volume and `.env` file.
+The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
 ### Build and run from source
 
