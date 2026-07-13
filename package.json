@@ -14,6 +14,7 @@
         "test:oidc": "node scripts/oidc-discovery-test.js",
         "test:transcode": "node scripts/transcode-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
+        "test:migration": "node scripts/migration-test.js",
         "test:security": "node scripts/security-test.js",
         "test:smoke": "node scripts/smoke-test.js",
         "test": "npm run check && npm run release:check && npm run test:security && npm run test:hardware && npm run test:oidc && npm run test:transcode && npm run test:smoke"
