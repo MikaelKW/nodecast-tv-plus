@@ -568,8 +568,8 @@
               <div class="setting-item">
                 <div class="setting-info" style="flex: 1;">
                   <span class="setting-label">Max Resolution</span>
-                  <span class="setting-hint">Limit transcoded output resolution. Lower = faster, more
-                    compatible.</span>
+                  <span class="setting-hint">Best-effort limit for transcoded output. If a provider prevents
+                    transcoding, the original resolution may be used to keep playback working.</span>
                 </div>
                 <select id="setting-max-resolution" class="source-select" style="width: auto; min-width: 200px;">
                   <option value="4k">4K (2160p)</option>
@@ -1123,7 +1123,7 @@
   <script src="/js/icons.js"></script>
   <script src="/js/api.js?v=2"></script>
   <script src="/js/components/PlaybackQuality.js?v=1"></script>
-  <script src="/js/components/VideoPlayer.js?v=6"></script>
+  <script src="/js/components/VideoPlayer.js?v=7"></script>
   <script src="/js/components/ChannelList.js?v=3"></script>
   <script src="/js/components/SourceManager.js?v=2"></script>
   <script src="/js/components/EpgGuide.js?v=2"></script>
@@ -1133,7 +1133,7 @@
   <script src="/js/pages/MoviesPage.js?v=4"></script>
   <script src="/js/pages/SeriesPage.js?v=1"></script>
   <script src="/js/pages/Settings.js?v=2"></script>
-  <script src="/js/pages/WatchPage.js?v=5"></script>
+  <script src="/js/pages/WatchPage.js?v=6"></script>
   <script src="/js/app.js?v=4"></script>
 </body>
 
