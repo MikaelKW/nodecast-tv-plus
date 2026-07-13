@@ -36,6 +36,7 @@ What you expected to happen.
 
 **Console/Server Logs**
 Share your browser console and server logs here.
+Before posting, redact credentials, private playlist URLs, query tokens, cookies, and other sensitive information.
 
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
