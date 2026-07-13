@@ -10,13 +10,11 @@ const expectedCandidateVersion = require('../package.json').version;
 const baselines = [
     {
         version: '2.1.1',
-        image: 'nodecast-tv-upstream-migration-test:2.1.1',
-        context: 'https://github.com/technomancer702/nodecast-tv.git#3be14ef2faff81eb59f405c4641825a64f0b9c4a'
+        image: 'ghcr.io/technomancer702/nodecast-tv@sha256:9937173524774d718c998a768d27bb3b7bf9d2575277715c7230307d6e99904a'
     },
     {
         version: '2.1.4',
-        image: 'nodecast-tv-upstream-migration-test:2.1.4',
-        context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
+        image: 'ghcr.io/technomancer702/nodecast-tv@sha256:caf34492517f5a827ca75e8d27d5a9a65155c12671d02ac335060cfc4df151fc'
     }
 ];
 
@@ -60,9 +58,9 @@ async function ensureCandidateImage() {
     return true;
 }
 
-async function buildBaseline(baseline) {
-    console.log(`Building pinned upstream ${baseline.version} baseline...`);
-    await docker(['build', '-t', baseline.image, baseline.context], { stream: true });
+async function pullBaseline(baseline) {
+    console.log(`Pulling immutable upstream ${baseline.version} baseline...`);
+    await docker(['pull', baseline.image], { stream: true });
 }
 
 function startFixtureServer() {
@@ -406,7 +404,7 @@ async function main() {
     const { server, port } = await startFixtureServer();
     try {
         for (const baseline of baselines) {
-            await buildBaseline(baseline);
+            await pullBaseline(baseline);
             await runBaseline(baseline, port);
         }
         console.log('All supported upstream migration baselines passed.');
