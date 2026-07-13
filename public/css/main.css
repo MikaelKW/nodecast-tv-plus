@@ -4325,6 +4325,12 @@ kbd {
   box-shadow: 0 0 10px rgba(156, 39, 176, 0.4);
 }
 
+.transcode-status.warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
 .transcode-status.hidden {
   opacity: 0;
   pointer-events: none;
