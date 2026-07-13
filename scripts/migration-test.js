@@ -440,7 +440,14 @@ async function main() {
     }
 }
 
-main().catch(error => {
+// A pending promise alone does not keep Node.js alive. Keep one referenced handle
+// until the complete migration sequence has either passed or failed.
+const lifecycleGuard = setInterval(() => {}, 1000);
+
+main().then(() => {
+    clearInterval(lifecycleGuard);
+}).catch(error => {
+    clearInterval(lifecycleGuard);
     console.error(error);
-    process.exit(1);
+    process.exitCode = 1;
 });
