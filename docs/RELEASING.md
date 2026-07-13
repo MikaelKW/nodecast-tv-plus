@@ -7,14 +7,14 @@ NodeCast TV Plus uses Semantic Versioning and publishes releases only from teste
 - Patch releases (`2.2.x`) contain compatible bug and security fixes.
 - Minor releases (`2.x.0`) contain compatible features and meaningful improvement batches.
 - Major releases (`x.0.0`) may contain intentional compatibility changes and require explicit migration guidance.
-- A GitHub Release and its `vX.Y.Z` tag are treated as immutable after publication.
+- A published `vX.Y.Z` tag, its target commit, and its container artifacts are immutable. Release-note text may receive factual, link, attribution, or formatting corrections without changing the released code or artifacts.
 
 ## Prepare a release
 
 1. Create a release-readiness issue describing the intended scope and acceptance criteria.
 2. Create a short-lived branch from `develop`.
 3. Update the version in `package.json` and `package-lock.json` without creating a tag.
-4. Add the dated changelog entry and curated notes at `docs/releases/vX.Y.Z.md`.
+4. Add the dated changelog entry and curated notes at `docs/releases/vX.Y.Z.md`. Reference the original implementation pull requests rather than promotion pull requests; add explicit contributor attribution when credit would otherwise be unclear.
 5. Run the complete application, browser, Docker, dependency, and release-metadata checks.
 6. Merge through the protected `develop` → `testing` → `main` promotion path.
 7. Confirm that all required checks passed on every stage and record the exact `main` commit selected for release.
@@ -22,7 +22,7 @@ NodeCast TV Plus uses Semantic Versioning and publishes releases only from teste
 ## Publish
 
 1. Create a draft GitHub Release named `vX.Y.Z`, targeting the exact verified `main` commit and using the curated notes file.
-2. Recheck the tag name, target commit, release title, and notes before publishing.
+2. Recheck the tag name, target commit, release title, links, section rendering, and notes before publishing.
 3. Publish the GitHub Release. Publishing creates the release tag and starts the official multi-architecture container build.
 4. Verify the release page and the `linux/amd64` and `linux/arm64` images.
 5. Confirm the registry provides `X.Y.Z`, `X.Y`, and `latest` tags. The `latest` tag must point to the newest stable release, not an unreleased `main` build.

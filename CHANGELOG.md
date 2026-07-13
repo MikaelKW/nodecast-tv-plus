@@ -10,50 +10,50 @@ This is the first formal NodeCast TV Plus release. It includes the relevant work
 
 ### Added
 
-- In-player quality controls for Live TV, movies, and series, with session-only Auto, 4K, 1080p, 720p, and 480p limits.
-- Actual playback-resolution indicators and best-effort resolution-limit explanations.
-- Standards-based OIDC discovery for Authentik, Keycloak, and other compliant providers, with optional endpoint overrides.
-- Controlled browser, media, hardware-detection, OIDC, transcoding, security, smoke, and real-world playlist tests.
-- Multi-architecture container publishing for `linux/amd64` and `linux/arm64`.
+- In-player quality controls for Live TV, movies, and series, with session-only Auto, 4K, 1080p, 720p, and 480p limits ([#88]).
+- Actual playback-resolution indicators and best-effort resolution-limit explanations ([#88], [#96]).
+- Standards-based OIDC discovery for Authentik, Keycloak, and other compliant providers, with optional endpoint overrides ([#74]).
+- Controlled browser, media, hardware-detection, OIDC, transcoding, security, smoke, and real-world playlist tests ([#54], [#64], [#67]).
+- Stable multi-architecture container release publishing for `linux/amd64` and `linux/arm64` ([#100]).
 
 ### Changed
 
-- Established the NodeCast TV Plus identity while preserving upstream attribution and compatibility-sensitive storage keys.
-- Maximum resolution now acts as a ceiling and does not upscale lower-resolution sources.
-- The SSO option appears only when single sign-on is configured and available.
-- Container publishing now separates moving development images from immutable release versions.
-- Refreshed installation, security, testing, legal-use, support, and contribution documentation.
+- Established the NodeCast TV Plus identity while preserving upstream attribution and compatibility-sensitive storage keys ([#1], [#53]).
+- Maximum resolution now acts as a ceiling and does not upscale lower-resolution sources ([#78]).
+- The SSO option appears only when single sign-on is configured and available ([#81]).
+- Container publishing now separates moving development images from immutable release versions ([#100]).
+- Refreshed installation, security, testing, legal-use, support, and contribution documentation ([#84]).
 
 ### Fixed
 
-- Restored active playback and the previous quality selection when a provider rejects a quality change.
-- Added non-fatal fallback messaging when provider restrictions prevent a requested or global resolution limit.
-- Reduced stale probes, overlapping provider connections, transcode-session races, and cleanup failures during rapid channel changes.
-- Added retry and reconnection handling for selected transient provider failures.
-- Corrected Intel Quick Sync Video detection in containers without requiring `lspci`.
-- Fixed OIDC login failures caused by assuming Keycloak-specific endpoint paths.
-- Fixed browser-test timing and isolated disposable test state.
-- Fixed empty EPG startup errors, empty-source VOD errors, and incorrect native-HLS handling for MP4 streams.
-- Kept large Live TV channel lists within the visible player layout.
+- Restored active playback and the previous quality selection when a provider rejects a quality change ([#92]).
+- Added non-fatal fallback messaging when provider restrictions prevent a requested or global resolution limit ([#92], [#96]).
+- Reduced stale probes, overlapping provider connections, transcode-session races, and cleanup failures during rapid channel changes ([#78]).
+- Added retry and reconnection handling for selected transient provider failures ([#78]).
+- Corrected Intel Quick Sync Video detection in containers without requiring `lspci` ([#70]).
+- Fixed OIDC login failures caused by assuming Keycloak-specific endpoint paths ([#74]).
+- Fixed browser-test timing and isolated disposable test state ([#67]).
+- Fixed empty EPG startup errors, empty-source VOD errors, and incorrect native-HLS handling for MP4 streams ([#64]).
+- Kept large Live TV channel lists within the visible player layout ([#78]).
 
 ### Security
 
-- Moved browser authentication to HttpOnly cookies and removed credentials from URLs and browser storage.
-- Added authorization checks to playback and management APIs, plus cross-site request protections.
-- Required separate strong JWT and session secrets for production deployments.
-- Restricted media input protocols and sensitive network targets, constrained FFmpeg protocols, and redacted provider URLs from logs.
-- Resolved inherited dependency advisories and added a CI gate for high and critical production advisories.
+- Moved browser authentication to HttpOnly cookies and removed credentials from URLs and browser storage ([#60]).
+- Added authorization checks to playback and management APIs, plus cross-site request protections ([#60]).
+- Required separate strong JWT and session secrets for production deployments ([#60]).
+- Restricted media input protocols and sensitive network targets, constrained FFmpeg protocols, and redacted provider URLs from logs ([#60]).
+- Resolved inherited dependency advisories and added a CI gate for high and critical production advisories ([#57]).
 
 ### Upgrade notes
 
-- Production deployments must set different strong values for `JWT_SECRET` and `SESSION_SECRET`; see [`.env.example`](.env.example).
+- Production deployments must set different strong values for `JWT_SECRET` and `SESSION_SECRET`; see [`.env.example`](.env.example) and [#60].
 - Preserve the existing `/app/data` volume when replacing a container. A data backup is recommended before every upgrade.
 - No manual database migration is expected for this release.
 - Existing compatibility-sensitive browser storage keys remain unchanged.
 
 ## Historical lineage (not NodeCast TV Plus releases)
 
-The fork inherited an upstream codebase whose package metadata had advanced beyond the last published upstream tag, `v2.1.1`. Versions `2.1.2`, `2.1.3`, and `2.1.4` were internal upstream development versions; they were never tagged or published as GitHub Releases in either repository. They are recorded here only to explain the version sequence.
+The fork inherited an upstream codebase whose package metadata had advanced beyond the last published upstream tag, `v2.1.1`. Versions [`2.1.2`](https://github.com/technomancer702/nodecast-tv/commit/13badd249ea5af75993d3b3e4fbe2c9abdfd0679), [`2.1.3`](https://github.com/technomancer702/nodecast-tv/commit/ea4a0a4577e635f3bfe19e3c8f0355eb6d04ac0f), and [`2.1.4`](https://github.com/technomancer702/nodecast-tv/commit/4e116d864b497d778db21af9f44be7e8320590d0) were internal upstream development versions; they were never tagged or published as GitHub Releases in either repository. They are recorded here only to explain the version sequence.
 
 Inherited work after upstream `v2.1.1` included:
 
@@ -64,3 +64,19 @@ Inherited work after upstream `v2.1.1` included:
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
 [2.2.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.1.1...v2.2.0
+[#1]: https://github.com/MikaelKW/nodecast-tv-plus/pull/1
+[#53]: https://github.com/MikaelKW/nodecast-tv-plus/pull/53
+[#54]: https://github.com/MikaelKW/nodecast-tv-plus/pull/54
+[#57]: https://github.com/MikaelKW/nodecast-tv-plus/pull/57
+[#60]: https://github.com/MikaelKW/nodecast-tv-plus/pull/60
+[#64]: https://github.com/MikaelKW/nodecast-tv-plus/pull/64
+[#67]: https://github.com/MikaelKW/nodecast-tv-plus/pull/67
+[#70]: https://github.com/MikaelKW/nodecast-tv-plus/pull/70
+[#74]: https://github.com/MikaelKW/nodecast-tv-plus/pull/74
+[#78]: https://github.com/MikaelKW/nodecast-tv-plus/pull/78
+[#81]: https://github.com/MikaelKW/nodecast-tv-plus/pull/81
+[#84]: https://github.com/MikaelKW/nodecast-tv-plus/pull/84
+[#88]: https://github.com/MikaelKW/nodecast-tv-plus/pull/88
+[#92]: https://github.com/MikaelKW/nodecast-tv-plus/pull/92
+[#96]: https://github.com/MikaelKW/nodecast-tv-plus/pull/96
+[#100]: https://github.com/MikaelKW/nodecast-tv-plus/pull/100
