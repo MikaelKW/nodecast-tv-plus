@@ -466,6 +466,10 @@ class SyncService {
 
         // Save EPG Channels
         if (allChannels.length > 0) {
+            const deleteChannels = db.prepare(`
+                DELETE FROM playlist_items
+                WHERE source_id = ? AND type = 'epg_channel'
+            `);
             const channelStmt = db.prepare(`
                 INSERT INTO playlist_items (
                     id, source_id, item_id, type, name, stream_icon, 
@@ -479,8 +483,14 @@ class SyncService {
             `);
 
             const insertChannels = db.transaction((chanList) => {
+                // EPG channel IDs often overlap Xtream stream IDs (for example,
+                // EPG channel "10" and live stream 10). Keep EPG rows in their
+                // own ID namespace so their names and logos cannot overwrite
+                // playable items that share the same provider identifier.
+                deleteChannels.run(sourceId);
+
                 for (const ch of chanList) {
-                    const id = `${sourceId}:${ch.id}`;
+                    const id = `${sourceId}:epg_channel:${ch.id}`;
                     channelStmt.run(
                         id,
                         sourceId,

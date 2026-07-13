@@ -1,6 +1,5 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const http = require('node:http');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
@@ -31,7 +30,7 @@ const baselines = [
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-function run(command, args, { stream = false, allowFailure = false, input } = {}) {
+function run(command, args, { stream = false, allowFailure = false, input, timeoutMs = 120000 } = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
             cwd: projectRoot,
@@ -40,16 +39,29 @@ function run(command, args, { stream = false, allowFailure = false, input } = {}
         });
         let stdout = '';
         let stderr = '';
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGKILL');
+        }, timeoutMs);
 
         if (!stream) {
             child.stdout.on('data', chunk => { stdout += chunk.toString(); });
             child.stderr.on('data', chunk => { stderr += chunk.toString(); });
         }
 
-        child.once('error', reject);
+        child.once('error', error => {
+            clearTimeout(timeout);
+            reject(error);
+        });
         child.stdin.on('error', () => {});
         child.stdin.end(input);
         child.once('exit', code => {
+            clearTimeout(timeout);
+            if (timedOut) {
+                reject(new Error(`${command} timed out after ${timeoutMs}ms.`));
+                return;
+            }
             const result = { code, stdout: stdout.trim(), stderr: stderr.trim() };
             if (code === 0 || allowFailure) return resolve(result);
             reject(new Error(`${command} exited with code ${code}${stderr ? `: ${stderr}` : ''}`));
@@ -75,38 +87,9 @@ async function buildBaseline(baseline) {
     console.log(`Building lightweight upstream ${baseline.version} baseline from its pinned commit...`);
     await docker(['build', '-t', baseline.image, '-f', '-', baseline.context], {
         stream: true,
-        input: baselineDockerfile
+        input: baselineDockerfile,
+        timeoutMs: 300000
     });
-}
-
-function startFixtureServer() {
-    const playlist = `#EXTM3U
-#EXTINF:-1 tvg-id="migration-one" group-title="Migration",Migration Channel One
-https://stream.example.invalid/live/one.m3u8
-#EXTINF:-1 tvg-id="migration-two" group-title="Migration",Migration Channel Two
-https://stream.example.invalid/live/two.m3u8
-`;
-
-    const server = http.createServer((request, response) => {
-        if (request.url !== '/playlist.m3u') {
-            response.writeHead(404).end();
-            return;
-        }
-        response.writeHead(200, { 'Content-Type': 'audio/x-mpegurl' });
-        response.end(playlist);
-    });
-
-    return new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(0, '0.0.0.0', () => resolve({
-            server,
-            port: server.address().port
-        }));
-    });
-}
-
-function closeServer(server) {
-    return new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 }
 
 async function request(baseUrl, pathname, { method = 'GET', body, token, cookie } = {}) {
@@ -118,7 +101,8 @@ async function request(baseUrl, pathname, { method = 'GET', body, token, cookie 
     const response = await fetch(`${baseUrl}${pathname}`, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body)
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(5000)
     });
     const text = await response.text();
     let payload = null;
@@ -156,18 +140,6 @@ async function waitForVersion(baseUrl, expectedVersion, timeoutMs = 45000) {
     throw new Error(`Timed out waiting for version ${expectedVersion}: ${lastError?.message || 'unknown error'}`);
 }
 
-async function waitForSourceSync(baseUrl, sourceId, token, timeoutMs = 45000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        const { payload: statuses } = await request(baseUrl, '/api/sources/status', { token });
-        const status = statuses.find(item => Number(item.source_id) === Number(sourceId));
-        if (status?.status === 'success') return;
-        if (status?.status === 'error') throw new Error(`Source ${sourceId} synchronization failed.`);
-        await sleep(500);
-    }
-    throw new Error(`Timed out waiting for source ${sourceId} synchronization.`);
-}
-
 async function mappedBaseUrl(containerName) {
     const result = await docker(['port', containerName, '3000/tcp']);
     const mapping = result.stdout.split(/\r?\n/).find(Boolean);
@@ -179,7 +151,6 @@ async function mappedBaseUrl(containerName) {
 async function startContainer({ name, image, volume, jwtSecret, sessionSecret }) {
     const args = [
         'run', '-d', '--name', name,
-        '--add-host', 'host.docker.internal:host-gateway',
         '-p', '127.0.0.1::3000',
         '-e', 'NODE_ENV=production',
         '-e', `JWT_SECRET=${jwtSecret}`,
@@ -201,12 +172,49 @@ const count = table => db.prepare('SELECT COUNT(*) AS count FROM ' + table).get(
 console.log(JSON.stringify({
   categories: count('categories'),
   playlistItems: count('playlist_items'),
+  epgPrograms: count('epg_programs'),
+  syncStatus: count('sync_status'),
   favorites: count('favorites'),
   watchHistory: count('watch_history'),
   hiddenItems: db.prepare('SELECT COUNT(*) AS count FROM playlist_items WHERE is_hidden = 1').get().count,
   firstItemId: first && first.item_id
 }));`;
     const result = await docker(['exec', containerName, 'node', '-e', code]);
+    return JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
+}
+
+async function seedUpstreamData(containerName, { sourceName, sourceUrl, providerUsername, providerPassword }) {
+    const code = `
+const { sources } = require('/app/server/db');
+const { getDb } = require('/app/server/db/sqlite');
+(async () => {
+  const source = await sources.create({
+    type: 'm3u',
+    name: ${JSON.stringify(sourceName)},
+    url: ${JSON.stringify(sourceUrl)},
+    username: ${JSON.stringify(providerUsername)},
+    password: process.env.MIGRATION_PROVIDER_PASSWORD
+  });
+  const db = getDb();
+  const now = Date.now();
+  db.prepare('INSERT INTO categories (id, source_id, category_id, type, name, data) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(source.id + ':migration', source.id, 'migration', 'live', 'Migration', '{}');
+  const insertItem = db.prepare('INSERT INTO playlist_items (id, source_id, item_id, type, name, category_id, stream_url, container_extension, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  insertItem.run(source.id + ':migration-one', source.id, 'migration-one', 'live', 'Migration Channel One', 'migration', 'https://stream.example.invalid/live/one.m3u8', 'm3u8', '{}');
+  insertItem.run(source.id + ':migration-two', source.id, 'migration-two', 'live', 'Migration Channel Two', 'migration', 'https://stream.example.invalid/live/two.m3u8', 'm3u8', '{}');
+  db.prepare('INSERT INTO epg_programs (channel_id, source_id, start_time, end_time, title, description, data) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(source.id + ':migration-one', source.id, now, now + 3600000, 'Migration Programme', 'Migration fixture', '{}');
+  db.prepare('INSERT INTO sync_status (source_id, type, last_sync, status, error) VALUES (?, ?, ?, ?, ?)')
+    .run(source.id, 'live', now, 'success', null);
+  console.log(JSON.stringify({ id: source.id, name: source.name, type: source.type }));
+})().catch(error => {
+  console.error(error);
+  process.exit(1);
+});`;
+    const result = await docker([
+        'exec', '-e', `MIGRATION_PROVIDER_PASSWORD=${providerPassword}`,
+        containerName, 'node', '-e', code
+    ]);
     return JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
 }
 
@@ -260,7 +268,7 @@ async function sanitizedLogs(containerName, valuesToRedact) {
     return output;
 }
 
-async function runBaseline(baseline, fixturePort) {
+async function runBaseline(baseline) {
     const suffix = `${process.pid}-${baseline.version.replaceAll('.', '-')}`;
     const upstreamContainer = `nodecast-upstream-migration-${suffix}`;
     const plusContainer = `nodecast-plus-migration-${suffix}`;
@@ -271,11 +279,12 @@ async function runBaseline(baseline, fixturePort) {
     const sessionSecret = crypto.randomBytes(48).toString('hex');
     const providerUsername = `provider-${suffix}`;
     const providerPassword = crypto.randomBytes(36).toString('base64url');
-    const playlistUrl = `http://host.docker.internal:${fixturePort}/playlist.m3u`;
+    const playlistUrl = 'https://migration.example.invalid/playlist.m3u';
     const redactions = [password, jwtSecret, sessionSecret, providerPassword];
 
     await docker(['volume', 'create', volume]);
     try {
+        console.log(`Starting upstream ${baseline.version} with a disposable data volume...`);
         const upstreamUrl = await startContainer({
             name: upstreamContainer,
             image: baseline.image,
@@ -283,6 +292,7 @@ async function runBaseline(baseline, fixturePort) {
             jwtSecret
         });
         await waitForVersion(upstreamUrl, baseline.version);
+        console.log(`Upstream ${baseline.version} is ready; creating account and migration records...`);
 
         const setup = await request(upstreamUrl, '/api/auth/setup', {
             method: 'POST',
@@ -298,23 +308,18 @@ async function runBaseline(baseline, fixturePort) {
             method: 'PUT',
             body: { maxResolution: '720p', forceProxy: true, epgDays: 5 }
         });
-        const sourceResponse = await request(upstreamUrl, '/api/sources', {
-            ...tokenAuth,
-            method: 'POST',
-            body: {
-                type: 'm3u',
-                name: `Migration fixture ${baseline.version}`,
-                url: playlistUrl,
-                username: providerUsername,
-                password: providerPassword
-            }
+        const source = await seedUpstreamData(upstreamContainer, {
+            sourceName: `Migration fixture ${baseline.version}`,
+            sourceUrl: playlistUrl,
+            providerUsername,
+            providerPassword
         });
-        const source = sourceResponse.payload;
-        await waitForSourceSync(upstreamUrl, source.id, legacyToken);
 
         const initialSqlite = await sqliteSnapshot(upstreamContainer, source.id);
         assert.equal(initialSqlite.playlistItems, 2);
         assert.equal(initialSqlite.categories, 1);
+        assert.equal(initialSqlite.epgPrograms, 1);
+        assert.equal(initialSqlite.syncStatus, 1);
         assert.ok(initialSqlite.firstItemId);
 
         await request(upstreamUrl, '/api/favorites', {
@@ -351,6 +356,7 @@ async function runBaseline(baseline, fixturePort) {
 
         await removeContainer(upstreamContainer);
 
+        console.log(`Starting Plus ${expectedCandidateVersion} against upstream ${baseline.version} data...`);
         const plusUrl = await startContainer({
             name: plusContainer,
             image: candidateImage,
@@ -359,6 +365,7 @@ async function runBaseline(baseline, fixturePort) {
             sessionSecret
         });
         await waitForVersion(plusUrl, expectedCandidateVersion);
+        console.log(`Plus ${expectedCandidateVersion} is ready; verifying migrated records...`);
 
         const legacyMe = await request(plusUrl, '/api/auth/me', tokenAuth);
         assert.equal(legacyMe.payload.username, username);
@@ -417,15 +424,13 @@ async function main() {
     if (dockerVersion.code !== 0) throw new Error('A running Docker engine is required for migration tests.');
 
     const candidateWasBuilt = await ensureCandidateImage();
-    const { server, port } = await startFixtureServer();
     try {
         for (const baseline of baselines) {
             await buildBaseline(baseline);
-            await runBaseline(baseline, port);
+            await runBaseline(baseline);
         }
         console.log('All supported upstream migration baselines passed.');
     } finally {
-        await closeServer(server);
         for (const baseline of baselines) {
             if (await dockerObjectExists('image', baseline.image)) await docker(['image', 'rm', baseline.image]);
         }
@@ -435,7 +440,14 @@ async function main() {
     }
 }
 
-main().catch(error => {
+// A pending promise alone does not keep Node.js alive. Keep one referenced handle
+// until the complete migration sequence has either passed or failed.
+const lifecycleGuard = setInterval(() => {}, 1000);
+
+main().then(() => {
+    clearInterval(lifecycleGuard);
+}).catch(error => {
+    clearInterval(lifecycleGuard);
     console.error(error);
-    process.exit(1);
+    process.exitCode = 1;
 });
