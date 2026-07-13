@@ -34,6 +34,7 @@ class VideoPlayer {
         this.playbackQuality = 'auto';
         this.qualityChanging = false;
         this.qualityCapWarning = null;
+        this.qualityCapPending = false;
         this.settingsLoaded = false;
 
         // Settings - start with defaults, load from server async
@@ -649,6 +650,7 @@ class VideoPlayer {
                     height: this.video.videoHeight
                 };
                 this.updateQualityBadge();
+                this.updatePendingQualityCapWarning(this.video.videoHeight);
             }
         });
 
@@ -927,6 +929,7 @@ class VideoPlayer {
         this.sourceUrl = streamUrl;
         this.isUsingProxy = false;
         this.qualityCapWarning = null;
+        this.qualityCapPending = false;
         if (!preserveQuality) {
             this.playbackQuality = 'auto';
             this.updateQualityMenu();
@@ -986,6 +989,9 @@ class VideoPlayer {
                         { signal: playAbortController.signal }
                     );
                     const info = await probeRes.json();
+                    if (!probeRes.ok || info.error) {
+                        throw new Error(info.error || `Probe request failed (${probeRes.status})`);
+                    }
                     if (this._playId !== playId) return;
                     console.log(`[Player] Probe result: video=${info.video}, audio=${info.audio}, ${info.width}x${info.height}, compatible=${info.compatible}`);
 
@@ -995,6 +1001,9 @@ class VideoPlayer {
 
                     const globalResolution = this.settings.maxResolution || '1080p';
                     const globalHeight = PlaybackQuality.getHeight(globalResolution);
+                    if (this.playbackQuality === 'auto' && globalHeight > 0 && !(info.height > 0)) {
+                        this.qualityCapPending = true;
+                    }
                     if (this.playbackQuality === 'auto' && globalHeight > 0 && info.height > globalHeight) {
                         try {
                             await this.startQualityPlayback(
@@ -1008,8 +1017,9 @@ class VideoPlayer {
                             return;
                         } catch (qualityError) {
                             const label = PlaybackQuality.getLabel(globalResolution);
+                            const originalLabel = this.getQualityLabel(info.height) || 'original quality';
                             console.warn(`[Player] ${label} global quality cap unavailable; continuing direct playback:`, qualityError.message);
-                            this.qualityCapWarning = `${label} cap unavailable · Direct`;
+                            this.qualityCapWarning = `${label} limit unavailable · Playing original at ${originalLabel}`;
                         }
                     }
 
@@ -1094,6 +1104,7 @@ class VideoPlayer {
                 } catch (err) {
                     if (err.name === 'AbortError' || this._playId !== playId) return;
                     console.warn('[Player] Probe failed, using normal playback:', err.message);
+                    this.qualityCapPending = this.playbackQuality === 'auto';
                     // Continue with normal playback on probe failure
                 }
             }
@@ -1278,6 +1289,7 @@ class VideoPlayer {
                     if (height > 0) {
                         this.currentStreamInfo = { ...this.currentStreamInfo, height };
                         this.updateQualityBadge();
+                        this.updatePendingQualityCapWarning(height);
                     }
                 });
 
@@ -1441,6 +1453,28 @@ class VideoPlayer {
         if (height >= 480) return '480p';
         if (height > 0) return `${height}p`;
         return null;
+    }
+
+    /**
+     * Explain when browser-detected playback exceeds a global cap that the
+     * provider prevented the server from checking or enforcing.
+     */
+    updatePendingQualityCapWarning(height) {
+        if (this.playbackQuality !== 'auto' || !this.settings.autoTranscode) return;
+
+        const globalResolution = this.settings.maxResolution || '1080p';
+        const globalHeight = PlaybackQuality.getHeight(globalResolution);
+        if (!globalHeight || height <= globalHeight) {
+            this.qualityCapPending = false;
+            return;
+        }
+        if (!this.qualityCapPending && !this.qualityCapWarning) return;
+
+        const limitLabel = PlaybackQuality.getLabel(globalResolution);
+        const originalLabel = this.getQualityLabel(height) || 'original quality';
+        this.qualityCapWarning = `${limitLabel} limit unavailable · Playing original at ${originalLabel}`;
+        this.qualityCapPending = false;
+        this.updateTranscodeStatus('warning', this.qualityCapWarning);
     }
 
     /**

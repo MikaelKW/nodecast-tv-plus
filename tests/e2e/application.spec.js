@@ -187,6 +187,23 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         window.app.player.settings.forceVideoTranscode = false;
     });
 
+    // A provider that rejects the global cap must continue at its original
+    // resolution and clearly explain that the configured limit is best-effort.
+    await page.evaluate(async url => {
+        await window.API.settings.update({ maxResolution: '480p' });
+        window.app.player.settings.maxResolution = '480p';
+        await window.app.player.play({ name: 'Rejected global quality cap' }, url);
+    }, `${fixtureBaseUrl}/browser-only.mp4`);
+    await expect.poll(async () => video.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect(page.locator('#player-transcode-status')).toContainText(
+        '480p limit unavailable · Playing original at 720p'
+    );
+
     // Auto now honors the global max-resolution setting even for a compatible
     // source that would otherwise use direct playback.
     await page.evaluate(async url => {
@@ -253,6 +270,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     // The movie/series player uses the same transactional fallback when a
     // provider permits browser playback but rejects FFmpeg.
+    await page.evaluate(async () => {
+        await window.API.settings.update({ maxResolution: '480p' });
+    });
     await page.evaluate(async ({ url, sourceId }) => {
         const watch = window.app.pages.watch;
         watch.stop();
@@ -270,11 +290,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         watch.resumeTime = 0;
         watch.updateQualityMenu();
         window.app.navigateTo('watch', true);
-        await watch.loadVideo(url, { skipProbe: true });
+        await watch.loadVideo(url);
     }, { url: `${fixtureBaseUrl}/browser-only.mp4`, sourceId: m3uSource.id });
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('#watch-transcode-status')).toContainText(
+        '480p limit unavailable · Playing original at 720p'
+    );
+    await page.evaluate(async () => {
+        await window.API.settings.update({ maxResolution: '1080p' });
+        window.app.pages.watch.settings.maxResolution = '1080p';
+    });
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-quality-btn').click();
