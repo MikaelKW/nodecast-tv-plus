@@ -1,7 +1,5 @@
-.git
-.github
-.test-data
-.env
+.??*
+*.md
 coverage
 data
 dist

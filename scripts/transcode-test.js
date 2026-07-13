@@ -11,6 +11,12 @@ const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const { TranscodeSession } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
+const {
+    DEFAULT_TRANSCODE_START_TIMEOUT_SECONDS,
+    MAX_TRANSCODE_START_TIMEOUT_SECONDS,
+    MIN_TRANSCODE_START_TIMEOUT_SECONDS,
+    parseTranscodeStartTimeoutSeconds
+} = require('../server/config/transcode');
 const PlaybackQuality = require('../public/js/components/PlaybackQuality');
 
 function probe(url) {
@@ -66,6 +72,40 @@ async function createTransientServer(mediaPath, initialStatus) {
 async function main() {
     assert.ok(ffmpegPath, 'ffmpeg-static is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
+
+    assert.equal(parseTranscodeStartTimeoutSeconds(), DEFAULT_TRANSCODE_START_TIMEOUT_SECONDS);
+    assert.equal(parseTranscodeStartTimeoutSeconds('1'), MIN_TRANSCODE_START_TIMEOUT_SECONDS);
+    assert.equal(parseTranscodeStartTimeoutSeconds(' 30 '), 30);
+    assert.equal(parseTranscodeStartTimeoutSeconds('300'), MAX_TRANSCODE_START_TIMEOUT_SECONDS);
+    for (const invalidTimeout of ['', '0', '-1', '1.5', '15seconds', '301']) {
+        assert.throws(
+            () => parseTranscodeStartTimeoutSeconds(invalidTimeout),
+            /TRANSCODE_START_TIMEOUT_SECONDS/
+        );
+    }
+
+    const projectRoot = path.join(__dirname, '..');
+    const configuredTimeout = spawnSync(process.execPath, [
+        '-e',
+        "process.stdout.write(String(require('./server/config/transcode').TRANSCODE_START_TIMEOUT_MS))"
+    ], {
+        cwd: projectRoot,
+        env: { ...process.env, TRANSCODE_START_TIMEOUT_SECONDS: '45' },
+        encoding: 'utf8'
+    });
+    assert.equal(configuredTimeout.status, 0, configuredTimeout.stderr);
+    assert.equal(configuredTimeout.stdout, '45000');
+
+    const invalidConfiguredTimeout = spawnSync(process.execPath, [
+        '-e',
+        "require('./server/config/transcode')"
+    ], {
+        cwd: projectRoot,
+        env: { ...process.env, TRANSCODE_START_TIMEOUT_SECONDS: '0' },
+        encoding: 'utf8'
+    });
+    assert.notEqual(invalidConfiguredTimeout.status, 0);
+    assert.match(invalidConfiguredTimeout.stderr, /TRANSCODE_START_TIMEOUT_SECONDS/);
 
     assert.equal(parseMaxResolutionOverride(undefined), null);
     assert.equal(parseMaxResolutionOverride('720p'), '720p');
