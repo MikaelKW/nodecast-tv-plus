@@ -147,6 +147,15 @@ async function start() {
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');
+        if (pathname === '/browser-only.mp4') {
+            // Models providers that allow browser playback but reject server-side
+            // FFmpeg/ffprobe clients regardless of their configured User-Agent.
+            if (!req.headers['sec-fetch-mode']) {
+                res.writeHead(403, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+                return res.end('browser requests only');
+            }
+            return sendFile(req, res, mediaPath, 'video/mp4');
+        }
         if (pathname === '/slow-sample.mp4') return sendSlowFile(req, res, mediaPath, 'video/mp4');
 
         if (pathname === '/connection-stats') {

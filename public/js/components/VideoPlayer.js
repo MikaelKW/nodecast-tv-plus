@@ -32,6 +32,8 @@ class VideoPlayer {
         this.currentUrl = null;
         this.sourceUrl = null;
         this.playbackQuality = 'auto';
+        this.qualityChanging = false;
+        this.qualityCapWarning = null;
         this.settingsLoaded = false;
 
         // Settings - start with defaults, load from server async
@@ -867,6 +869,29 @@ class VideoPlayer {
         return session.playlistUrl;
     }
 
+    async startQualityPlayback(channel, streamUrl, resolution, streamInfo, signal, playId) {
+        const label = PlaybackQuality.getLabel(resolution);
+        console.log(`[Player] Applying session quality cap: ${label}`);
+        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+        const playlistUrl = await this.startTranscodeSession(streamUrl, {
+            videoMode: 'encode',
+            maxResolution: resolution,
+            videoCodec: streamInfo?.video,
+            audioCodec: streamInfo?.audio,
+            audioChannels: streamInfo?.audioChannels,
+            videoHeight: Number(streamInfo?.height) || undefined
+        }, signal);
+        if (this._playId !== playId) return false;
+
+        this.currentUrl = playlistUrl;
+        this.playHls(playlistUrl);
+        this.updateNowPlaying(channel);
+        this.showNowPlayingOverlay();
+        this.fetchEpgData(channel);
+        window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+        return true;
+    }
+
     /**
      * Stop and cleanup current transcode session
      */
@@ -886,7 +911,13 @@ class VideoPlayer {
     /**
      * Play a channel
      */
-    async play(channel, streamUrl, { preserveQuality = false } = {}) {
+    async play(channel, streamUrl, {
+        preserveQuality = false,
+        skipProbe = false,
+        throwOnError = false,
+        qualitySourceInfo = null,
+        forceDirectFallback = false
+    } = {}) {
         const playId = ++this._playId;
         const previousPendingRequest = this._pendingConnectionRequest;
         this._playAbortController?.abort();
@@ -894,6 +925,8 @@ class VideoPlayer {
         this._playAbortController = playAbortController;
         this.currentChannel = channel;
         this.sourceUrl = streamUrl;
+        this.isUsingProxy = false;
+        this.qualityCapWarning = null;
         if (!preserveQuality) {
             this.playbackQuality = 'auto';
             this.updateQualityMenu();
@@ -927,8 +960,25 @@ class VideoPlayer {
             // Determine if HLS or direct stream
             this.currentUrl = streamUrl;
 
+            // A manual switch already has resolution information from the active
+            // stream. Avoid opening a separate probe connection, and give
+            // single-connection providers time to release the browser request.
+            if (!forceDirectFallback && this.playbackQuality !== 'auto' && qualitySourceInfo) {
+                await new Promise(resolve => setTimeout(resolve, 900));
+                if (this._playId !== playId) return;
+                await this.startQualityPlayback(
+                    channel,
+                    streamUrl,
+                    this.playbackQuality,
+                    qualitySourceInfo,
+                    playAbortController.signal,
+                    playId
+                );
+                return;
+            }
+
             // CHECK: Auto Transcode (Smart) - probe first, then decide
-            if (this.settings.autoTranscode) {
+            if (!forceDirectFallback && this.settings.autoTranscode && !skipProbe) {
                 console.log('[Player] Auto Transcode enabled. Probing stream...');
                 try {
                     const probeRes = await this.requestPlaybackResource(
@@ -942,6 +992,26 @@ class VideoPlayer {
                     // Store probe result for quality badge display
                     this.currentStreamInfo = info;
                     this.updateQualityBadge();
+
+                    const globalResolution = this.settings.maxResolution || '1080p';
+                    const globalHeight = PlaybackQuality.getHeight(globalResolution);
+                    if (this.playbackQuality === 'auto' && globalHeight > 0 && info.height > globalHeight) {
+                        try {
+                            await this.startQualityPlayback(
+                                channel,
+                                streamUrl,
+                                globalResolution,
+                                info,
+                                playAbortController.signal,
+                                playId
+                            );
+                            return;
+                        } catch (qualityError) {
+                            const label = PlaybackQuality.getLabel(globalResolution);
+                            console.warn(`[Player] ${label} global quality cap unavailable; continuing direct playback:`, qualityError.message);
+                            this.qualityCapWarning = `${label} cap unavailable · Direct`;
+                        }
+                    }
 
                     // Handle subtitles from probe result
                     // Clear existing remote tracks (from previous streams)
@@ -966,24 +1036,14 @@ class VideoPlayer {
                     }
 
                     if (this.playbackQuality !== 'auto') {
-                        const label = PlaybackQuality.getLabel(this.playbackQuality);
-                        console.log(`[Player] Applying session quality cap: ${label}`);
-                        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
-                        const playlistUrl = await this.startTranscodeSession(streamUrl, {
-                            videoMode: 'encode',
-                            maxResolution: this.playbackQuality,
-                            videoCodec: info.video,
-                            audioCodec: info.audio,
-                            audioChannels: info.audioChannels,
-                            videoHeight: info.height
-                        }, playAbortController.signal);
-                        if (this._playId !== playId) return;
-                        this.currentUrl = playlistUrl;
-                        this.playHls(playlistUrl);
-                        this.updateNowPlaying(channel);
-                        this.showNowPlayingOverlay();
-                        this.fetchEpgData(channel);
-                        window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+                        await this.startQualityPlayback(
+                            channel,
+                            streamUrl,
+                            this.playbackQuality,
+                            info,
+                            playAbortController.signal,
+                            playId
+                        );
                         return;
                     } else if (info.needsTranscode || this.settings.upscaleEnabled) {
                         // Incompatible audio (AC3/EAC3/DTS) or Upscaling enabled - use transcode session
@@ -1040,26 +1100,20 @@ class VideoPlayer {
 
             // A manual quality cap requires video encoding even when smart probing
             // is disabled or unavailable.
-            if (this.playbackQuality !== 'auto') {
-                const label = PlaybackQuality.getLabel(this.playbackQuality);
-                this.updateTranscodeStatus('transcoding', `Up to ${label}`);
-                const playlistUrl = await this.startTranscodeSession(
+            if (!forceDirectFallback && this.playbackQuality !== 'auto') {
+                await this.startQualityPlayback(
+                    channel,
                     streamUrl,
-                    { videoMode: 'encode', maxResolution: this.playbackQuality },
-                    playAbortController.signal
+                    this.playbackQuality,
+                    null,
+                    playAbortController.signal,
+                    playId
                 );
-                if (this._playId !== playId) return;
-                this.currentUrl = playlistUrl;
-                this.playHls(playlistUrl);
-                this.updateNowPlaying(channel);
-                this.showNowPlayingOverlay();
-                this.fetchEpgData(channel);
-                window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
                 return;
             }
 
             // CHECK: Force Video Transcode (Full) or Upscaling
-            if (this.settings.forceVideoTranscode || this.settings.upscaleEnabled) {
+            if (!forceDirectFallback && (this.settings.forceVideoTranscode || this.settings.upscaleEnabled)) {
                 const statusText = this.settings.upscaleEnabled ? 'Upscaling' : 'Transcoding (Video)';
                 const statusMode = this.settings.upscaleEnabled ? 'upscaling' : 'transcoding';
                 console.log(`[Player] ${statusText} enabled. Starting session (encode)...`);
@@ -1108,7 +1162,7 @@ class VideoPlayer {
             }
 
             // CHECK: Force Audio Transcode (Copy Video) - legacy forceTranscode setting
-            if (this.settings.forceTranscode) {
+            if (!forceDirectFallback && this.settings.forceTranscode) {
                 console.log('[Player] Force Audio Transcode enabled. Starting session (copy)...');
                 this.updateTranscodeStatus('transcoding', 'Transcoding (Audio)');
 
@@ -1170,7 +1224,7 @@ class VideoPlayer {
 
             // Force Remux: Route through FFmpeg for container conversion
             // Applies to: 1) .ts streams when detected, or 2) ALL non-HLS streams when enabled
-            if (this.settings.forceRemux && (isRawTs || isExtensionless)) {
+            if (!forceDirectFallback && this.settings.forceRemux && (isRawTs || isExtensionless)) {
                 console.log('[Player] Force Remux enabled. Routing through FFmpeg remux...');
                 console.log('[Player] Stream type:', isRawTs ? 'Raw TS' : 'Extension-less (assumed TS)');
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
@@ -1298,6 +1352,9 @@ class VideoPlayer {
             }
 
             // Update now playing info
+            if (this.qualityCapWarning) {
+                this.updateTranscodeStatus('warning', this.qualityCapWarning);
+            }
             this.updateNowPlaying(channel);
 
             // Show the now playing overlay
@@ -1311,6 +1368,7 @@ class VideoPlayer {
 
         } catch (err) {
             if (err.name === 'AbortError' || this._playId !== playId) return;
+            if (throwOnError) throw err;
             console.error('Error playing channel:', err);
             this.showError('Failed to play channel');
         }
@@ -1432,14 +1490,18 @@ class VideoPlayer {
     }
 
     async changePlaybackQuality(value) {
-        if (!PlaybackQuality.isValid(value) || value === this.playbackQuality || !this.sourceUrl) {
+        if (!PlaybackQuality.isValid(value) || value === this.playbackQuality || !this.sourceUrl || this.qualityChanging) {
             this.closeQualityMenu();
             return;
         }
 
+        const previousQuality = this.playbackQuality;
+        const sourceInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : null;
+        const hasActivePlayback = Boolean(this.video?.currentSrc) && this.video.readyState > 0;
+        const previousWasDirect = !this.currentSessionId && hasActivePlayback;
         const requestedHeight = PlaybackQuality.getHeight(value);
         const currentHeight = Number(this.currentStreamInfo?.height) || 0;
-        const canKeepOriginal = !this.currentSessionId && (
+        const canKeepOriginal = previousWasDirect && (
             value === 'auto' || (currentHeight > 0 && currentHeight <= requestedHeight)
         );
         const canSwitchNatively = this.applyAdaptiveQuality(value) || canKeepOriginal;
@@ -1447,8 +1509,39 @@ class VideoPlayer {
         this.updateQualityMenu();
         this.closeQualityMenu();
 
-        if (!canSwitchNatively) {
-            await this.play(this.currentChannel, this.sourceUrl, { preserveQuality: true });
+        if (canSwitchNatively) {
+            this.qualityCapWarning = null;
+            this.overlay?.classList.add('hidden');
+            const directLabel = this.sourceUrl?.includes('m3u8') ? 'Direct HLS' : 'Direct Play';
+            this.updateTranscodeStatus('direct', directLabel);
+            return;
+        }
+
+        this.qualityChanging = true;
+        try {
+            await this.play(this.currentChannel, this.sourceUrl, {
+                preserveQuality: true,
+                throwOnError: true,
+                qualitySourceInfo: sourceInfo
+            });
+        } catch (err) {
+            const failedLabel = PlaybackQuality.getLabel(value);
+            console.warn(`[Player] ${failedLabel} quality switch failed; restoring previous playback:`, err.message);
+            this.playbackQuality = previousQuality;
+            this.updateQualityMenu();
+            await new Promise(resolve => setTimeout(resolve, 900));
+            await this.play(this.currentChannel, this.sourceUrl, {
+                preserveQuality: true,
+                skipProbe: previousWasDirect || previousQuality === 'auto',
+                qualitySourceInfo: sourceInfo,
+                forceDirectFallback: previousWasDirect || previousQuality === 'auto'
+            });
+            const restoredLabel = previousQuality === 'auto'
+                ? 'Auto'
+                : `Up to ${PlaybackQuality.getLabel(previousQuality)}`;
+            this.updateTranscodeStatus('warning', `${failedLabel} unavailable · Restored ${restoredLabel}`);
+        } finally {
+            this.qualityChanging = false;
         }
     }
 
