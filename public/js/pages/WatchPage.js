@@ -77,6 +77,8 @@ class WatchPage {
         this.playbackQuality = 'auto';
         this.qualityChanging = false;
         this.qualityCapWarning = null;
+        this.qualityCapPending = false;
+        this.settings = {};
         this.content = null;
         this.contentType = null; // 'movie' or 'series'
         this.seriesInfo = null;
@@ -442,6 +444,28 @@ class WatchPage {
     }
 
     /**
+     * Explain when browser-detected playback exceeds a global cap that the
+     * provider prevented the server from checking or enforcing.
+     */
+    updatePendingQualityCapWarning(height) {
+        if (this.playbackQuality !== 'auto' || !this.settings.autoTranscode) return;
+
+        const globalResolution = this.settings.maxResolution || '1080p';
+        const globalHeight = PlaybackQuality.getHeight(globalResolution);
+        if (!globalHeight || height <= globalHeight) {
+            this.qualityCapPending = false;
+            return;
+        }
+        if (!this.qualityCapPending && !this.qualityCapWarning) return;
+
+        const limitLabel = PlaybackQuality.getLabel(globalResolution);
+        const originalLabel = this.getQualityLabel(height) || 'original quality';
+        this.qualityCapWarning = `${limitLabel} limit unavailable · Playing original at ${originalLabel}`;
+        this.qualityCapPending = false;
+        this.updateTranscodeStatus('warning', this.qualityCapWarning);
+    }
+
+    /**
      * Update quality badge display
      */
     updateQualityBadge() {
@@ -570,6 +594,7 @@ class WatchPage {
         // Stop any existing playback
         if (!skipStop) this.stop();
         this.qualityCapWarning = null;
+        this.qualityCapPending = false;
 
         // Show loading spinner
         this.showLoading();
@@ -581,6 +606,7 @@ class WatchPage {
         } catch (e) {
             console.warn('Could not load settings');
         }
+        this.settings = settings;
 
         if (!forceDirectFallback && this.playbackQuality !== 'auto' && qualitySourceInfo) {
             await this.startQualityPlayback(url, this.playbackQuality, qualitySourceInfo);
@@ -599,6 +625,9 @@ class WatchPage {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
                 const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`);
                 const info = await probeRes.json();
+                if (!probeRes.ok || info.error) {
+                    throw new Error(info.error || `Probe request failed (${probeRes.status})`);
+                }
                 console.log(`[WatchPage] Probe result: video=${info.video}, audio=${info.audio}, ${info.width}x${info.height}, compatible=${info.compatible}`);
 
                 // Store early probe info for quality display
@@ -607,14 +636,18 @@ class WatchPage {
 
                 const globalResolution = settings.maxResolution || '1080p';
                 const globalHeight = PlaybackQuality.getHeight(globalResolution);
+                if (this.playbackQuality === 'auto' && globalHeight > 0 && !(info.height > 0)) {
+                    this.qualityCapPending = true;
+                }
                 if (this.playbackQuality === 'auto' && globalHeight > 0 && info.height > globalHeight) {
                     try {
                         await this.startQualityPlayback(url, globalResolution, info);
                         return;
                     } catch (qualityError) {
                         const label = PlaybackQuality.getLabel(globalResolution);
+                        const originalLabel = this.getQualityLabel(info.height) || 'original quality';
                         console.warn(`[WatchPage] ${label} global quality cap unavailable; continuing direct playback:`, qualityError.message);
-                        this.qualityCapWarning = `${label} cap unavailable · Direct`;
+                        this.qualityCapWarning = `${label} limit unavailable · Playing original at ${originalLabel}`;
                     }
                 }
 
@@ -659,6 +692,7 @@ class WatchPage {
                 console.log('[WatchPage] Auto: Using normal playback (compatible)');
             } catch (err) {
                 console.warn('[WatchPage] Probe failed, using normal playback:', err.message);
+                this.qualityCapPending = this.playbackQuality === 'auto';
                 // Continue with normal playback on probe failure
             }
         }
@@ -788,6 +822,7 @@ class WatchPage {
             if (height > 0) {
                 this.currentStreamInfo = { ...this.currentStreamInfo, height };
                 this.updateQualityBadge();
+                this.updatePendingQualityCapWarning(height);
             }
         });
 
@@ -1002,6 +1037,7 @@ class WatchPage {
                 height: this.video.videoHeight
             };
             this.updateQualityBadge();
+            this.updatePendingQualityCapWarning(this.video.videoHeight);
         }
 
         // Handle resumption
