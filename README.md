@@ -181,7 +181,7 @@ npm run test:migration   # upgrades pinned upstream Docker baselines into the lo
 
 The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
 
-The migration test requires Docker. It pulls immutable upstream images pinned by digest, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. CI runs this check as part of the Docker build job.
+The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. The lightweight baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this check as part of the Docker build job.
 
 ### Docker Compose for local builds
 

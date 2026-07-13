@@ -7,24 +7,35 @@ const { spawn } = require('node:child_process');
 const projectRoot = path.join(__dirname, '..');
 const candidateImage = process.env.NODECAST_MIGRATION_CANDIDATE_IMAGE || 'nodecast-tv-plus:migration-test';
 const expectedCandidateVersion = require('../package.json').version;
+const baselineDockerfile = `FROM node:20-bookworm-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
+RUN mkdir -p /app/data /app/transcode-cache
+EXPOSE 3000
+CMD ["npm", "start"]
+`;
 const baselines = [
     {
         version: '2.1.1',
-        image: 'ghcr.io/technomancer702/nodecast-tv@sha256:9937173524774d718c998a768d27bb3b7bf9d2575277715c7230307d6e99904a'
+        image: 'nodecast-tv-upstream-migration-test:2.1.1',
+        context: 'https://github.com/technomancer702/nodecast-tv.git#3be14ef2faff81eb59f405c4641825a64f0b9c4a'
     },
     {
         version: '2.1.4',
-        image: 'ghcr.io/technomancer702/nodecast-tv@sha256:caf34492517f5a827ca75e8d27d5a9a65155c12671d02ac335060cfc4df151fc'
+        image: 'nodecast-tv-upstream-migration-test:2.1.4',
+        context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
     }
 ];
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-function run(command, args, { stream = false, allowFailure = false } = {}) {
+function run(command, args, { stream = false, allowFailure = false, input } = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
             cwd: projectRoot,
-            stdio: stream ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+            stdio: stream ? ['pipe', 'inherit', 'inherit'] : ['pipe', 'pipe', 'pipe'],
             windowsHide: true
         });
         let stdout = '';
@@ -36,6 +47,8 @@ function run(command, args, { stream = false, allowFailure = false } = {}) {
         }
 
         child.once('error', reject);
+        child.stdin.on('error', () => {});
+        child.stdin.end(input);
         child.once('exit', code => {
             const result = { code, stdout: stdout.trim(), stderr: stderr.trim() };
             if (code === 0 || allowFailure) return resolve(result);
@@ -58,9 +71,12 @@ async function ensureCandidateImage() {
     return true;
 }
 
-async function pullBaseline(baseline) {
-    console.log(`Pulling immutable upstream ${baseline.version} baseline...`);
-    await docker(['pull', baseline.image], { stream: true });
+async function buildBaseline(baseline) {
+    console.log(`Building lightweight upstream ${baseline.version} baseline from its pinned commit...`);
+    await docker(['build', '-t', baseline.image, '-f', '-', baseline.context], {
+        stream: true,
+        input: baselineDockerfile
+    });
 }
 
 function startFixtureServer() {
@@ -404,7 +420,7 @@ async function main() {
     const { server, port } = await startFixtureServer();
     try {
         for (const baseline of baselines) {
-            await pullBaseline(baseline);
+            await buildBaseline(baseline);
             await runBaseline(baseline, port);
         }
         console.log('All supported upstream migration baselines passed.');
