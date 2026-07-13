@@ -1,6 +1,6 @@
 {
     "name": "nodecast-tv-plus",
-    "version": "2.1.4",
+    "version": "2.2.0",
     "description": "NodeCast TV Plus - Modern IPTV Player",
     "license": "GPL-3.0-only",
     "main": "server/index.js",
@@ -8,6 +8,7 @@
         "start": "node server/index.js",
         "dev": "node --watch server/index.js",
         "check": "node scripts/check-syntax.js",
+        "release:check": "node scripts/release-check.js",
         "test:e2e": "playwright test",
         "test:hardware": "node scripts/hw-detect-test.js",
         "test:oidc": "node scripts/oidc-discovery-test.js",
@@ -15,7 +16,7 @@
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:security": "node scripts/security-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run test:security && npm run test:hardware && npm run test:oidc && npm run test:transcode && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:hardware && npm run test:oidc && npm run test:transcode && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
