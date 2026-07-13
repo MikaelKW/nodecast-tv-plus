@@ -88,6 +88,59 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
 
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
+### Migrate from upstream NodeCast TV
+
+NodeCast TV Plus 2.2.0 has a verified migration path from these upstream NodeCast TV versions:
+
+| Existing installation | Target | Status |
+| --- | --- | --- |
+| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.2.0 | Verified |
+| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.2.0 | Verified |
+
+The migration tests reuse the upstream `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and migration from a valid legacy bearer token to the Plus authentication cookie.
+
+Migration support is version-specific. A future upstream version is not automatically supported merely because an earlier version was compatible. The current automated gate covers both supported upstream baselines. Beginning with the release after 2.2.0, it will also cover the previous stable Plus release. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+
+Before migrating:
+
+1. Stop the upstream container and back up its complete `/app/data` directory or Docker volume.
+2. Identify the storage currently mounted at `/app/data`:
+
+   ```bash
+   docker inspect nodecast-tv --format '{{range .Mounts}}{{println .Type .Name .Source "->" .Destination}}{{end}}'
+   ```
+
+3. Create a Plus `.env` file from [`.env.example`](.env.example). Set two different strong values for `JWT_SECRET` and `SESSION_SECRET`.
+4. Start the Plus container with the **existing upstream storage** mounted at `/app/data`. Do not start it with a new empty volume.
+
+For an existing named volume, keep its actual name in the `-v` argument:
+
+```bash
+docker run -d \
+  --name nodecast-tv-plus \
+  --restart unless-stopped \
+  --env-file .env \
+  -p 3000:3000 \
+  -v EXISTING_UPSTREAM_VOLUME:/app/data \
+  ghcr.io/mikaelkw/nodecast-tv-plus:2.2.0
+```
+
+For an existing bind-mounted directory, mount its absolute path instead:
+
+```bash
+-v /absolute/path/to/existing/data:/app/data
+```
+
+Important limitations:
+
+- Plus requires strong `JWT_SECRET` and `SESSION_SECRET` values in production. If the upstream installation used its built-in JWT secret, create a new strong value and sign in again after migration. The saved account and password are preserved.
+- Keeping the same valid `JWT_SECRET` allows an existing upstream browser token to be exchanged for the safer Plus authentication cookie. Never weaken or reuse an exposed secret solely to preserve a browser session.
+- Browser-only preferences do not follow automatically when the hostname, protocol, or port changes. Server-side users, sources, settings, favorites, and history remain in `/app/data`.
+- Custom plugins, reverse-proxy settings, SSO/OIDC environment variables, hardware-device mappings, and other configuration outside `/app/data` must be reviewed and migrated separately.
+- Downgrades are not guaranteed. To roll back safely, stop Plus and restore the backup made before migration rather than attaching a Plus-modified data volume to an older upstream container.
+
+After startup, confirm that login, sources, favorites, history, and playback work before removing the backup or old container.
+
 ### Build and run from source
 
 #### Prerequisites
@@ -123,9 +176,12 @@ The project includes three levels of checks:
 npm test                 # syntax, security, and server smoke tests
 npm run test:e2e         # isolated browser, M3U, EPG, API, and playback test
 npm run test:real-world  # imports the public IPTV-org sports playlist
+npm run test:migration   # upgrades pinned upstream Docker baselines into the local image
 ```
 
 The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
+
+The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. The lightweight baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
 
 ### Docker Compose for local builds
 
