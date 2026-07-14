@@ -46,5 +46,6 @@ The CI workflow repeats the application, browser, audit, and Docker checks on a 
 - Keep the application data volume and deployment secrets separate from the container image.
 - Back up the data volume before upgrading, particularly when a release includes data-model changes.
 - Roll back by recreating the container with the previously tested versioned image or pinned image digest while keeping the data volume.
-- The first formal Plus release has no earlier stable Plus version tag. Its fallback is a previously tested `sha-*` image or digest recorded by the deployment operator.
+- For releases after v2.2.0, use the previous stable versioned image as the normal rollback target. Preserve the pre-upgrade data backup because downgrades are not guaranteed across data-model changes.
+- The first formal Plus release, v2.2.0, has no earlier stable Plus version tag. Its fallback is a previously tested `sha-*` image or digest recorded by the deployment operator.
 - Never move, replace, or delete a published release tag to perform a rollback.
