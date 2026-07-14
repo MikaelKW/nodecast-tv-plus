@@ -223,17 +223,30 @@ async function start() {
             } else if (action === 'get_series_categories') {
                 response = [{ category_id: '17', category_name: 'Safari Layout Test', parent_id: 0 }];
             } else if (action === 'get_series') {
-                response = [{
-                    num: 1,
-                    name: 'Controlled Safari Series',
-                    series_id: 17,
-                    cover: `${baseUrl}/logo.svg`,
-                    plot: 'Controlled Series details used for Safari layout testing.',
-                    releaseDate: '2026-07-15',
-                    last_modified: '1784073600',
-                    rating: '8.5',
-                    category_id: '17'
-                }];
+                response = [
+                    {
+                        num: 1,
+                        name: 'Controlled Safari Series',
+                        series_id: 17,
+                        cover: `${baseUrl}/logo.svg`,
+                        plot: 'Controlled Series details used for Safari layout testing.',
+                        releaseDate: '2026-07-15',
+                        last_modified: '1784073600',
+                        rating: '8.5',
+                        category_id: '17'
+                    },
+                    {
+                        num: 2,
+                        name: 'Controlled Mobile Long Series',
+                        series_id: 18,
+                        cover: `${baseUrl}/logo.svg`,
+                        plot: 'Long controlled Series details used to verify mobile scrolling.',
+                        releaseDate: '2026-07-15',
+                        last_modified: '1784073601',
+                        rating: '8.0',
+                        category_id: '17'
+                    }
+                ];
             } else if (action === 'get_series_info' && requestUrl.searchParams.get('series_id') === '17') {
                 response = {
                     episodes: {
@@ -241,6 +254,18 @@ async function start() {
                             { id: '1701', episode_num: 1, title: 'Controlled Episode One', duration: '00:24:00', container_extension: 'mp4' },
                             { id: '1702', episode_num: 2, title: 'Controlled Episode Two', duration: '00:24:00', container_extension: 'mp4' }
                         ]
+                    }
+                };
+            } else if (action === 'get_series_info' && requestUrl.searchParams.get('series_id') === '18') {
+                response = {
+                    episodes: {
+                        1: Array.from({ length: 12 }, (_, index) => ({
+                            id: String(1801 + index),
+                            episode_num: index + 1,
+                            title: `Controlled Long Episode ${index + 1}`,
+                            duration: '00:24:00',
+                            container_extension: 'mp4'
+                        }))
                     }
                 };
             } else {
