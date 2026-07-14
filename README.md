@@ -88,6 +88,8 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
 
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
+For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. It defaults to `15` and accepts a whole number from `1` to `300`. The value applies to each startup attempt; because one retry may occur after an initial provider rejection, the total wait can be approximately twice the configured value.
+
 ### Migrate from upstream NodeCast TV
 
 NodeCast TV Plus 2.2.0 has a verified migration path from these upstream NodeCast TV versions:
@@ -212,6 +214,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           PORT: 3000 # Optional: Internal container port
           JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+          TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
     ```
 
 2.  Build and run the container:
