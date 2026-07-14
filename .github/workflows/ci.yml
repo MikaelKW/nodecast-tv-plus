@@ -36,11 +36,14 @@ jobs:
       - name: Run application checks
         run: npm test
 
-      - name: Install Chromium for browser tests
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers for integration tests
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Run browser and media integration tests
         run: npm run test:e2e
+
+      - name: Run mobile WebKit layout tests
+        run: npm run test:e2e:mobile
 
       - name: Upload browser test diagnostics
         if: ${{ !cancelled() }}
