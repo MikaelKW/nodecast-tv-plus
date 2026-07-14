@@ -354,6 +354,16 @@ const settings = {
   }
 };
 
+function getUsernameKey(username) {
+  return typeof username === 'string' ? username.toLowerCase() : null;
+}
+
+function createUsernameConflictError() {
+  const error = new Error('Username already exists');
+  error.code = 'USERNAME_EXISTS';
+  return error;
+}
+
 // User operations
 const users = {
   async getAll() {
@@ -368,7 +378,17 @@ const users = {
 
   async getByUsername(username) {
     const db = await loadDb();
-    return db.users?.find(u => u.username === username);
+    const usernameKey = getUsernameKey(username);
+    if (usernameKey === null) return undefined;
+
+    const matches = (db.users || []).filter(u => getUsernameKey(u.username) === usernameKey);
+
+    if (matches.length === 1) return matches[0];
+
+    // Older databases may already contain names that differ only by case.
+    // Preserve exact-case access so administrators can resolve the conflict,
+    // but never guess which account was intended for a mixed-case login.
+    return matches.find(u => u.username === username);
   },
 
   async getByOidcId(oidcId) {
@@ -388,8 +408,9 @@ const users = {
     }
 
     // Check if username already exists
-    if (db.users.some(u => u.username === userData.username)) {
-      throw new Error('Username already exists');
+    const usernameKey = getUsernameKey(userData.username);
+    if (db.users.some(u => getUsernameKey(u.username) === usernameKey)) {
+      throw createUsernameConflictError();
     }
 
     const newUser = {
@@ -421,8 +442,9 @@ const users = {
 
     // Check if username is being changed and if it already exists
     if (updates.username && updates.username !== db.users[userIndex].username) {
-      if (db.users.some(u => u.username === updates.username)) {
-        throw new Error('Username already exists');
+      const usernameKey = getUsernameKey(updates.username);
+      if (db.users.some((u, index) => index !== userIndex && getUsernameKey(u.username) === usernameKey)) {
+        throw createUsernameConflictError();
       }
     }
 
