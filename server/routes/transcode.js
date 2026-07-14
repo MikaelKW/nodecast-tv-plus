@@ -9,6 +9,7 @@ const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { TRANSCODE_START_TIMEOUT_MS } = require('../config/transcode');
 
 router.use(auth.requireAuth);
 
@@ -90,7 +91,7 @@ router.post('/session', async (req, res) => {
         });
 
         // Wait for the first segment, retrying one immediate provider rejection.
-        const ready = await session.startAndWaitForPlaylist(15000);
+        const ready = await session.startAndWaitForPlaylist(TRANSCODE_START_TIMEOUT_MS);
 
         if (clientDisconnected) {
             await (disconnectCleanup || transcodeSession.removeSession(session.id));
