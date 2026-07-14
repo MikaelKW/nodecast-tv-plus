@@ -318,6 +318,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#watch-transcode-status')).toContainText('480p unavailable');
     expect(qualitySessionSources.filter(path => path === '/browser-only.mp4')).toHaveLength(3);
 
+    // A transient HLS segment outage after playback begins must reconnect
+    // instead of leaving the movie/series player black and silent.
+    expectedRejectedResourceErrors += 4;
+    await page.evaluate(async ({ url, sourceId }) => {
+        await window.API.settings.update({ autoTranscode: false, maxResolution: '1080p' });
+        const watch = window.app.pages.watch;
+        watch.stop();
+        watch.content = {
+            id: 'recoverable-hls-movie',
+            type: 'movie',
+            title: 'Recoverable HLS Movie',
+            sourceId,
+            categoryId: 'controlled'
+        };
+        watch.contentType = 'movie';
+        watch.sourceUrl = url;
+        watch.currentUrl = url;
+        watch.playbackQuality = 'auto';
+        watch.resumeTime = 0;
+        window.app.navigateTo('watch', true);
+        await watch.loadVideo(url);
+    }, { url: `${fixtureBaseUrl}/recoverable-hls/playlist.m3u8`, sourceId: m3uSource.id });
+    await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
+        timeout: 30_000
+    }).toBeGreaterThan(5);
+    expect(await watchVideo.evaluate(element => element.paused)).toBe(false);
+    const recoverableStats = await (await fetch(`${fixtureBaseUrl}/recoverable-hls/stats`)).json();
+    expect(recoverableStats.failedRequests).toBe(4);
+    expect(recoverableStats.segmentRequests).toBeGreaterThan(4);
+    expect(await page.evaluate(() => window.app.pages.watch.hlsRecoveryCount)).toBe(0);
+
     const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
     expect(reset.status).toBe(204);
 
@@ -344,5 +375,6 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.goto('/login.html');
     await expect(page.locator('#sso-login-section')).toBeVisible();
 
+    expect(expectedRejectedResourceErrors).toBe(0);
     expect(browserErrors, browserErrors.join('\n')).toEqual([]);
 });

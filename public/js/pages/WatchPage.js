@@ -73,6 +73,9 @@ class WatchPage {
 
         // State
         this.hls = null;
+        this.hlsRecoveryTimer = null;
+        this.hlsRecoveryCount = 0;
+        this.hlsMediaRecoveryCount = 0;
         this.sourceUrl = null;
         this.playbackQuality = 'auto';
         this.qualityChanging = false;
@@ -198,7 +201,10 @@ class WatchPage {
         this.video?.addEventListener('ended', () => this.onEnded());
         this.video?.addEventListener('error', (e) => this.onError(e));
         this.video?.addEventListener('waiting', () => this.showLoading());
-        this.video?.addEventListener('canplay', () => this.hideLoading());
+        this.video?.addEventListener('canplay', () => {
+            this.hlsMediaRecoveryCount = 0;
+            this.hideLoading();
+        });
 
         // Overlay auto-hide + click to toggle play
         const watchSection = document.querySelector('.watch-video-section');
@@ -783,6 +789,11 @@ class WatchPage {
      * Play HLS stream using Hls.js
      */
     playHls(url) {
+        clearTimeout(this.hlsRecoveryTimer);
+        this.hlsRecoveryTimer = null;
+        this.hlsRecoveryCount = 0;
+        this.hlsMediaRecoveryCount = 0;
+
         if (this.hls) {
             this.hls.destroy();
         }
@@ -790,9 +801,19 @@ class WatchPage {
         this.hls = new Hls({
             maxBufferLength: 30,
             maxMaxBufferLength: 60,
+            maxBufferHole: 1,
             startLevel: -1,
             enableWorker: true,
+            fragLoadingMaxRetry: 3,
+            fragLoadingRetryDelay: 500,
+            fragLoadingMaxRetryTimeout: 4000,
+            manifestLoadingMaxRetry: 3,
+            levelLoadingMaxRetry: 3,
+            nudgeMaxRetry: 6,
+            lowLatencyMode: false,
         });
+
+        const activeHls = this.hls;
 
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
@@ -817,6 +838,12 @@ class WatchPage {
             });
         });
 
+        this.hls.on(Hls.Events.FRAG_LOADED, () => {
+            if (activeHls !== this.hls) return;
+            this.hlsRecoveryCount = 0;
+            this.hideLoading();
+        });
+
         this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
             const height = Number(this.hls?.levels?.[data.level]?.height) || 0;
             if (height > 0) {
@@ -827,17 +854,58 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-                console.error('[WatchPage] HLS fatal error:', data);
-                // Try proxy on CORS error (only if not already proxied/transcoded)
-                // Note: Transcoded streams are local, so no CORS issues usually
-                if (!url.startsWith('/api/') && (data.type === Hls.ErrorTypes.NETWORK_ERROR)) {
-                    console.log('[WatchPage] Retrying via proxy...');
-                    this.playHls(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`);
-                } else {
-                    this.hls.destroy();
+            if (!data.fatal || activeHls !== this.hls) return;
+
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                this.hlsMediaRecoveryCount += 1;
+                console.warn(`[WatchPage] Recovering from HLS media error (${this.hlsMediaRecoveryCount}/2):`, data.details);
+                if (this.hlsMediaRecoveryCount === 1) {
+                    activeHls.recoverMediaError();
+                    return;
+                }
+                if (this.hlsMediaRecoveryCount === 2) {
+                    activeHls.swapAudioCodec();
+                    activeHls.recoverMediaError();
+                    return;
                 }
             }
+
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                this.hlsRecoveryCount += 1;
+                const manifestFailedBeforePlayback = this.video.currentTime === 0 && (
+                    data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+                    data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
+                );
+                const canTryProxy = !url.startsWith('/api/') && Boolean(this.currentUrl);
+
+                if (manifestFailedBeforePlayback && canTryProxy) {
+                    console.warn('[WatchPage] Direct HLS manifest failed; retrying through the stream proxy.');
+                    this.playHls(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`);
+                    return;
+                }
+
+                if (this.hlsRecoveryCount <= 3) {
+                    const retryDelay = Math.min(this.hlsRecoveryCount * 1000, 3000);
+                    console.warn(`[WatchPage] HLS network interruption; reconnecting in ${retryDelay}ms (${this.hlsRecoveryCount}/3).`);
+                    this.showLoading();
+                    this.hlsRecoveryTimer = setTimeout(() => {
+                        if (activeHls === this.hls) activeHls.startLoad();
+                    }, retryDelay);
+                    return;
+                }
+
+                if (canTryProxy) {
+                    console.warn('[WatchPage] Direct HLS recovery was exhausted; retrying through the stream proxy.');
+                    this.playHls(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`);
+                    return;
+                }
+            }
+
+            console.error('[WatchPage] HLS playback could not recover:', data.type, data.details);
+            this.hideLoading();
+            this.updateTranscodeStatus('warning', 'Playback stopped · Try again');
+            activeHls.destroy();
+            if (activeHls === this.hls) this.hls = null;
         });
     }
 
@@ -849,6 +917,11 @@ class WatchPage {
     }
 
     stop() {
+        clearTimeout(this.hlsRecoveryTimer);
+        this.hlsRecoveryTimer = null;
+        this.hlsRecoveryCount = 0;
+        this.hlsMediaRecoveryCount = 0;
+
         // Stop history tracking and save final progress
         this.stopHistoryTracking();
         this.saveProgress();
