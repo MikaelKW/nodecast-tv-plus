@@ -6,9 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - NodeCast TV Plus</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/main.css?v=3">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        html,
+        body {
+            height: auto;
+            min-height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -22,7 +32,15 @@
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            padding: 20px;
+            min-height: 100dvh;
+            box-sizing: border-box;
+            padding: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+        }
+
+        @media (max-height: 600px) {
+            .login-container {
+                justify-content: flex-start;
+            }
         }
 
         .login-box {
