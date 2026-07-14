@@ -17,9 +17,10 @@
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:migration": "node scripts/migration-test.js",
         "test:auth": "node scripts/auth-username-test.js",
+        "test:xmltv": "node scripts/xmltv-timestamp-test.js",
         "test:security": "node scripts/security-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:auth && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:transcode && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:auth && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:transcode && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
