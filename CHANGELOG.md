@@ -4,6 +4,31 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.2.1] - 2026-07-14
+
+This patch release improves provider-data integrity, login usability, transcode startup flexibility, and movie/series playback recovery. It also formalizes verified migration guidance for supported upstream installations.
+
+### Changed
+
+- Added `TRANSCODE_START_TIMEOUT_SECONDS` as an optional 1–300 second per-attempt limit for providers that need longer than the unchanged 15-second default to begin transcoding ([#114]).
+- Documented the supported upstream migration paths and added a deterministic release gate that validates preservation of accounts, provider configuration, settings, categories, content, favorites, history, hidden items, and authentication state ([#106]).
+- Corrected release-note traceability, version-lineage references, and section layout for the first formal Plus release ([#103]).
+
+### Fixed
+
+- Prevented overlapping XMLTV/EPG identifiers from replacing Xtream channel names and logos, including automatic repair during the next source synchronization ([#111]).
+- Made local usernames case-insensitive for login and duplicate detection while preserving their stored display spelling and exact-case access for legacy conflicts ([#117]).
+- Added bounded network reconnection and media recovery for interrupted movie and series HLS playback, with stream-proxy fallback and an actionable message when recovery is exhausted ([#120]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.2.1`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Changing them signs existing browser sessions out but does not remove accounts or application data.
+- No manual database migration is required.
+- `TRANSCODE_START_TIMEOUT_SECONDS` is optional; installations that omit it retain the existing 15-second behavior.
+- Migration from the published `2.2.0` container was validated with a persistent data volume. Automated migration gates also continue to cover supported upstream v2.1.1 and 2.1.4 baselines.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.2.0` and the existing deployment secrets.
+
 ## [2.2.0] - 2026-07-13
 
 This is the first formal NodeCast TV Plus release. It includes the relevant work completed since the repository was forked from NodeCast TV.
@@ -63,6 +88,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.2.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.1.1...v2.2.0
 [#1]: https://github.com/MikaelKW/nodecast-tv-plus/pull/1
 [#53]: https://github.com/MikaelKW/nodecast-tv-plus/pull/53
@@ -80,3 +106,9 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#92]: https://github.com/MikaelKW/nodecast-tv-plus/pull/92
 [#96]: https://github.com/MikaelKW/nodecast-tv-plus/pull/96
 [#100]: https://github.com/MikaelKW/nodecast-tv-plus/pull/100
+[#103]: https://github.com/MikaelKW/nodecast-tv-plus/pull/103
+[#106]: https://github.com/MikaelKW/nodecast-tv-plus/pull/106
+[#111]: https://github.com/MikaelKW/nodecast-tv-plus/pull/111
+[#114]: https://github.com/MikaelKW/nodecast-tv-plus/pull/114
+[#117]: https://github.com/MikaelKW/nodecast-tv-plus/pull/117
+[#120]: https://github.com/MikaelKW/nodecast-tv-plus/pull/120
