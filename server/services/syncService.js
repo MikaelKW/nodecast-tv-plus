@@ -412,6 +412,7 @@ class SyncService {
         const db = getDb();
         let allChannels = [];
         let totalProgrammes = 0;
+        let skippedProgrammes = 0;
         let batchCount = 0;
 
         // Clear old programmes first
@@ -439,6 +440,7 @@ class SyncService {
         // Stream and process in batches (default 1000 programmes per batch)
         for await (const batch of epgParser.fetchAndParseStreaming(url)) {
             batchCount++;
+            skippedProgrammes += batch.skippedProgrammes || 0;
 
             // Collect channels from first batch
             if (batch.channels) {
@@ -462,6 +464,9 @@ class SyncService {
         }
 
         console.log(`[Sync] EPG Parsed: ${allChannels.length} channels, ${totalProgrammes} programmes`);
+        if (skippedProgrammes > 0) {
+            console.warn(`[Sync] Skipped ${skippedProgrammes} programme entries with invalid XMLTV timestamps`);
+        }
         logMemory();
 
         // Save EPG Channels
