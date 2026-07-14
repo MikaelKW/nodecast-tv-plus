@@ -115,6 +115,62 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         if (!response.ok) throw new Error(`Reduced-precision EPG cleanup failed: ${response.status}`);
     }, reducedPrecisionSource.id);
 
+    const seriesSource = await page.evaluate(async values => {
+        const response = await fetch('/api/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'xtream',
+                name: 'Controlled Safari Series',
+                url: values.url,
+                username: values.username,
+                password: values.password
+            })
+        });
+        if (!response.ok) throw new Error(`Series source creation failed: ${response.status}`);
+        return response.json();
+    }, {
+        url: `${fixtureBaseUrl}/xtream`,
+        username: crypto.randomBytes(18).toString('base64url'),
+        password: crypto.randomBytes(24).toString('base64url')
+    });
+    await waitForSync(page, seriesSource.id);
+
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('#page-series')).toHaveClass(/active/);
+    const controlledSeries = page.locator('.series-card', { hasText: 'Controlled Safari Series' });
+    await expect(controlledSeries).toBeVisible();
+    await controlledSeries.click();
+
+    const seriesDetails = page.locator('#series-details');
+    await expect(seriesDetails).toBeVisible();
+    await expect(seriesDetails).toHaveAttribute('aria-hidden', 'false');
+    await expect(page.locator('#series-title')).toHaveText('Controlled Safari Series');
+    await expect(page.locator('#series-plot')).toContainText('Safari layout testing');
+    await expect(page.locator('.season-name')).toHaveText('Season 1 (2 episodes)');
+    await expect(page.locator('.episode-item')).toHaveCount(2);
+
+    // Real iOS Safari can fail to lay out an absolutely positioned child of
+    // this flex container. Keep the details view in normal flow with a real,
+    // scrollable height so tapping a card cannot leave a blank content area.
+    const seriesLayout = await seriesDetails.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return {
+            position: getComputedStyle(element).position,
+            height: rect.height,
+            scrollTop: element.scrollTop,
+            gridHidden: document.getElementById('series-grid').classList.contains('hidden')
+        };
+    });
+    expect(seriesLayout.position).toBe('relative');
+    expect(seriesLayout.height).toBeGreaterThan(0);
+    expect(seriesLayout.scrollTop).toBe(0);
+    expect(seriesLayout.gridHidden).toBe(true);
+
+    await page.locator('.series-back-btn').click();
+    await expect(controlledSeries).toBeVisible();
+    await expect(seriesDetails).toBeHidden();
+
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
     await page.locator('.group-header', { hasText: 'Local Test' }).click();

@@ -12,6 +12,9 @@ class SeriesPage {
         this.searchInput = document.getElementById('series-search');
         this.detailsPanel = document.getElementById('series-details');
         this.seasonsContainer = document.getElementById('series-seasons');
+        this.detailsPoster = document.getElementById('series-poster');
+        this.detailsTitle = document.getElementById('series-title');
+        this.detailsPlot = document.getElementById('series-plot');
 
         this.seriesList = [];
         this.categories = [];
@@ -343,16 +346,24 @@ class SeriesPage {
     }
 
     async showSeriesDetails(series) {
+        if (!this.container || !this.detailsPanel || !this.seasonsContainer ||
+            !this.detailsPoster || !this.detailsTitle || !this.detailsPlot) {
+            console.error('[Series] Details panel is unavailable');
+            return;
+        }
+
         this.currentSeries = series;
 
         // Show details panel
         this.container.classList.add('hidden');
         this.detailsPanel.classList.remove('hidden');
+        this.detailsPanel.setAttribute('aria-hidden', 'false');
+        this.detailsPanel.scrollTop = 0;
 
         // Set header info
-        document.getElementById('series-poster').src = series.cover || '/img/placeholder.png';
-        document.getElementById('series-title').textContent = series.name;
-        document.getElementById('series-plot').textContent = series.plot || '';
+        this.detailsPoster.src = series.cover || '/img/placeholder.png';
+        this.detailsTitle.textContent = series.name;
+        this.detailsPlot.textContent = series.plot || '';
 
         // Show loading
         this.seasonsContainer.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
@@ -413,8 +424,12 @@ class SeriesPage {
     }
 
     hideDetails() {
-        this.detailsPanel.classList.add('hidden');
-        this.container.classList.remove('hidden');
+        if (this.detailsPanel) {
+            this.detailsPanel.classList.add('hidden');
+            this.detailsPanel.setAttribute('aria-hidden', 'true');
+            this.detailsPanel.scrollTop = 0;
+        }
+        this.container?.classList.remove('hidden');
         this.currentSeries = null;
     }
 
