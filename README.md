@@ -84,7 +84,7 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
      ghcr.io/mikaelkw/nodecast-tv-plus:2.2.0
    ```
 
-4. Open `http://localhost:3000` and create the initial administrator account.
+4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
 
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
