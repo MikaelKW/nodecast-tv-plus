@@ -12,9 +12,12 @@ const testRoot = path.join(projectRoot, '.test-data', `playwright-${process.pid}
 const dataDir = path.join(testRoot, 'data');
 const cacheDir = path.join(testRoot, 'cache');
 const mediaPath = path.join(testRoot, 'sample.mp4');
+const recoverableHlsDir = path.join(testRoot, 'recoverable-hls');
 const appPort = Number(process.env.NODECAST_TEST_APP_PORT || 3210);
 const fixturePort = Number(process.env.NODECAST_TEST_FIXTURE_PORT || 3211);
 const connectionStats = { active: 0, maxActive: 0, total: 0, aborted: 0 };
+const recoverableHlsStats = { failedRequests: 0, segmentRequests: 0 };
+const recoverableSegmentFailures = 4;
 
 function assertSafeTestPath(target) {
     const relative = path.relative(projectRoot, target);
@@ -37,6 +40,7 @@ function generateMedia() {
         '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
         '-t', '8', '-shortest',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-g', '50', '-keyint_min', '50', '-sc_threshold', '0',
         '-c:a', 'aac', '-b:a', '128k',
         '-movflags', '+faststart',
         mediaPath
@@ -44,6 +48,20 @@ function generateMedia() {
 
     if (result.status !== 0) {
         throw new Error(`Unable to generate test media: ${result.stderr || 'FFmpeg failed'}`);
+    }
+
+    fs.mkdirSync(recoverableHlsDir, { recursive: true });
+    const hlsResult = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-i', mediaPath,
+        '-c', 'copy',
+        '-f', 'hls', '-hls_time', '2', '-hls_list_size', '0',
+        '-hls_segment_filename', path.join(recoverableHlsDir, 'segment-%03d.ts'),
+        path.join(recoverableHlsDir, 'playlist.m3u8')
+    ], { encoding: 'utf8' });
+
+    if (hlsResult.status !== 0) {
+        throw new Error(`Unable to generate recoverable HLS fixture: ${hlsResult.stderr || 'FFmpeg failed'}`);
     }
 }
 
@@ -147,6 +165,23 @@ async function start() {
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');
+        if (pathname === '/recoverable-hls/playlist.m3u8') {
+            return sendFile(req, res, path.join(recoverableHlsDir, 'playlist.m3u8'), 'application/vnd.apple.mpegurl');
+        }
+        if (pathname.startsWith('/recoverable-hls/segment-') && pathname.endsWith('.ts')) {
+            recoverableHlsStats.segmentRequests += 1;
+            const segmentName = path.basename(pathname);
+            if (segmentName === 'segment-001.ts' && recoverableHlsStats.failedRequests < recoverableSegmentFailures) {
+                recoverableHlsStats.failedRequests += 1;
+                res.writeHead(503, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+                return res.end('controlled transient segment failure');
+            }
+            return sendFile(req, res, path.join(recoverableHlsDir, segmentName), 'video/mp2t');
+        }
+        if (pathname === '/recoverable-hls/stats') {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            return res.end(JSON.stringify(recoverableHlsStats));
+        }
         if (pathname === '/browser-only.mp4') {
             // Models providers that allow browser playback but reject server-side
             // FFmpeg/ffprobe clients regardless of their configured User-Agent.
