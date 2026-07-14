@@ -3,6 +3,10 @@ const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
 
+function userMutationErrorStatus(error) {
+    return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
+}
+
 // Configure Passport strategies
 auth.configureLocalStrategy(
     async (username) => await db.users.getByUsername(username),
@@ -131,7 +135,7 @@ router.post('/setup', async (req, res) => {
         });
     } catch (err) {
         console.error('Error in /setup:', err);
-        res.status(500).json({ error: err.message || 'Server error' });
+        res.status(userMutationErrorStatus(err)).json({ error: err.message || 'Server error' });
     }
 });
 
@@ -253,7 +257,7 @@ router.post('/users', auth.requireAuth, auth.requireAdmin, async (req, res) => {
         res.status(201).json(newUser);
     } catch (err) {
         console.error('Error creating user:', err);
-        res.status(500).json({ error: err.message || 'Server error' });
+        res.status(userMutationErrorStatus(err)).json({ error: err.message || 'Server error' });
     }
 });
 
@@ -301,7 +305,7 @@ router.put('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res) =
         res.json(updatedUser);
     } catch (err) {
         console.error('Error updating user:', err);
-        res.status(500).json({ error: err.message || 'Server error' });
+        res.status(userMutationErrorStatus(err)).json({ error: err.message || 'Server error' });
     }
 });
 
