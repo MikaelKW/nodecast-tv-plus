@@ -32,6 +32,10 @@ function xmltvTimestamp(date) {
         `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
 }
 
+function xmltvMinuteTimestamp(date) {
+    return xmltvTimestamp(date).replace(/\d{2} \+0000$/, ' +0000');
+}
+
 function generateMedia() {
     const ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
     const result = spawnSync(ffmpegPath, [
@@ -158,6 +162,31 @@ async function start() {
   <programme start="${xmltvTimestamp(startTime)}" stop="${xmltvTimestamp(endTime)}" channel="nodecast.test.one">
     <title>Controlled Test Programme</title>
     <desc>Generated locally for NodeCast TV Plus testing.</desc>
+  </programme>
+</tv>`;
+            res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
+            return res.end(xml);
+        }
+
+        if (pathname === '/reduced-precision-guide.xml') {
+            const minute = 60 * 1000;
+            const middle = new Date(Math.floor(Date.now() / minute) * minute);
+            const firstStart = new Date(middle.getTime() - (30 * minute));
+            const secondStop = new Date(middle.getTime() + (30 * minute));
+            const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="NodeCast TV Plus reduced-precision tests">
+  <channel id="timestamp.test"><display-name>Timestamp Test</display-name></channel>
+  <programme start="${xmltvTimestamp(firstStart)}" stop="${xmltvMinuteTimestamp(middle)}" channel="timestamp.test">
+    <title>Full precision start</title>
+  </programme>
+  <programme start="${xmltvMinuteTimestamp(middle)}" stop="${xmltvMinuteTimestamp(secondStop)}" channel="timestamp.test">
+    <title>Minute precision</title>
+  </programme>
+  <programme start="20260230060000 +0000" stop="${xmltvMinuteTimestamp(secondStop)}" channel="timestamp.test">
+    <title>Invalid calendar date</title>
+  </programme>
+  <programme start="${xmltvMinuteTimestamp(middle)}" stop="20260714250000 +0000" channel="timestamp.test">
+    <title>Invalid stop time</title>
   </programme>
 </tv>`;
             res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
