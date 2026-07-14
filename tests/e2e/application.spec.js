@@ -84,6 +84,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(epg.programmes).toHaveLength(1);
     expect(epg.programmes[0].title).toBe('Controlled Test Programme');
 
+    // XMLTV allows reduced timestamp precision. Valid minute-precision entries
+    // must sync, while malformed entries are skipped without aborting the source.
+    const reducedPrecisionSource = await page.evaluate(async url => {
+        const response = await fetch('/api/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'epg', name: 'Reduced Precision EPG', url })
+        });
+        if (!response.ok) throw new Error(`Reduced-precision EPG source creation failed: ${response.status}`);
+        return response.json();
+    }, `${fixtureBaseUrl}/reduced-precision-guide.xml`);
+    await waitForSync(page, reducedPrecisionSource.id);
+
+    const reducedPrecisionEpg = await page.evaluate(async id => {
+        const response = await fetch(`/api/proxy/epg/${id}`);
+        return response.json();
+    }, reducedPrecisionSource.id);
+    expect(reducedPrecisionEpg.programmes).toHaveLength(2);
+    expect(reducedPrecisionEpg.programmes.map(programme => programme.title)).toEqual([
+        'Full precision start',
+        'Minute precision'
+    ]);
+    expect(reducedPrecisionEpg.programmes.every(programme => (
+        Number.isFinite(Date.parse(programme.start)) && Number.isFinite(Date.parse(programme.stop))
+    ))).toBe(true);
+
+    await page.evaluate(async id => {
+        const response = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(`Reduced-precision EPG cleanup failed: ${response.status}`);
+    }, reducedPrecisionSource.id);
+
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
     await page.locator('.group-header', { hasText: 'Local Test' }).click();
