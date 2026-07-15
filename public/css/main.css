@@ -1296,6 +1296,47 @@ video::cue {
   word-break: break-all;
 }
 
+.source-sync-status {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  font-size: 0.75rem;
+}
+
+.source-sync-status.visible {
+  display: flex;
+}
+
+.source-sync-status.syncing {
+  color: var(--color-warning);
+}
+
+.source-sync-status.success {
+  color: var(--color-success);
+}
+
+.source-sync-status.error {
+  color: var(--color-error);
+}
+
+.source-sync-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.source-sync-retry:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .source-actions {
   display: flex;
   gap: var(--space-xs);

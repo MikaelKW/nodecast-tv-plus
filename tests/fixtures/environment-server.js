@@ -18,6 +18,7 @@ const fixturePort = Number(process.env.NODECAST_TEST_FIXTURE_PORT || 3211);
 const connectionStats = { active: 0, maxActive: 0, total: 0, aborted: 0 };
 const recoverableHlsStats = { failedRequests: 0, segmentRequests: 0 };
 const recoverableSegmentFailures = 4;
+let retryGuideRequests = 0;
 
 function assertSafeTestPath(target) {
     const relative = path.relative(projectRoot, target);
@@ -34,6 +35,30 @@ function xmltvTimestamp(date) {
 
 function xmltvMinuteTimestamp(date) {
     return xmltvTimestamp(date).replace(/\d{2} \+0000$/, ' +0000');
+}
+
+function controlledPlaylist(baseUrl) {
+    return [
+        '#EXTM3U',
+        `#EXTINF:-1 tvg-id="nodecast.test.one" tvg-name="NodeCast Test Pattern" tvg-logo="${baseUrl}/logo.svg" group-title="Local Test",NodeCast Test Pattern`,
+        `${baseUrl}/sample.mp4`,
+        `#EXTINF:-1 tvg-id="nodecast.test.two" tvg-name="NodeCast Test Backup" group-title="Local Test",NodeCast Test Backup`,
+        `${baseUrl}/sample.mp4`
+    ].join('\n');
+}
+
+function controlledGuideXml() {
+    const now = Date.now();
+    const startTime = new Date(now - 30 * 60 * 1000);
+    const endTime = new Date(now + 30 * 60 * 1000);
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="NodeCast TV Plus tests">
+  <channel id="nodecast.test.one"><display-name>NodeCast Test Pattern</display-name></channel>
+  <programme start="${xmltvTimestamp(startTime)}" stop="${xmltvTimestamp(endTime)}" channel="nodecast.test.one">
+    <title>Controlled Test Programme</title>
+    <desc>Generated locally for NodeCast TV Plus testing.</desc>
+  </programme>
+</tv>`;
 }
 
 function generateMedia() {
@@ -141,32 +166,28 @@ async function start() {
         const requestUrl = new URL(req.url, baseUrl);
         const pathname = requestUrl.pathname;
 
-        if (pathname === '/playlist.m3u') {
-            const playlist = [
-                '#EXTM3U',
-                `#EXTINF:-1 tvg-id="nodecast.test.one" tvg-name="NodeCast Test Pattern" tvg-logo="${baseUrl}/logo.svg" group-title="Local Test",NodeCast Test Pattern`,
-                `${baseUrl}/sample.mp4`,
-                `#EXTINF:-1 tvg-id="nodecast.test.two" tvg-name="NodeCast Test Backup" group-title="Local Test",NodeCast Test Backup`,
-                `${baseUrl}/sample.mp4`
-            ].join('\n');
-            res.writeHead(200, { 'Content-Type': 'application/x-mpegURL', 'Access-Control-Allow-Origin': '*' });
-            return res.end(playlist);
+        if (pathname === '/playlist.m3u' || pathname === '/delayed-playlist.m3u') {
+            const sendPlaylist = () => {
+                res.writeHead(200, { 'Content-Type': 'application/x-mpegURL', 'Access-Control-Allow-Origin': '*' });
+                res.end(controlledPlaylist(baseUrl));
+            };
+            if (pathname === '/delayed-playlist.m3u') return setTimeout(sendPlaylist, 1500);
+            return sendPlaylist();
         }
 
         if (pathname === '/guide.xml') {
-            const now = Date.now();
-            const startTime = new Date(now - 30 * 60 * 1000);
-            const endTime = new Date(now + 30 * 60 * 1000);
-            const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<tv generator-info-name="NodeCast TV Plus tests">
-  <channel id="nodecast.test.one"><display-name>NodeCast Test Pattern</display-name></channel>
-  <programme start="${xmltvTimestamp(startTime)}" stop="${xmltvTimestamp(endTime)}" channel="nodecast.test.one">
-    <title>Controlled Test Programme</title>
-    <desc>Generated locally for NodeCast TV Plus testing.</desc>
-  </programme>
-</tv>`;
             res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
-            return res.end(xml);
+            return res.end(controlledGuideXml());
+        }
+
+        if (pathname === '/retry-guide.xml') {
+            retryGuideRequests += 1;
+            if (retryGuideRequests === 1) {
+                res.writeHead(503, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+                return res.end('controlled initial synchronization failure');
+            }
+            res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
+            return res.end(controlledGuideXml());
         }
 
         if (pathname === '/reduced-precision-guide.xml') {
