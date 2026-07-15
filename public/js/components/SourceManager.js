@@ -17,6 +17,7 @@ class SourceManager {
         this.expandedGroups = new Set(); // Set of expanded group IDs
         this.searchQuery = ''; // Search filter for content browser
         this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
+        this.sourceSubmissionInProgress = false;
 
         this.init();
     }
@@ -264,10 +265,60 @@ class SourceManager {
         }
     }
 
+    setSourceSubmissionLoading(isLoading) {
+        this.sourceSubmissionInProgress = isLoading;
+
+        const saveButton = document.getElementById('modal-save');
+        const cancelButton = document.getElementById('modal-cancel');
+        const closeButton = document.querySelector('#modal .modal-close');
+
+        if (saveButton) {
+            saveButton.disabled = isLoading;
+            saveButton.setAttribute('aria-busy', String(isLoading));
+
+            if (isLoading) {
+                saveButton.replaceChildren();
+                const spinner = document.createElement('span');
+                spinner.className = 'btn-loading-spinner';
+                spinner.setAttribute('aria-hidden', 'true');
+                const label = document.createElement('span');
+                label.textContent = 'Adding source…';
+                saveButton.append(spinner, label);
+            } else {
+                saveButton.textContent = 'Add Source';
+            }
+        }
+
+        if (cancelButton) cancelButton.disabled = isLoading;
+        if (closeButton) closeButton.setAttribute('aria-disabled', String(isLoading));
+    }
+
+    showSourceSubmissionProgress() {
+        const modal = document.getElementById('modal');
+        document.getElementById('modal-title').textContent = 'Adding Source';
+        document.getElementById('modal-body').innerHTML = `
+            <div class="source-submission-progress" role="status" aria-live="polite">
+                <span class="loading" aria-hidden="true"></span>
+                <span>Creating the source and starting synchronization…</span>
+            </div>
+        `;
+        document.getElementById('modal-footer').innerHTML = `
+            <button class="btn btn-primary" id="modal-save" disabled aria-busy="true">
+                <span class="btn-loading-spinner" aria-hidden="true"></span>
+                <span>Adding source…</span>
+            </button>
+        `;
+        const closeButton = modal.querySelector('.modal-close');
+        if (closeButton) closeButton.setAttribute('aria-disabled', 'true');
+        modal.classList.add('active');
+    }
+
     /**
      * Show add source modal
      */
     showAddModal(type) {
+        if (this.sourceSubmissionInProgress) return;
+
         const modal = document.getElementById('modal');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
@@ -286,8 +337,11 @@ class SourceManager {
         modal.classList.add('active');
 
         // Event listeners
-        modal.querySelector('.modal-close').onclick = () => modal.classList.remove('active');
-        document.getElementById('modal-cancel').onclick = () => modal.classList.remove('active');
+        const closeModal = () => {
+            if (!this.sourceSubmissionInProgress) modal.classList.remove('active');
+        };
+        modal.querySelector('.modal-close').onclick = closeModal;
+        document.getElementById('modal-cancel').onclick = closeModal;
         document.getElementById('modal-save').onclick = () => this.saveNewSource(type);
     }
 
@@ -364,6 +418,8 @@ class SourceManager {
      * Save new source
      */
     async saveNewSource(type) {
+        if (this.sourceSubmissionInProgress) return;
+
         const name = document.getElementById('source-name').value.trim();
         const url = document.getElementById('source-url').value.trim();
         const username = document.getElementById('source-username')?.value.trim() || null;
@@ -373,6 +429,8 @@ class SourceManager {
             alert('Name and URL are required');
             return;
         }
+
+        this.setSourceSubmissionLoading(true);
 
         try {
             // Check M3U size before creating (large playlist warning)
@@ -390,6 +448,7 @@ class SourceManager {
                         if (!proceed) {
                             return; // Don't create the source
                         }
+                        this.showSourceSubmissionProgress();
                     }
                 } catch (err) {
                     console.warn('[SourceManager] Could not estimate M3U size:', err.message);
@@ -397,24 +456,24 @@ class SourceManager {
                 }
             }
 
-            const saveButton = document.getElementById('modal-save');
-            if (saveButton) {
-                saveButton.disabled = true;
-                saveButton.textContent = 'Adding…';
-            }
-
             const source = await API.sources.create({ type, name, url, username, password });
             this.setInitialSyncState(source.id, type, 'syncing', 'Synchronizing source data…');
             document.getElementById('modal').classList.remove('active');
+            this.setSourceSubmissionLoading(false);
             await this.loadSources();
             await this.monitorInitialSync(source, type, source.syncRequestedAt);
         } catch (err) {
-            const saveButton = document.getElementById('modal-save');
-            if (saveButton) {
-                saveButton.disabled = false;
-                saveButton.textContent = 'Add Source';
+            this.setSourceSubmissionLoading(false);
+            if (!document.getElementById('source-name')) {
+                this.showAddModal(type);
+                document.getElementById('source-name').value = name;
+                document.getElementById('source-url').value = url;
+                if (document.getElementById('source-username')) document.getElementById('source-username').value = username || '';
+                if (document.getElementById('source-password')) document.getElementById('source-password').value = password || '';
             }
             alert('Error adding source: ' + err.message);
+        } finally {
+            if (this.sourceSubmissionInProgress) this.setSourceSubmissionLoading(false);
         }
     }
 
