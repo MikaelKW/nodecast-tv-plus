@@ -502,7 +502,7 @@ class VideoPlayer {
 
         // If it's a relative URL, make it absolute
         if (streamUrl.startsWith('/')) {
-            streamUrl = window.location.origin + streamUrl;
+            streamUrl = NodeCastUrl.absolute(streamUrl);
         }
 
         const showPromptFallback = () => {
@@ -843,7 +843,7 @@ class VideoPlayer {
      * Start a HLS transcode session
      */
     async requestPlaybackResource(url, options = {}) {
-        const request = fetch(url, options);
+        const request = fetch(NodeCastUrl.resolve(url), options);
         this._pendingConnectionRequest = request;
         try {
             return await request;
@@ -868,7 +868,7 @@ class VideoPlayer {
         }
         const session = await res.json();
         this.currentSessionId = session.sessionId;
-        return session.playlistUrl;
+        return NodeCastUrl.resolve(session.playlistUrl);
     }
 
     async startQualityPlayback(channel, streamUrl, resolution, streamInfo, signal, playId) {
@@ -903,7 +903,7 @@ class VideoPlayer {
             this.currentSessionId = null;
             console.log('[Player] Stopping transcode session:', sessionId);
             try {
-                await fetch(`/api/transcode/${sessionId}`, { method: 'DELETE' });
+                await fetch(NodeCastUrl.resolve(`/api/transcode/${sessionId}`), { method: 'DELETE' });
             } catch (err) {
                 console.error('Failed to stop session:', err);
             }
@@ -1035,7 +1035,7 @@ class VideoPlayer {
                             track.kind = 'subtitles';
                             track.label = sub.title;
                             track.srclang = sub.language;
-                            track.src = `/api/subtitle?url=${encodeURIComponent(streamUrl)}&index=${sub.index}`;
+                            track.src = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(streamUrl)}&index=${sub.index}`);
                             this.video.appendChild(track);
                         });
 
@@ -1087,7 +1087,7 @@ class VideoPlayer {
                         // Raw .ts container - use remux
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                        const remuxUrl = `/api/remux?url=${encodeURIComponent(streamUrl)}`;
+                        const remuxUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(streamUrl)}`);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
                         this.video.play().catch(e => {
@@ -1300,7 +1300,7 @@ class VideoPlayer {
                             (data.type === Hls.ErrorTypes.MEDIA_ERROR && data.details === 'fragParsingError');
 
                         // Don't proxy if it's already a local API URL
-                        const isLocalApi = this.currentUrl.startsWith('/api/');
+                        const isLocalApi = NodeCastUrl.isApi(this.currentUrl);
 
                         if (isCorsLikely && !this.isUsingProxy && !isLocalApi) {
                             console.log('CORS/Network error detected, retrying via proxy...', data.details);
@@ -1674,14 +1674,14 @@ class VideoPlayer {
      * Get proxied URL for a stream
      */
     getProxiedUrl(url) {
-        return `/api/proxy/stream?url=${encodeURIComponent(url)}`;
+        return NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(url)}`);
     }
 
     /**
      * Get transcoded URL for a stream (audio transcoding for browser compatibility)
      */
     getTranscodeUrl(url) {
-        return `/api/transcode?url=${encodeURIComponent(url)}`;
+        return NodeCastUrl.resolve(`/api/transcode?url=${encodeURIComponent(url)}`);
     }
 
     /**
@@ -1689,7 +1689,7 @@ class VideoPlayer {
      * Used for raw .ts streams that browsers can't play directly
      */
     getRemuxUrl(url) {
-        return `/api/remux?url=${encodeURIComponent(url)}`;
+        return NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
     }
 
     /**

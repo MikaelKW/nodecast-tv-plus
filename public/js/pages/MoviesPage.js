@@ -278,7 +278,7 @@ class MoviesPage {
             card.dataset.movieId = movie.stream_id;
             card.dataset.sourceId = movie.sourceId;
 
-            const poster = movie.stream_icon || movie.cover || '/img/placeholder.png';
+            const poster = movie.stream_icon || movie.cover || 'img/placeholder.png';
             const year = movie.year || movie.releaseDate?.substring(0, 4) || '';
             const rating = movie.rating ? `${Icons.star} ${movie.rating}` : '';
 
@@ -287,7 +287,7 @@ class MoviesPage {
             card.innerHTML = `
                 <div class="movie-poster">
                     <img src="${poster}" alt="${movie.name}" 
-                         onerror="this.onerror=null;this.src='/img/placeholder.png'" loading="lazy">
+                         onerror="this.onerror=null;this.src='img/placeholder.png'" loading="lazy">
                     <div class="movie-play-overlay">
                         <span class="play-icon">${Icons.play}</span>
                     </div>

@@ -33,10 +33,10 @@ class ChannelList {
      * Only proxies HTTP URLs when on HTTPS page
      */
     getProxiedImageUrl(url) {
-        if (!url || url.length === 0) return '/img/placeholder.png';
+        if (!url || url.length === 0) return 'img/placeholder.png';
         // Only proxy if we're on HTTPS and the image is HTTP
         if (window.location.protocol === 'https:' && url.startsWith('http://')) {
-            return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+            return NodeCastUrl.resolve(`/api/proxy/image?url=${encodeURIComponent(url)}`);
         }
         return url;
     }
@@ -511,7 +511,7 @@ class ChannelList {
                data-render-id="${renderId}"
                data-render-group="${renderGroup}">
             <img class="channel-logo" src="${this.getProxiedImageUrl(channel.tvgLogo)}" 
-                 alt="" onerror="this.onerror=null;this.src='/img/placeholder.png'">
+                 alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
             <div class="channel-info">
               <div class="channel-name">${this.escapeHtml(channel.name)}</div>
               <div class="channel-program">${this.escapeHtml(this.getProgramInfo(channel) || '')}</div>
@@ -624,7 +624,7 @@ class ChannelList {
                data-render-id="${renderId}"
                data-render-group="${renderGroup}">
             <img class="channel-logo" src="${this.getProxiedImageUrl(channel.tvgLogo)}" 
-                 alt="" onerror="this.onerror=null;this.src='/img/placeholder.png'">
+                 alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
             <div class="channel-info">
               <div class="channel-name">${this.escapeHtml(channel.name)}</div>
               <div class="channel-program">${this.escapeHtml(this.getProgramInfo(channel) || '')}</div>
@@ -1042,7 +1042,7 @@ class ChannelList {
 
         div.innerHTML = `
             <img class="channel-logo" src="${this.getProxiedImageUrl(channel.tvgLogo)}" 
-                 alt="" onerror="this.onerror=null;this.src='/img/placeholder.png'">
+                 alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
             <div class="channel-info">
               <div class="channel-name">${this.escapeHtml(channel.name)}</div>
               <div class="channel-program">${this.getProgramInfo(channel) || ''}</div>
@@ -1295,7 +1295,7 @@ class ChannelList {
             <div class="epg-info-modal">
                 <div class="channel-details">
                     <img class="channel-logo" src="${this.getProxiedImageUrl(channel.tvgLogo)}" 
-                         onerror="this.onerror=null;this.src='/img/placeholder.png'" />
+                         onerror="this.onerror=null;this.src='img/placeholder.png'" />
                     <div class="channel-meta">
                         <p><strong>Group:</strong> ${this.escapeHtml(channel.groupTitle || 'Uncategorized')}</p>
                         <p><strong>Source:</strong> ${channel.sourceType}</p>

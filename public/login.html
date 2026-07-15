@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - NodeCast TV Plus</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="css/main.css?v=3">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -245,10 +245,11 @@
         </div>
     </div>
 
+    <script src="js/basePath.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
-            window.location.href = '/api/auth/oidc/login';
+            window.location.href = NodeCastUrl.resolve('/api/auth/oidc/login');
         });
 
         // Check for URL Error params
@@ -267,7 +268,7 @@
 
         async function checkSetupRequired() {
             try {
-                const response = await fetch('/api/auth/setup-required');
+                const response = await fetch(NodeCastUrl.resolve('/api/auth/setup-required'));
                 const data = await response.json();
 
                 if (data.setupRequired) {
@@ -286,7 +287,7 @@
             if (isSetupMode) return;
 
             try {
-                const response = await fetch('/api/auth/oidc/status');
+                const response = await fetch(NodeCastUrl.resolve('/api/auth/oidc/status'));
                 if (!response.ok) return;
                 const { enabled } = await response.json();
                 if (enabled) document.getElementById('sso-login-section').hidden = false;
@@ -314,7 +315,7 @@
 
             try {
                 const endpoint = isSetupMode ? '/api/auth/setup' : '/api/auth/login';
-                const response = await fetch(endpoint, {
+                const response = await fetch(NodeCastUrl.resolve(endpoint), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -329,7 +330,7 @@
                 }
 
                 // Redirect to main app (replace history to prevent back button issues)
-                window.location.replace('/');
+                window.location.replace(NodeCastUrl.resolve('/'));
 
             } catch (err) {
                 errorMessage.textContent = err.message;

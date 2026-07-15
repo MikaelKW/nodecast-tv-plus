@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
+const { requestBasePath, withBasePath } = require('../config/basePath');
 
 function userMutationErrorStatus(error) {
     return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
@@ -69,14 +70,14 @@ router.get('/oidc/login', authenticateOidc());
  * GET /api/auth/oidc/callback
  */
 router.get('/oidc/callback',
-    authenticateOidc({ session: false, failureRedirect: '/login.html?error=SSO+Failed' }),
+    authenticateOidc({ session: false, failureRedirect: withBasePath('/login.html?error=SSO+Failed') }),
     (req, res) => {
         // Successful authentication
         const token = auth.generateToken(req.user);
         auth.setAuthCookie(req, res, token);
 
         // The HttpOnly cookie authenticates the app without exposing the token in the URL.
-        res.redirect('/');
+        res.redirect(withBasePath('/', requestBasePath(req)));
     }
 );
 

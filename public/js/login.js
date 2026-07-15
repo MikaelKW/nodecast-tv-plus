@@ -6,7 +6,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
     try {
         await API.request('POST', '/auth/login', { username, password });
-        window.location.href = '/';
+        window.location.href = NodeCastUrl.resolve('/');
     } catch (err) {
         document.getElementById('login-error').textContent = 'Login failed: ' + err.message;
     }

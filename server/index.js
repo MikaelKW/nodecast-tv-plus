@@ -4,6 +4,7 @@ const path = require('path');
 const passport = require('passport');
 const syncService = require('./services/syncService');
 const securityConfig = require('./config/security');
+const basePathConfig = require('./config/basePath');
 const auth = require('./auth');
 
 // Initialize database
@@ -15,6 +16,10 @@ const PORT = process.env.PORT || 3000;
 // Trust proxy headers (X-Forwarded-Proto, X-Forwarded-For, etc.)
 // Required for correct protocol detection behind reverse proxies (nginx, Caddy, etc.)
 app.set('trust proxy', true);
+
+// Allow either the app or a path-stripping reverse proxy to handle the
+// configured public prefix. Routes below continue to operate at / internally.
+basePathConfig.installBasePathMiddleware(app);
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
