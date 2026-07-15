@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { redactText, redactUrl, validateHttpUrl } = require('../server/services/urlSecurity');
+const { normalizeBasePath, withBasePath } = require('../server/config/basePath');
 
 assert.equal(validateHttpUrl('https://example.com/live.m3u8?token=secret'), 'https://example.com/live.m3u8?token=secret');
 assert.equal(validateHttpUrl(' http://192.168.1.20:8080/stream '), 'http://192.168.1.20:8080/stream');
@@ -44,5 +45,12 @@ const missingSecrets = spawnSync(process.execPath, ['-e', "require('./server/con
 
 assert.notEqual(missingSecrets.status, 0, 'Production startup must fail without secrets.');
 assert.match(missingSecrets.stderr, /JWT_SECRET must be set/);
+
+assert.equal(normalizeBasePath('nodecast/'), '/nodecast');
+assert.equal(normalizeBasePath('/media/nodecast'), '/media/nodecast');
+assert.equal(withBasePath('/api/version', '/nodecast'), '/nodecast/api/version');
+for (const unsafeBasePath of ['//example.com', '/nodecast?next=/', '/nodecast#fragment', '/../admin', '/node cast']) {
+    assert.equal(normalizeBasePath(unsafeBasePath), '', `Unsafe base path accepted: ${unsafeBasePath}`);
+}
 
 console.log('Security tests passed.');

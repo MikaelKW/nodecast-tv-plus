@@ -45,6 +45,9 @@ jobs:
       - name: Run mobile WebKit layout tests
         run: npm run test:e2e:mobile
 
+      - name: Run reverse-proxy subpath tests
+        run: npm run test:e2e:subpath
+
       - name: Upload browser test diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
