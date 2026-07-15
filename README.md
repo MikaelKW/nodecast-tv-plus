@@ -81,7 +81,7 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
      --env-file .env \
      -p 3000:3000 \
      -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:2.2.1
+     ghcr.io/mikaelkw/nodecast-tv-plus:2.2.2
    ```
 
 4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
@@ -92,17 +92,17 @@ For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEO
 
 ### Migrate from upstream NodeCast TV
 
-NodeCast TV Plus 2.2.1 has verified migration paths from these versions:
+NodeCast TV Plus 2.2.2 has verified migration paths from these versions:
 
 | Existing installation | Target | Status |
 | --- | --- | --- |
-| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.2.1 | Verified by automated release gate |
-| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.2.1 | Verified by automated release gate |
-| NodeCast TV Plus 2.2.0 | NodeCast TV Plus 2.2.1 | Verified container upgrade |
+| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.2.2 | Verified by automated release gate |
+| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.2.2 | Verified by automated release gate |
+| NodeCast TV Plus 2.2.1 (previous stable Plus release) | NodeCast TV Plus 2.2.2 | Verified by automated release gate using the published image |
 
-The migration tests reuse the upstream `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and migration from a valid legacy bearer token to the Plus authentication cookie.
+The migration tests reuse each baseline's `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and authentication state. Upstream baselines additionally verify migration from a valid legacy bearer token to the Plus authentication cookie.
 
-Migration support is version-specific. A future upstream version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines, and the 2.2.0 to 2.2.1 path was additionally validated by upgrading a persistent Docker data volume from the published 2.2.0 image to the release candidate. Future release automation will add the previous stable Plus release as a repeatable baseline. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.2.1 image to the 2.2.2 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
 
 Before migrating:
 
@@ -125,7 +125,7 @@ docker run -d \
   --env-file .env \
   -p 3000:3000 \
   -v EXISTING_UPSTREAM_VOLUME:/app/data \
-  ghcr.io/mikaelkw/nodecast-tv-plus:2.2.1
+  ghcr.io/mikaelkw/nodecast-tv-plus:2.2.2
 ```
 
 For an existing bind-mounted directory, mount its absolute path instead:
@@ -186,7 +186,7 @@ npm run test:migration   # upgrades pinned upstream Docker baselines into the lo
 
 The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
 
-The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. The lightweight baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
+The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, pulls the published previous stable Plus image, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. The lightweight upstream baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
 
 ### Docker Compose for local builds
 
