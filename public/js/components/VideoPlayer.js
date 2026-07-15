@@ -1882,16 +1882,6 @@ class VideoPlayer {
         window.app.channelList.selectChannel({ channelId: channels[nextIdx].id });
     }
 
-    /**
-     * Toggle fullscreen
-     */
-    toggleFullscreen() {
-        if (document.fullscreenElement) {
-            document.exitFullscreen();
-        } else if (this.container) {
-            this.container.requestFullscreen();
-        }
-    }
 }
 
 // Export
