@@ -363,7 +363,7 @@ class WatchPage {
     async startTranscodeSession(url, options = {}) {
         try {
             console.log('[WatchPage] Starting HLS transcode session...', options);
-            const res = await fetch('/api/transcode/session', {
+            const res = await fetch(NodeCastUrl.resolve('/api/transcode/session'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -375,7 +375,7 @@ class WatchPage {
             if (!res.ok) throw new Error('Failed to start session');
             const session = await res.json();
             this.currentSessionId = session.sessionId;
-            return session.playlistUrl;
+            return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
             if (options.maxResolution) {
                 console.warn('[WatchPage] Quality session start failed:', err.message);
@@ -383,7 +383,7 @@ class WatchPage {
             }
             console.error('[WatchPage] Session start failed:', err);
             // Fallback to direct transcode if session fails
-            return `/api/transcode?url=${encodeURIComponent(url)}`;
+            return NodeCastUrl.resolve(`/api/transcode?url=${encodeURIComponent(url)}`);
         }
     }
 
@@ -412,7 +412,7 @@ class WatchPage {
             this.currentSessionId = null;
             console.log('[WatchPage] Stopping transcode session:', sessionId);
             try {
-                await fetch(`/api/transcode/${sessionId}`, { method: 'DELETE' });
+                await fetch(NodeCastUrl.resolve(`/api/transcode/${sessionId}`), { method: 'DELETE' });
             } catch (err) {
                 console.error('Failed to stop session:', err);
             }
@@ -629,7 +629,7 @@ class WatchPage {
             console.log('[WatchPage] Auto Transcode enabled. Probing stream...');
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`);
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
                 if (!probeRes.ok || info.error) {
                     throw new Error(info.error || `Probe request failed (${probeRes.status})`);
@@ -686,7 +686,7 @@ class WatchPage {
                     // TODO: Move remux to session logic if seeking is needed for TS files
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                    const finalUrl = `/api/remux?url=${encodeURIComponent(url)}`;
+                    const finalUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
                     this.video.src = finalUrl;
                     this.video.play().catch(e => {
                         if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
@@ -731,7 +731,7 @@ class WatchPage {
             let videoCodec = 'unknown';
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`);
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
                 videoCodec = info.video;
             } catch (e) { console.warn('Probe failed for force audio, assuming h264'); }
@@ -750,7 +750,7 @@ class WatchPage {
         if (!forceDirectFallback && settings.forceRemux && isRawTs) {
             console.log('[WatchPage] Force Remux enabled');
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
-            const finalUrl = `/api/remux?url=${encodeURIComponent(url)}`;
+            const finalUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
             this.video.src = finalUrl;
             this.video.play().catch(e => {
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
@@ -762,7 +762,7 @@ class WatchPage {
         // Determine if proxy is needed
         const proxyRequiredDomains = ['pluto.tv'];
         const needsProxy = settings.forceProxy || proxyRequiredDomains.some(domain => url.includes(domain));
-        const finalUrl = needsProxy ? `/api/proxy/stream?url=${encodeURIComponent(url)}` : url;
+        const finalUrl = needsProxy ? NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(url)}`) : url;
 
         console.log('[WatchPage] Playing:', { url, needsProxy, looksLikeHls });
 
@@ -876,11 +876,11 @@ class WatchPage {
                     data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
                     data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
                 );
-                const canTryProxy = !url.startsWith('/api/') && Boolean(this.currentUrl);
+                const canTryProxy = !NodeCastUrl.isApi(url) && Boolean(this.currentUrl);
 
                 if (manifestFailedBeforePlayback && canTryProxy) {
                     console.warn('[WatchPage] Direct HLS manifest failed; retrying through the stream proxy.');
-                    this.playHls(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`);
+                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`));
                     return;
                 }
 
@@ -896,7 +896,7 @@ class WatchPage {
 
                 if (canTryProxy) {
                     console.warn('[WatchPage] Direct HLS recovery was exhausted; retrying through the stream proxy.');
-                    this.playHls(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`);
+                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`));
                     return;
                 }
             }
@@ -1042,7 +1042,7 @@ class WatchPage {
 
         // If it's a relative URL, make it absolute
         if (streamUrl.startsWith('/')) {
-            streamUrl = window.location.origin + streamUrl;
+            streamUrl = NodeCastUrl.absolute(streamUrl);
         }
 
         const showPromptFallback = () => {
@@ -1346,7 +1346,7 @@ class WatchPage {
         if (!this.content) return;
 
         const isChannel = this.content.type === 'channel' || !this.content.type; // Default to channel if unknown
-        const fallback = isChannel ? '/img/placeholder.png' : '/img/poster-placeholder.jpg';
+        const fallback = isChannel ? 'img/placeholder.png' : 'img/poster-placeholder.jpg';
 
         this.posterEl.onerror = () => {
             this.posterEl.onerror = null;
@@ -1446,9 +1446,9 @@ class WatchPage {
 
         this.recommendedGrid.innerHTML = movies.map(movie => `
             <div class="watch-recommended-card" data-id="${movie.stream_id}" data-source="${sourceId}">
-                <img src="${movie.stream_icon || movie.cover || '/img/placeholder.png'}" 
+                <img src="${movie.stream_icon || movie.cover || 'img/placeholder.png'}"
                      alt="${movie.name}" 
-                     onerror="this.onerror=null;this.src='/img/placeholder.png'" loading="lazy">
+                     onerror="this.onerror=null;this.src='img/placeholder.png'" loading="lazy">
                 <p>${movie.name}</p>
             </div>
         `).join('');

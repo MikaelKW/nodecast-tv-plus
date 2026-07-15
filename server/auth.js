@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
+const { withBasePath } = require('./config/basePath');
 const { Strategy: JwtStrategy, ExtractJwt } = require('passport-jwt');
 const { Strategy: LocalStrategy } = require('passport-local');
 const securityConfig = require('./config/security');
@@ -213,7 +214,7 @@ async function configureOidcStrategy(findUserByOidcId, findUserByEmail, createUs
         userInfoURL: endpoints.userInfoURL,
         clientID: process.env.OIDC_CLIENT_ID,
         clientSecret: process.env.OIDC_CLIENT_SECRET,
-        callbackURL: process.env.OIDC_CALLBACK_URL || '/api/auth/oidc/callback',
+        callbackURL: process.env.OIDC_CALLBACK_URL || withBasePath('/api/auth/oidc/callback'),
         scope: ['openid', 'profile', 'email']
     },
         async (...args) => {

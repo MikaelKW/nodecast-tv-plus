@@ -24,7 +24,7 @@ const API = {
             options.body = JSON.stringify(data);
         }
 
-        const response = await fetch(`/api${endpoint}`, options);
+        const response = await fetch(NodeCastUrl.resolve(`/api${endpoint}`), options);
 
         let result;
         const contentType = response.headers.get('content-type');
@@ -39,7 +39,7 @@ const API = {
             // If unauthorized, redirect to login
             if (response.status === 401) {
                 localStorage.removeItem('authToken');
-                window.location.href = '/login.html';
+                window.location.href = NodeCastUrl.resolve('/login.html');
                 return;
             }
             throw new Error(result.error || `Server responded with ${response.status}`);

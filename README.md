@@ -173,11 +173,13 @@ After startup, confirm that login, sources, favorites, history, and playback wor
 
 ### Testing changes
 
-The project includes three levels of checks:
+The project includes several complementary checks:
 
 ```bash
 npm test                 # syntax, security, and server smoke tests
 npm run test:e2e         # isolated browser, M3U, EPG, API, and playback test
+npm run test:e2e:mobile  # iPhone/WebKit layout and scrolling regression test
+npm run test:e2e:subpath # login, API, navigation, and logout below /nodecast/
 npm run test:real-world  # imports the public IPTV-org sports playlist
 npm run test:migration   # upgrades pinned upstream Docker baselines into the local image
 ```
@@ -215,6 +217,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           PORT: 3000 # Optional: Internal container port
           JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+          NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
     ```
 
@@ -408,6 +411,31 @@ tv.domain.com {
     }
 }
 ```
+
+To publish the application below a path such as
+`https://tv.domain.com/nodecast/`, set `NODECAST_BASE_PATH=/nodecast` and use
+a path-stripping proxy. Keep the trailing-slash redirect so relative browser
+assets resolve correctly:
+
+```caddy
+tv.domain.com {
+    redir /nodecast /nodecast/ 308
+
+    handle_path /nodecast/* {
+        reverse_proxy nodecast:3000 {
+            flush_interval -1
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Prefix /nodecast
+        }
+    }
+}
+```
+
+The configured path applies to login, API, image, playback, transcoding, and
+logout URLs. If SSO is enabled, register the complete public callback URL with
+the identity provider, for example
+`https://tv.domain.com/nodecast/api/auth/oidc/callback`, and set the same value
+in `OIDC_CALLBACK_URL`.
 
 **Nginx example:**
 ```nginx

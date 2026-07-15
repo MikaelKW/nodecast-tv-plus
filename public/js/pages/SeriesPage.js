@@ -291,7 +291,7 @@ class SeriesPage {
             card.dataset.seriesId = series.series_id;
             card.dataset.sourceId = series.sourceId;
 
-            const poster = series.cover || '/img/placeholder.png';
+            const poster = series.cover || 'img/placeholder.png';
             const year = series.year || series.releaseDate?.substring(0, 4) || '';
             const rating = series.rating ? `${Icons.star} ${series.rating}` : '';
 
@@ -300,7 +300,7 @@ class SeriesPage {
             card.innerHTML = `
                 <div class="series-poster">
                     <img src="${poster}" alt="${series.name}" 
-                         onerror="this.onerror=null;this.src='/img/placeholder.png'" loading="lazy">
+                         onerror="this.onerror=null;this.src='img/placeholder.png'" loading="lazy">
                     <div class="series-play-overlay">
                         <span class="play-icon">${Icons.play}</span>
                     </div>
@@ -361,7 +361,7 @@ class SeriesPage {
         this.detailsPanel.scrollTop = 0;
 
         // Set header info
-        this.detailsPoster.src = series.cover || '/img/placeholder.png';
+        this.detailsPoster.src = series.cover || 'img/placeholder.png';
         this.detailsTitle.textContent = series.name;
         this.detailsPlot.textContent = series.plot || '';
 
