@@ -21,9 +21,23 @@ function loadSecret(name) {
     return crypto.randomBytes(48).toString('hex');
 }
 
+function loadOptionalSecret(name) {
+    const value = process.env[name]?.trim();
+    if (!value) return null;
+
+    if (value.length < MIN_SECRET_LENGTH || PLACEHOLDER_PATTERN.test(value)) {
+        throw new Error(
+            `${name} must be a unique value of at least ${MIN_SECRET_LENGTH} characters when configured.`
+        );
+    }
+
+    return value;
+}
+
 module.exports = {
     jwtSecret: loadSecret('JWT_SECRET'),
     sessionSecret: loadSecret('SESSION_SECRET'),
+    totpEncryptionSecret: loadOptionalSecret('TOTP_ENCRYPTION_KEY'),
     authCookieName: 'nodecast_auth',
     authCookieMaxAgeMs: 24 * 60 * 60 * 1000
 };

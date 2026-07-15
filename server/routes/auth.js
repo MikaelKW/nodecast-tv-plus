@@ -3,9 +3,33 @@ const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
 const { requestBasePath, withBasePath } = require('../config/basePath');
+const totpService = require('../services/totpService');
+const twoFactorAuth = require('../services/twoFactorAuth');
+const {
+    passwordIdentityLimiter,
+    passwordIpLimiter
+} = require('../services/authRateLimiter');
 
 function userMutationErrorStatus(error) {
     return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
+}
+
+function loginIpKey(req) {
+    return req.socket?.remoteAddress || 'unknown';
+}
+
+function loginIdentityKey(req) {
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    return `${loginIpKey(req)}:${username}`;
+}
+
+function rejectRateLimited(res, states) {
+    const blocked = states.filter(state => !state.allowed);
+    if (blocked.length === 0) return false;
+    const retryAfterMs = Math.max(...blocked.map(state => state.retryAfterMs));
+    res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+    res.status(429).json({ error: 'Too many authentication attempts. Try again later.' });
+    return true;
 }
 
 // Configure Passport strategies
@@ -71,13 +95,26 @@ router.get('/oidc/login', authenticateOidc());
  */
 router.get('/oidc/callback',
     authenticateOidc({ session: false, failureRedirect: withBasePath('/login.html?error=SSO+Failed') }),
-    (req, res) => {
-        // Successful authentication
-        const token = auth.generateToken(req.user);
-        auth.setAuthCookie(req, res, token);
+    async (req, res) => {
+        try {
+            if (twoFactorAuth.hasEnabledTotp(req.user)) {
+                if (!totpService.isAvailable()) {
+                    return res.status(503).send('Two-factor authentication is temporarily unavailable.');
+                }
+                auth.clearAuthCookie(req, res);
+                await twoFactorAuth.beginChallenge(req, req.user);
+                return res.redirect(withBasePath('/login.html', requestBasePath(req)));
+            }
 
-        // The HttpOnly cookie authenticates the app without exposing the token in the URL.
-        res.redirect(withBasePath('/', requestBasePath(req)));
+            // Successful authentication
+            const token = auth.generateToken(req.user);
+            auth.setAuthCookie(req, res, token);
+
+            // The HttpOnly cookie authenticates the app without exposing the token in the URL.
+            res.redirect(withBasePath('/', requestBasePath(req)));
+        } catch {
+            res.status(500).send('Authentication could not be completed.');
+        }
     }
 );
 
@@ -145,27 +182,46 @@ router.post('/setup', async (req, res) => {
  * POST /api/auth/login
  */
 router.post('/login', (req, res, next) => {
-    auth.passport.authenticate('local', { session: false }, (err, user, info) => {
-        if (err) {
-            console.error('Login error:', err);
-            return res.status(500).json({ error: 'Server error' });
-        }
+    const identityKey = loginIdentityKey(req);
+    const ipKey = loginIpKey(req);
+    if (rejectRateLimited(res, [
+        passwordIdentityLimiter.check(identityKey),
+        passwordIpLimiter.check(ipKey)
+    ])) return;
 
-        if (!user) {
-            return res.status(401).json({ error: info?.message || 'Invalid credentials' });
-        }
-
-        // Generate JWT token
-        const token = auth.generateToken(user);
-        auth.setAuthCookie(req, res, token);
-
-        res.json({
-            user: {
-                id: user.id,
-                username: user.username,
-                role: user.role
+    auth.passport.authenticate('local', { session: false }, async (err, user, info) => {
+        try {
+            if (err) {
+                console.error('Login error:', err);
+                return res.status(500).json({ error: 'Server error' });
             }
-        });
+
+            if (!user) {
+                passwordIdentityLimiter.recordFailure(identityKey);
+                passwordIpLimiter.recordFailure(ipKey);
+                return res.status(401).json({ error: info?.message || 'Invalid credentials' });
+            }
+
+            passwordIdentityLimiter.reset(identityKey);
+            passwordIpLimiter.reset(ipKey);
+
+            if (twoFactorAuth.hasEnabledTotp(user)) {
+                if (!totpService.isAvailable()) {
+                    return res.status(503).json({ error: 'Two-factor authentication is temporarily unavailable.' });
+                }
+                auth.clearAuthCookie(req, res);
+                await twoFactorAuth.beginChallenge(req, user);
+                return res.json({ requiresTwoFactor: true });
+            }
+
+            // Generate JWT token
+            const token = auth.generateToken(user);
+            auth.setAuthCookie(req, res, token);
+
+            res.json({ user: db.users.toPublic(user) });
+        } catch {
+            if (!res.headersSent) res.status(500).json({ error: 'Authentication could not be completed.' });
+        }
     })(req, res, next);
 });
 
@@ -175,6 +231,7 @@ router.post('/login', (req, res, next) => {
  */
 router.post('/logout', (req, res) => {
     auth.clearAuthCookie(req, res);
+    if (req.session) delete req.session.twoFactorChallenge;
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -196,11 +253,7 @@ router.get('/me', auth.requireAuth, async (req, res) => {
             auth.setAuthCookie(req, res, bearerToken);
         }
 
-        res.json({
-            id: user.id,
-            username: user.username,
-            role: user.role
-        });
+        res.json(db.users.toPublic(user));
     } catch (err) {
         console.error('Error in /me:', err);
         res.status(500).json({ error: 'Server error' });
@@ -215,13 +268,7 @@ router.get('/users', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
         const allUsers = await db.users.getAll();
 
-        // Remove password hashes
-        const users = allUsers.map(u => {
-            const { passwordHash, ...userWithoutPassword } = u;
-            return userWithoutPassword;
-        });
-
-        res.json(users);
+        res.json(allUsers.map(db.users.toPublic));
     } catch (err) {
         console.error('Error fetching users:', err);
         res.status(500).json({ error: 'Server error' });
@@ -330,5 +377,7 @@ router.delete('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res
         res.status(500).json({ error: err.message || 'Server error' });
     }
 });
+
+router.use('/2fa', require('./totp'));
 
 module.exports = router;

@@ -21,6 +21,7 @@ class App {
         this.pages.movies = new MoviesPage(this);
         this.pages.series = new SeriesPage(this);
         this.pages.settings = new SettingsPage(this);
+        this.pages.account = new AccountPage(this);
         this.pages.watch = new WatchPage(this);
 
         this.init();
