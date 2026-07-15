@@ -43,6 +43,20 @@ test('the application remains inside its configured reverse-proxy path', async (
     });
     expect(version.version).toMatch(/^\d+\.\d+\.\d+$/);
 
+    const rewrittenManifest = await page.evaluate(async () => {
+        const upstreamUrl = 'http://127.0.0.1:3211/recoverable-hls/playlist.m3u8';
+        const response = await fetch(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(upstreamUrl)}`));
+        if (!response.ok) throw new Error(`Manifest proxy failed: ${response.status}`);
+        return response.text();
+    });
+    const mediaUrls = rewrittenManifest.split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#'));
+    expect(mediaUrls.length).toBeGreaterThan(0);
+    expect(mediaUrls.every(url => (
+        url.startsWith('http://127.0.0.1:3212/nodecast/api/proxy/stream?url=')
+    ))).toBe(true);
+
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
     await page.locator('#logout-btn').click();
