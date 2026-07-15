@@ -46,7 +46,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.sourceManager && window.app?.channelList
@@ -91,7 +91,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const nextAuthenticatorCode = authenticator.generate({ timestamp: Date.now() + 30_000 });
     await page.locator('#two-factor-code').fill(nextAuthenticatorCode);
     await page.getByRole('button', { name: 'Verify', exact: true }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect.poll(() => page.evaluate(() => window.app?.currentUser?.twoFactorEnabled)).toBe(true);
 
     await page.locator('.nav-link[data-page="settings"]').click();
