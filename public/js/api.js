@@ -6,7 +6,7 @@ const API = {
     /**
      * Make API request
      */
-    async request(method, endpoint, data = null) {
+    async request(method, endpoint, data = null, { redirectOnUnauthorized = true } = {}) {
         const options = {
             method,
             headers: {
@@ -37,7 +37,7 @@ const API = {
 
         if (!response.ok) {
             // If unauthorized, redirect to login
-            if (response.status === 401) {
+            if (response.status === 401 && redirectOnUnauthorized) {
                 localStorage.removeItem('authToken');
                 window.location.href = NodeCastUrl.resolve('/login.html');
                 return;
@@ -165,7 +165,16 @@ const API = {
         getAll: () => API.request('GET', '/auth/users'),
         create: (data) => API.request('POST', '/auth/users', data),
         update: (id, data) => API.request('PUT', `/auth/users/${id}`, data),
-        delete: (id) => API.request('DELETE', `/auth/users/${id}`)
+        delete: (id) => API.request('DELETE', `/auth/users/${id}`),
+        resetTwoFactor: (id, data) => API.request('DELETE', `/auth/2fa/admin/${id}`, data, { redirectOnUnauthorized: false })
+    },
+
+    twoFactor: {
+        status: () => API.request('GET', '/auth/2fa/status'),
+        enroll: (data) => API.request('POST', '/auth/2fa/enroll', data, { redirectOnUnauthorized: false }),
+        confirm: (code) => API.request('POST', '/auth/2fa/confirm', { code }, { redirectOnUnauthorized: false }),
+        regenerateRecoveryCodes: (data) => API.request('POST', '/auth/2fa/recovery-codes', data, { redirectOnUnauthorized: false }),
+        disable: (data) => API.request('POST', '/auth/2fa/disable', data, { redirectOnUnauthorized: false })
     }
 };
 
