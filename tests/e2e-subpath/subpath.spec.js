@@ -30,7 +30,7 @@ test('the application remains inside its configured reverse-proxy path', async (
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
 
-    await expect(page).toHaveURL(/\/nodecast\/$/);
+    await page.waitForURL(url => url.pathname === '/nodecast/');
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
     await expect.poll(() => page.evaluate(() => ({
         basePath: window.NodeCastUrl?.basePath,
