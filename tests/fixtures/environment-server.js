@@ -361,7 +361,7 @@ async function start() {
     process.env.OIDC_ISSUER_URL = `http://127.0.0.1:${fixturePort}/oidc`;
     process.env.OIDC_CLIENT_ID = 'controlled-e2e-client';
     process.env.OIDC_CLIENT_SECRET = crypto.randomBytes(32).toString('hex');
-    process.env.OIDC_CALLBACK_URL = `http://127.0.0.1:${appPort}/api/auth/oidc/callback`;
+    process.env.OIDC_CALLBACK_URL ||= `http://127.0.0.1:${appPort}/api/auth/oidc/callback`;
     process.env.OIDC_AUTH_URL = '';
     process.env.OIDC_TOKEN_URL = '';
     process.env.OIDC_USERINFO_URL = '';

@@ -43,10 +43,10 @@ class EpgGuide {
      * Only proxies HTTP URLs when on HTTPS page
      */
     getProxiedImageUrl(url) {
-        if (!url || url.length === 0) return '/img/placeholder.png';
+        if (!url || url.length === 0) return 'img/placeholder.png';
         // Only proxy if we're on HTTPS and the image is HTTP
         if (window.location.protocol === 'https:' && url.startsWith('http://')) {
-            return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+            return NodeCastUrl.resolve(`/api/proxy/image?url=${encodeURIComponent(url)}`);
         }
         return url;
     }
@@ -214,7 +214,7 @@ class EpgGuide {
         // Load EPG from ALL sources in parallel
         const fetchPromises = sources.map(async (source) => {
             try {
-                const response = await fetch(`/api/proxy/epg/${source.id}${queryParams}`);
+                const response = await fetch(NodeCastUrl.resolve(`/api/proxy/epg/${source.id}${queryParams}`));
                 if (!response.ok) throw new Error(`Status ${response.status}`);
                 return await response.json();
             } catch (e) {
@@ -598,7 +598,7 @@ class EpgGuide {
               ${isFavorite ? Icons.favorite : Icons.favoriteOutline}
             </button>
             <img class="epg-channel-logo" src="${logo}" 
-                 alt="" onerror="this.onerror=null;this.src='/img/placeholder.png'">
+                 alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
             <span class="epg-channel-name">${name}</span>
             <div class="resize-handle"></div>
           </div>

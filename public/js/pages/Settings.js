@@ -259,7 +259,7 @@ class SettingsPage {
         if (!container) return;
 
         try {
-            const response = await fetch('/api/settings/hw-info');
+            const response = await fetch(NodeCastUrl.resolve('/api/settings/hw-info'));
             if (!response.ok) throw new Error('Failed to fetch hardware info');
             const hwInfo = await response.json();
 
@@ -603,7 +603,7 @@ class SettingsPage {
 
         try {
             // Fetch last sync time from server
-            const response = await fetch('/api/settings/sync-status');
+            const response = await fetch(NodeCastUrl.resolve('/api/settings/sync-status'));
             if (!response.ok) throw new Error('Failed to fetch sync status');
             const data = await response.json();
 

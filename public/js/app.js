@@ -171,7 +171,7 @@ class App {
             // Verify either the legacy Bearer token or the secure HttpOnly cookie.
             const headers = {};
             if (token) headers.Authorization = `Bearer ${token}`;
-            const response = await fetch('/api/auth/me', {
+            const response = await fetch(NodeCastUrl.resolve('/api/auth/me'), {
                 headers
             });
 
@@ -197,7 +197,7 @@ class App {
         } catch (err) {
             console.error('Authentication error:', err);
             localStorage.removeItem('authToken');
-            window.location.replace('/login.html');
+            window.location.replace(NodeCastUrl.resolve('/login.html'));
         }
     }
 
@@ -222,10 +222,10 @@ class App {
             const token = localStorage.getItem('authToken');
             const headers = {};
             if (token) headers.Authorization = `Bearer ${token}`;
-            await fetch('/api/auth/logout', { method: 'POST', headers });
+            await fetch(NodeCastUrl.resolve('/api/auth/logout'), { method: 'POST', headers });
 
             localStorage.removeItem('authToken');
-            window.location.replace('/login.html');
+            window.location.replace(NodeCastUrl.resolve('/login.html'));
         });
 
         navbar.appendChild(logoutLink);
@@ -274,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
 
     // Fetch and display version badge
-    fetch('/api/version')
+    fetch(NodeCastUrl.resolve('/api/version'))
         .then(res => res.json())
         .then(data => {
             const badge = document.getElementById('version-badge');
