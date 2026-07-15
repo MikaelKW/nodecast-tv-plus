@@ -56,17 +56,27 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#add-m3u').click();
     await page.locator('#source-name').fill('Controlled M3U');
     await page.locator('#source-url').fill(`${fixtureBaseUrl}/delayed-playlist.m3u`);
-    await page.locator('#modal-save').click();
+    await page.evaluate(() => {
+        const addButton = document.getElementById('modal-save');
+        addButton.click();
+        addButton.click();
+        addButton.click();
+    });
+    await expect(page.locator('#modal-save')).toBeDisabled();
+    await expect(page.locator('#modal-save')).toContainText('Adding source');
     const m3uRow = page.locator('#m3u-list .source-item', { hasText: 'Controlled M3U' });
     await expect(m3uRow).toBeVisible();
     await expect(m3uRow.locator('.source-sync-status')).toContainText('Synchronizing source data');
     await expect(m3uRow.locator('.source-sync-status')).toHaveText('Initial sync completed', { timeout: 30_000 });
 
-    const m3uSource = await page.evaluate(async () => {
+    const m3uSourceResult = await page.evaluate(async () => {
         const response = await fetch('/api/sources');
-        return (await response.json()).find(source => source.name === 'Controlled M3U');
+        const matches = (await response.json()).filter(source => source.name === 'Controlled M3U');
+        return { count: matches.length, source: matches[0] };
     });
-    expect(m3uSource).toBeTruthy();
+    expect(m3uSourceResult.count).toBe(1);
+    expect(m3uSourceResult.source).toBeTruthy();
+    const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
     await page.locator('#add-epg').click();
