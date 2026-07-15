@@ -16,6 +16,8 @@ class SourceManager {
         this.originalHiddenSet = new Set(); // Set of hidden item keys (state when loaded)
         this.expandedGroups = new Set(); // Set of expanded group IDs
         this.searchQuery = ''; // Search filter for content browser
+        this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
+        this.sourceSubmissionInProgress = false;
 
         this.init();
     }
@@ -89,23 +91,6 @@ class SourceManager {
     }
 
     /**
-     * Poll sync status from the backend
-     */
-    pollSyncStatus() {
-        // Implement polling logic here
-        console.log('Polling sync status...');
-        // Example: setInterval(() => this.updateSyncStatus(), 5000);
-    }
-
-    /**
-     * Update sync status display
-     */
-    updateSyncStatus() {
-        // Implement logic to update UI based on sync status
-        console.log('Updating sync status display...');
-    }
-
-    /**
      * Load and display all sources
      */
     async loadSources() {
@@ -137,6 +122,7 @@ class SourceManager {
         <div class="source-info">
           <div class="source-name">${source.name}</div>
           <div class="source-url">${source.url}</div>
+          <div class="source-sync-status" role="status" aria-live="polite"></div>
         </div>
         <div class="source-actions">
           <button class="btn btn-sm btn-secondary" data-action="refresh" title="Refresh Data">${Icons.refresh}</button>
@@ -159,13 +145,180 @@ class SourceManager {
             item.querySelector('[data-action="toggle"]').addEventListener('click', () => this.toggleSource(id));
             item.querySelector('[data-action="edit"]').addEventListener('click', () => this.showEditModal(id, type));
             item.querySelector('[data-action="delete"]').addEventListener('click', () => this.deleteSource(id));
+            this.renderInitialSyncState(item, id, type);
         });
+    }
+
+    setInitialSyncState(id, type, status, message = '') {
+        this.initialSyncStates.set(id, { type, status, message });
+        const item = document.querySelector(`.source-item[data-id="${id}"]`);
+        if (item) this.renderInitialSyncState(item, id, type);
+    }
+
+    renderInitialSyncState(item, id, type) {
+        const container = item.querySelector('.source-sync-status');
+        if (!container) return;
+
+        const state = this.initialSyncStates.get(id);
+        container.replaceChildren();
+        container.className = 'source-sync-status';
+
+        if (!state) return;
+
+        container.classList.add('visible', state.status);
+        const text = document.createElement('span');
+        text.textContent = state.message;
+        container.appendChild(text);
+
+        if (state.status === 'error') {
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.className = 'source-sync-retry';
+            retry.textContent = 'Retry';
+            retry.addEventListener('click', () => this.retryInitialSync(id, state.type || type));
+            container.appendChild(retry);
+        }
+    }
+
+    async waitForSyncCompletion(id, requestedAt, timeoutMs = 300000) {
+        const deadline = Date.now() + timeoutMs;
+
+        while (Date.now() < deadline) {
+            let statuses;
+            try {
+                statuses = await API.sources.getStatus();
+            } catch {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                continue;
+            }
+
+            const status = statuses.find(entry => entry.source_id === id && entry.type === 'all');
+            const isCurrentAttempt = status && Number(status.last_sync || 0) >= requestedAt;
+
+            if (isCurrentAttempt && status.status === 'success') return status;
+            if (isCurrentAttempt && status.status === 'error') {
+                throw new Error(status.error || 'The provider could not be synchronized.');
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        throw new Error('Synchronization is still running. Select Retry if the source does not finish.');
+    }
+
+    async refreshSynchronizedSourceViews(id, type) {
+        const refreshes = [
+            API.proxy.cache.clear(id),
+            this.loadSources()
+        ];
+
+        if (type === 'm3u' || type === 'xtream') {
+            if (window.app?.channelList) {
+                refreshes.push((async () => {
+                    await window.app.channelList.loadSources();
+                    await window.app.channelList.loadChannels();
+                })());
+            }
+        }
+
+        if (type === 'xtream') {
+            if (window.app?.pages?.movies) refreshes.push(window.app.pages.movies.loadSources());
+            if (window.app?.pages?.series) refreshes.push(window.app.pages.series.loadSources());
+        }
+
+        if ((type === 'epg' || type === 'xtream') && window.app?.epgGuide) {
+            refreshes.push(window.app.epgGuide.loadEpg(true));
+        }
+
+        const results = await Promise.allSettled(refreshes);
+        results.filter(result => result.status === 'rejected').forEach(result => {
+            console.warn('[SourceManager] Post-sync view refresh failed:', result.reason);
+        });
+    }
+
+    async monitorInitialSync(source, type, requestedAt) {
+        this.setInitialSyncState(source.id, type, 'syncing', 'Synchronizing source data…');
+
+        try {
+            await this.waitForSyncCompletion(source.id, requestedAt);
+            this.setInitialSyncState(source.id, type, 'success', 'Initial sync completed');
+            await this.refreshSynchronizedSourceViews(source.id, type);
+            this.setInitialSyncState(source.id, type, 'success', 'Initial sync completed');
+            return true;
+        } catch (err) {
+            console.warn(`[SourceManager] Initial sync failed for source ${source.id}`);
+            const message = err?.message || 'The provider could not be synchronized.';
+            this.setInitialSyncState(source.id, type, 'error', `Initial sync failed: ${message}`);
+            return false;
+        }
+    }
+
+    async retryInitialSync(id, type) {
+        this.setInitialSyncState(id, type, 'syncing', 'Retrying synchronization…');
+
+        try {
+            const result = await API.sources.sync(id);
+            await this.monitorInitialSync({ id }, type, result.syncRequestedAt);
+        } catch (err) {
+            console.warn(`[SourceManager] Could not retry initial sync for source ${id}`);
+            this.setInitialSyncState(id, type, 'error', 'Initial sync failed: Unable to start the retry.');
+        }
+    }
+
+    setSourceSubmissionLoading(isLoading) {
+        this.sourceSubmissionInProgress = isLoading;
+
+        const saveButton = document.getElementById('modal-save');
+        const cancelButton = document.getElementById('modal-cancel');
+        const closeButton = document.querySelector('#modal .modal-close');
+
+        if (saveButton) {
+            saveButton.disabled = isLoading;
+            saveButton.setAttribute('aria-busy', String(isLoading));
+
+            if (isLoading) {
+                saveButton.replaceChildren();
+                const spinner = document.createElement('span');
+                spinner.className = 'btn-loading-spinner';
+                spinner.setAttribute('aria-hidden', 'true');
+                const label = document.createElement('span');
+                label.textContent = 'Adding source…';
+                saveButton.append(spinner, label);
+            } else {
+                saveButton.textContent = 'Add Source';
+            }
+        }
+
+        if (cancelButton) cancelButton.disabled = isLoading;
+        if (closeButton) closeButton.setAttribute('aria-disabled', String(isLoading));
+    }
+
+    showSourceSubmissionProgress() {
+        const modal = document.getElementById('modal');
+        document.getElementById('modal-title').textContent = 'Adding Source';
+        document.getElementById('modal-body').innerHTML = `
+            <div class="source-submission-progress" role="status" aria-live="polite">
+                <span class="loading" aria-hidden="true"></span>
+                <span>Creating the source and starting synchronization…</span>
+            </div>
+        `;
+        document.getElementById('modal-footer').innerHTML = `
+            <button class="btn btn-primary" id="modal-save" disabled aria-busy="true">
+                <span class="btn-loading-spinner" aria-hidden="true"></span>
+                <span>Adding source…</span>
+            </button>
+        `;
+        const closeButton = modal.querySelector('.modal-close');
+        if (closeButton) closeButton.setAttribute('aria-disabled', 'true');
+        modal.classList.add('active');
     }
 
     /**
      * Show add source modal
      */
     showAddModal(type) {
+        if (this.sourceSubmissionInProgress) return;
+
         const modal = document.getElementById('modal');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
@@ -184,8 +337,11 @@ class SourceManager {
         modal.classList.add('active');
 
         // Event listeners
-        modal.querySelector('.modal-close').onclick = () => modal.classList.remove('active');
-        document.getElementById('modal-cancel').onclick = () => modal.classList.remove('active');
+        const closeModal = () => {
+            if (!this.sourceSubmissionInProgress) modal.classList.remove('active');
+        };
+        modal.querySelector('.modal-close').onclick = closeModal;
+        document.getElementById('modal-cancel').onclick = closeModal;
         document.getElementById('modal-save').onclick = () => this.saveNewSource(type);
     }
 
@@ -262,6 +418,8 @@ class SourceManager {
      * Save new source
      */
     async saveNewSource(type) {
+        if (this.sourceSubmissionInProgress) return;
+
         const name = document.getElementById('source-name').value.trim();
         const url = document.getElementById('source-url').value.trim();
         const username = document.getElementById('source-username')?.value.trim() || null;
@@ -271,6 +429,8 @@ class SourceManager {
             alert('Name and URL are required');
             return;
         }
+
+        this.setSourceSubmissionLoading(true);
 
         try {
             // Check M3U size before creating (large playlist warning)
@@ -288,6 +448,7 @@ class SourceManager {
                         if (!proceed) {
                             return; // Don't create the source
                         }
+                        this.showSourceSubmissionProgress();
                     }
                 } catch (err) {
                     console.warn('[SourceManager] Could not estimate M3U size:', err.message);
@@ -295,17 +456,24 @@ class SourceManager {
                 }
             }
 
-            await API.sources.create({ type, name, url, username, password });
+            const source = await API.sources.create({ type, name, url, username, password });
+            this.setInitialSyncState(source.id, type, 'syncing', 'Synchronizing source data…');
             document.getElementById('modal').classList.remove('active');
+            this.setSourceSubmissionLoading(false);
             await this.loadSources();
-
-            // Refresh channel list
-            if (window.app?.channelList) {
-                await window.app.channelList.loadSources();
-                await window.app.channelList.loadChannels();
-            }
+            await this.monitorInitialSync(source, type, source.syncRequestedAt);
         } catch (err) {
+            this.setSourceSubmissionLoading(false);
+            if (!document.getElementById('source-name')) {
+                this.showAddModal(type);
+                document.getElementById('source-name').value = name;
+                document.getElementById('source-url').value = url;
+                if (document.getElementById('source-username')) document.getElementById('source-username').value = username || '';
+                if (document.getElementById('source-password')) document.getElementById('source-password').value = password || '';
+            }
             alert('Error adding source: ' + err.message);
+        } finally {
+            if (this.sourceSubmissionInProgress) this.setSourceSubmissionLoading(false);
         }
     }
 
@@ -346,6 +514,7 @@ class SourceManager {
 
         try {
             await API.sources.delete(id);
+            this.initialSyncStates.delete(id);
             await this.loadSources();
 
             if (window.app?.channelList) {

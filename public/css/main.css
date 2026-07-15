@@ -1296,6 +1296,47 @@ video::cue {
   word-break: break-all;
 }
 
+.source-sync-status {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  font-size: 0.75rem;
+}
+
+.source-sync-status.visible {
+  display: flex;
+}
+
+.source-sync-status.syncing {
+  color: var(--color-warning);
+}
+
+.source-sync-status.success {
+  color: var(--color-success);
+}
+
+.source-sync-status.error {
+  color: var(--color-error);
+}
+
+.source-sync-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.source-sync-retry:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .source-actions {
   display: flex;
   gap: var(--space-xs);
@@ -1503,6 +1544,31 @@ kbd {
   transition: all var(--transition-fast);
 }
 
+.btn-loading-spinner {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  border: 2px solid rgb(255 255 255 / 45%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.source-submission-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-xl) 0;
+  color: var(--color-text-secondary);
+}
+
+.modal-close[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .btn-primary {
   background: var(--color-accent);
   color: white;
@@ -1540,6 +1606,13 @@ kbd {
 
 .btn-danger:hover {
   background: #dc2626;
+}
+
+.btn:disabled,
+.btn:disabled:hover {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-icon {

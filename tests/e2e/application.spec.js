@@ -55,26 +55,42 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
     await page.locator('#add-m3u').click();
     await page.locator('#source-name').fill('Controlled M3U');
-    await page.locator('#source-url').fill(`${fixtureBaseUrl}/playlist.m3u`);
-    await page.locator('#modal-save').click();
-    await expect(page.locator('#m3u-list .source-name')).toContainText('Controlled M3U');
-
-    const m3uSource = await page.evaluate(async () => {
-        const response = await fetch('/api/sources');
-        return (await response.json()).find(source => source.name === 'Controlled M3U');
+    await page.locator('#source-url').fill(`${fixtureBaseUrl}/delayed-playlist.m3u`);
+    await page.evaluate(() => {
+        const addButton = document.getElementById('modal-save');
+        addButton.click();
+        addButton.click();
+        addButton.click();
     });
-    expect(m3uSource).toBeTruthy();
+    await expect(page.locator('#modal-save')).toBeDisabled();
+    await expect(page.locator('#modal-save')).toContainText('Adding source');
+    const m3uRow = page.locator('#m3u-list .source-item', { hasText: 'Controlled M3U' });
+    await expect(m3uRow).toBeVisible();
+    await expect(m3uRow.locator('.source-sync-status')).toContainText('Synchronizing source data');
+    await expect(m3uRow.locator('.source-sync-status')).toHaveText('Initial sync completed', { timeout: 30_000 });
+
+    const m3uSourceResult = await page.evaluate(async () => {
+        const response = await fetch('/api/sources');
+        const matches = (await response.json()).filter(source => source.name === 'Controlled M3U');
+        return { count: matches.length, source: matches[0] };
+    });
+    expect(m3uSourceResult.count).toBe(1);
+    expect(m3uSourceResult.source).toBeTruthy();
+    const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
-    const epgSource = await page.evaluate(async url => {
-        const response = await fetch('/api/sources', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'epg', name: 'Controlled EPG', url })
-        });
-        if (!response.ok) throw new Error(`EPG source creation failed: ${response.status}`);
-        return response.json();
-    }, `${fixtureBaseUrl}/guide.xml`);
+    await page.locator('#add-epg').click();
+    await page.locator('#source-name').fill('Controlled EPG');
+    await page.locator('#source-url').fill(`${fixtureBaseUrl}/guide.xml`);
+    await page.locator('#modal-save').click();
+    const epgRow = page.locator('#epg-list .source-item', { hasText: 'Controlled EPG' });
+    await expect(epgRow.locator('.source-sync-status')).toHaveText('Initial sync completed', { timeout: 30_000 });
+
+    const epgSource = await page.evaluate(async () => {
+        const response = await fetch('/api/sources');
+        return (await response.json()).find(source => source.name === 'Controlled EPG');
+    });
+    expect(epgSource).toBeTruthy();
     await waitForSync(page, epgSource.id);
 
     const epg = await page.evaluate(async id => {
@@ -83,6 +99,29 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, epgSource.id);
     expect(epg.programmes).toHaveLength(1);
     expect(epg.programmes[0].title).toBe('Controlled Test Programme');
+
+    await page.locator('#add-epg').click();
+    await page.locator('#source-name').fill('Recoverable Initial Sync');
+    await page.locator('#source-url').fill(`${fixtureBaseUrl}/retry-guide.xml?access_token=sensitive-query-value`);
+    await page.locator('#modal-save').click();
+    const retryRow = page.locator('#epg-list .source-item', { hasText: 'Recoverable Initial Sync' });
+    const retryStatus = retryRow.locator('.source-sync-status');
+    await expect(retryStatus).toContainText('Initial sync failed', { timeout: 30_000 });
+    await expect(retryStatus).not.toContainText('sensitive-query-value');
+    await retryStatus.getByRole('button', { name: 'Retry' }).click();
+    await expect(retryStatus).toHaveText('Initial sync completed', { timeout: 30_000 });
+
+    const retrySource = await page.evaluate(async () => {
+        const response = await fetch('/api/sources');
+        return (await response.json()).find(source => source.name === 'Recoverable Initial Sync');
+    });
+    expect(retrySource).toBeTruthy();
+    await page.evaluate(async id => {
+        const response = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(`Retry source cleanup failed: ${response.status}`);
+        window.app.sourceManager.initialSyncStates.delete(id);
+        await window.app.sourceManager.loadSources();
+    }, retrySource.id);
 
     // XMLTV allows reduced timestamp precision. Valid minute-precision entries
     // must sync, while malformed entries are skipped without aborting the source.
@@ -115,25 +154,24 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         if (!response.ok) throw new Error(`Reduced-precision EPG cleanup failed: ${response.status}`);
     }, reducedPrecisionSource.id);
 
-    const seriesSource = await page.evaluate(async values => {
-        const response = await fetch('/api/sources', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'xtream',
-                name: 'Controlled Safari Series',
-                url: values.url,
-                username: values.username,
-                password: values.password
-            })
-        });
-        if (!response.ok) throw new Error(`Series source creation failed: ${response.status}`);
-        return response.json();
-    }, {
-        url: `${fixtureBaseUrl}/xtream`,
+    const seriesCredentials = {
         username: crypto.randomBytes(18).toString('base64url'),
         password: crypto.randomBytes(24).toString('base64url')
+    };
+    await page.locator('#add-xtream').click();
+    await page.locator('#source-name').fill('Controlled Safari Series');
+    await page.locator('#source-url').fill(`${fixtureBaseUrl}/xtream`);
+    await page.locator('#source-username').fill(seriesCredentials.username);
+    await page.locator('#source-password').fill(seriesCredentials.password);
+    await page.locator('#modal-save').click();
+    const seriesSourceRow = page.locator('#xtream-list .source-item', { hasText: 'Controlled Safari Series' });
+    await expect(seriesSourceRow.locator('.source-sync-status')).toHaveText('Initial sync completed', { timeout: 30_000 });
+
+    const seriesSource = await page.evaluate(async () => {
+        const response = await fetch('/api/sources');
+        return (await response.json()).find(source => source.name === 'Controlled Safari Series');
     });
+    expect(seriesSource).toBeTruthy();
     await waitForSync(page, seriesSource.id);
 
     await page.evaluate(() => window.app.navigateTo('series'));
