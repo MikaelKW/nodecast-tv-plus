@@ -118,10 +118,11 @@ body {
   flex-direction: column;
   height: 100vh;
   /* fallback */
-  height: 100dvh;
-  /* dynamic viewport height for modern browsers */
   height: -webkit-fill-available;
   /* iOS Safari fallback */
+  height: 100dvh;
+  /* dynamic viewport height for modern browsers */
+  min-height: 0;
 }
 
 /* Typography */
@@ -161,6 +162,7 @@ h4 {
    ===================================================== */
 .navbar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   height: var(--navbar-height);
@@ -175,6 +177,8 @@ h4 {
 
 .navbar-brand {
   display: flex;
+  flex-shrink: 0;
+  min-width: 0;
   align-items: center;
   gap: var(--space-sm);
 }
@@ -217,6 +221,7 @@ h4 {
 
 .navbar-menu {
   display: flex;
+  min-width: 0;
   gap: var(--space-xs);
 }
 
@@ -1191,7 +1196,11 @@ video::cue {
   max-width: 900px;
   margin: 0 auto;
   padding: var(--space-lg);
-  height: calc(100vh - var(--navbar-height));
+  padding-bottom: calc(var(--space-lg) + var(--safe-area-inset-bottom));
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -1747,7 +1756,8 @@ kbd {
 .content-browser {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--navbar-height) - 200px);
+  height: max(320px, calc(100dvh - var(--navbar-height) - 200px));
+  min-height: 0;
 }
 
 .content-browser-header {
@@ -2483,7 +2493,8 @@ kbd {
   /* Settings Page - Mobile optimized */
   .settings-container {
     padding: var(--space-sm);
-    height: calc(100vh - var(--navbar-height));
+    padding-bottom: calc(var(--space-sm) + var(--safe-area-inset-bottom));
+    height: 100%;
   }
 
   .settings-container h2 {
@@ -2633,10 +2644,7 @@ kbd {
     padding: var(--space-xs) var(--space-sm);
   }
 
-  /* Keyboard shortcuts - Hide on mobile since they're not relevant */
-  .shortcuts-grid {
-    display: none;
-  }
+  /* Keep shortcut help consistent when the phone rotates or uses a keyboard. */
 }
 
 @media (max-width: 480px) {
@@ -2685,6 +2693,30 @@ kbd {
 
 /* Landscape orientation adjustments for phones */
 @media (max-width: 896px) and (orientation: landscape) {
+  .navbar {
+    padding-left: max(var(--space-sm), var(--safe-area-inset-left));
+    padding-right: max(var(--space-sm), var(--safe-area-inset-right));
+  }
+
+  .navbar-menu {
+    flex: 1;
+    justify-content: flex-end;
+    gap: 2px;
+  }
+
+  .navbar-menu .nav-link span:not(.nav-icon) {
+    display: none;
+  }
+
+  .nav-link {
+    flex: 0 0 auto;
+    padding: var(--space-sm);
+  }
+
+  .brand-text {
+    font-size: 1.1rem;
+  }
+
   .channel-sidebar {
     width: 280px;
   }
@@ -3103,6 +3135,7 @@ kbd {
   overscroll-behavior: contain;
   overflow-y: auto;
   padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + var(--safe-area-inset-bottom));
 }
 
 .series-details.hidden {
@@ -4617,10 +4650,12 @@ kbd {
 #page-home {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .dashboard-content {
   padding: 24px;
+  padding-bottom: calc(24px + var(--safe-area-inset-bottom));
   max-width: 1400px;
   margin: 0 auto;
 }
