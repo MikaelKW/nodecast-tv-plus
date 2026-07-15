@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
 const auth = require('../auth');
+const { requestBasePath, withBasePath } = require('../config/basePath');
 const { redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
@@ -710,6 +711,10 @@ router.get('/stream', async (req, res) => {
 
                 const finalUrlObj = new URL(finalUrl);
                 const baseUrl = finalUrlObj.origin + finalUrlObj.pathname.substring(0, finalUrlObj.pathname.lastIndexOf('/') + 1);
+                const publicProxyPath = withBasePath(`${req.baseUrl}/stream`, requestBasePath(req));
+                const buildProxyUrl = targetUrl => (
+                    `${req.protocol}://${req.get('host')}${publicProxyPath}?url=${encodeURIComponent(targetUrl)}`
+                );
 
                 manifest = manifest.split('\n').map(line => {
                     const trimmed = line.trim();
@@ -720,7 +725,7 @@ router.get('/stream', async (req, res) => {
                             return line.replace(/URI=["']([^"']+)["']/g, (match, p1) => {
                                 try {
                                     const absoluteUrl = new URL(p1, baseUrl).href;
-                                    return `URI="${req.protocol}://${req.get('host')}${req.baseUrl}/stream?url=${encodeURIComponent(absoluteUrl)}"`;
+                                    return `URI="${buildProxyUrl(absoluteUrl)}"`;
                                 } catch (e) {
                                     return match;
                                 }
@@ -737,7 +742,7 @@ router.get('/stream', async (req, res) => {
                         } else {
                             absoluteUrl = new URL(trimmed, baseUrl).href;
                         }
-                        return `${req.protocol}://${req.get('host')}${req.baseUrl}/stream?url=${encodeURIComponent(absoluteUrl)}`;
+                        return buildProxyUrl(absoluteUrl);
                     } catch (e) { return line; }
                 }).join('\n');
 
