@@ -375,6 +375,7 @@ async function start() {
     process.env.PORT = String(appPort);
     process.env.JWT_SECRET = crypto.randomBytes(48).toString('hex');
     process.env.SESSION_SECRET = crypto.randomBytes(48).toString('hex');
+    process.env.TOTP_ENCRYPTION_KEY = crypto.randomBytes(48).toString('hex');
     process.env.NODECAST_DATA_DIR = dataDir;
     process.env.NODECAST_CACHE_DIR = cacheDir;
     process.env.NODECAST_DISABLE_BACKGROUND_JOBS = 'true';

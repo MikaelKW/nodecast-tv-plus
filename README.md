@@ -72,6 +72,8 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
 
    Put one value in `JWT_SECRET` and the other in `SESSION_SECRET`. Never commit the resulting `.env` file.
 
+   To allow local accounts to enable authenticator-app two-factor authentication, run the command a third time and put that independent value in `TOTP_ENCRYPTION_KEY`. Preserve this value across upgrades and include the `.env` file in a secure deployment backup. Changing or losing it makes existing TOTP enrollments unusable.
+
 3. Start the application:
 
    ```bash
@@ -113,7 +115,7 @@ Before migrating:
    docker inspect nodecast-tv --format '{{range .Mounts}}{{println .Type .Name .Source "->" .Destination}}{{end}}'
    ```
 
-3. Create a Plus `.env` file from [`.env.example`](.env.example). Set two different strong values for `JWT_SECRET` and `SESSION_SECRET`.
+3. Create a Plus `.env` file from [`.env.example`](.env.example). Set two different strong values for `JWT_SECRET` and `SESSION_SECRET`. Optionally set and preserve a third independent `TOTP_ENCRYPTION_KEY` to make authenticator-app 2FA available to local accounts.
 4. Start the Plus container with the **existing upstream storage** mounted at `/app/data`. Do not start it with a new empty volume.
 
 For an existing named volume, keep its actual name in the `-v` argument:
@@ -200,7 +202,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
     node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
     ```
 
-    Run the command twice and place one value in `JWT_SECRET` and the other in `SESSION_SECRET`. The `.env` file is ignored by Git and must never be committed.
+    Run the command twice and place one value in `JWT_SECRET` and the other in `SESSION_SECRET`. Run it a third time and set `TOTP_ENCRYPTION_KEY` if local accounts should be able to enable authenticator-app 2FA. The `.env` file is ignored by Git and must never be committed.
 
     ```yaml
     services:
@@ -217,6 +219,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           PORT: 3000 # Optional: Internal container port
           JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+          TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
           NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
     ```
@@ -293,6 +296,19 @@ OIDC_USERINFO_URL=https://your-idp.com/userinfo
 ```
 
 **Note:** New users signing in via SSO are automatically assigned the **Viewer** role. You must manually promote them to Admin if desired.
+
+### Two-factor authentication
+
+Local accounts can enable standards-based TOTP from **Account -> Two-factor authentication** after `TOTP_ENCRYPTION_KEY` is configured. The guided setup works with standard authenticator apps, and sign-in can use either a current six-digit code or one of the single-use recovery codes created during enrollment.
+
+The TOTP secret is encrypted in `/app/data/db.json`; recovery codes are stored only as keyed hashes. The QR code, manual setup key, and plaintext recovery codes are shown only during the relevant setup step. Save recovery codes securely before leaving that screen.
+
+Important operational notes:
+
+- Keep `TOTP_ENCRYPTION_KEY` stable and back it up separately from `/app/data`. Both are needed to restore existing 2FA enrollments.
+- Use a different random value from `JWT_SECRET` and `SESSION_SECRET`.
+- Local administrators can reset 2FA for another account after re-entering their own password and, when enabled, their own second factor. The reset cannot reveal the other account's secret or recovery codes.
+- SSO accounts continue to use the identity provider's authentication and MFA policy.
 
 ### Usage
 

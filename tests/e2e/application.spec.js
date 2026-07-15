@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { test, expect } = require('@playwright/test');
+const OTPAuth = require('otpauth');
 
 const fixtureBaseUrl = 'http://127.0.0.1:3211';
 
@@ -50,6 +51,48 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.sourceManager && window.app?.channelList
     ))).toBe(true);
+
+    // Enroll through the same guided flow presented to local accounts, then
+    // prove password sign-in stops at the server-side challenge until a fresh
+    // authenticator code is supplied.
+    await page.locator('.nav-link[data-page="account"]').click();
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+    await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
+    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
+    await page.locator('#account-password').fill(password);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.locator('#totp-qr-image')).toBeVisible();
+    const enrollmentSecret = await page.locator('#totp-manual-secret').textContent();
+    const authenticator = new OTPAuth.TOTP({
+        issuer: 'NodeCast TV Plus',
+        label: 'e2e-admin',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32(enrollmentSecret)
+    });
+    await page.locator('#account-confirm-code').fill(authenticator.generate());
+    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(page.locator('#account-recovery-codes')).toBeVisible();
+    await expect(page.locator('#account-recovery-codes')).toContainText('-');
+    await page.getByRole('button', { name: 'I have saved them' }).click();
+    await expect(page.locator('#two-factor-status-badge')).toHaveText('Enabled');
+    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => /totp|factor|recovery/i.test(key)))).toEqual([]);
+    await expect(page.locator('#totp-manual-secret')).toHaveCount(0);
+    await expect(page.locator('#account-recovery-codes')).toHaveCount(0);
+
+    await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST' }));
+    await page.goto('/login.html');
+    await page.locator('#username').fill('e2e-admin');
+    await page.locator('#password').fill(password);
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page.locator('#two-factor-form')).toBeVisible();
+    await expect(page).toHaveURL(/\/login\.html$/);
+    const nextAuthenticatorCode = authenticator.generate({ timestamp: Date.now() + 30_000 });
+    await page.locator('#two-factor-code').fill(nextAuthenticatorCode);
+    await page.getByRole('button', { name: 'Verify', exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect.poll(() => page.evaluate(() => window.app?.currentUser?.twoFactorEnabled)).toBe(true);
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);

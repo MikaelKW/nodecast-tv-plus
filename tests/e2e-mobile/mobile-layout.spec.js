@@ -128,6 +128,11 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#content-tree', '.settings-container');
 
+    await page.evaluate(() => window.app.navigateTo('account'));
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+    await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
+    await expect(page.getByRole('button', { name: 'Enable two-factor authentication' })).toBeVisible();
+
     // Compact landscape navigation must keep every destination, including
     // Logout, inside the visible viewport.
     await page.setViewportSize({ width: 874, height: 402 });
