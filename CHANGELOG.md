@@ -4,6 +4,32 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.2.2] - 2026-07-15
+
+This patch release improves XMLTV compatibility, iPhone and mobile-browser usability, and deployments served beneath a reverse-proxy subpath.
+
+### Changed
+
+- Added `NODECAST_BASE_PATH` for optional deployments beneath a path such as `/nodecast/`, while preserving existing root-path behavior ([#139], [#142]).
+- Extended the migration release gate to verify upgrades from the published NodeCast TV Plus 2.2.1 image in addition to the supported upstream baselines.
+
+### Fixed
+
+- Accepted standards-valid reduced-precision XMLTV timestamps, validated calendar and timezone fields, and skipped malformed programme entries without failing the complete EPG synchronization ([#128]).
+- Made Series details render reliably in Safari and other WebKit browsers instead of opening a blank page on iPhone ([#132]).
+- Restored access to content below the mobile viewport across Home, Series, Settings, and Login, and kept every navigation destination reachable in landscape orientation ([#136]).
+- Kept pages, assets, authentication, APIs, media requests, OIDC callbacks, and server-rewritten HLS manifest URLs within the configured reverse-proxy subpath ([#139], [#142]).
+- Restored Live TV fullscreen on iPhone Safari through the native video-player fallback without changing Movies or Series fullscreen behavior ([#146]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.2.2`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Changing them signs existing browser sessions out but does not remove accounts or application data.
+- No manual database migration is required.
+- Root-path deployments require no configuration change. Set `NODECAST_BASE_PATH=/nodecast` only when the reverse proxy publishes the application at that path, and configure the proxy to remove the prefix before forwarding requests.
+- Migration from the published 2.2.1 container is covered by the automated release gate. Supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.2.1` and the existing deployment secrets.
+
 ## [2.2.1] - 2026-07-14
 
 This patch release improves provider-data integrity, login usability, transcode startup flexibility, and movie/series playback recovery. It also formalizes verified migration guidance for supported upstream installations.
@@ -88,6 +114,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.2.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.1.1...v2.2.0
 [#1]: https://github.com/MikaelKW/nodecast-tv-plus/pull/1
@@ -112,3 +139,9 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#114]: https://github.com/MikaelKW/nodecast-tv-plus/pull/114
 [#117]: https://github.com/MikaelKW/nodecast-tv-plus/pull/117
 [#120]: https://github.com/MikaelKW/nodecast-tv-plus/pull/120
+[#128]: https://github.com/MikaelKW/nodecast-tv-plus/pull/128
+[#132]: https://github.com/MikaelKW/nodecast-tv-plus/pull/132
+[#136]: https://github.com/MikaelKW/nodecast-tv-plus/pull/136
+[#139]: https://github.com/MikaelKW/nodecast-tv-plus/pull/139
+[#142]: https://github.com/MikaelKW/nodecast-tv-plus/pull/142
+[#146]: https://github.com/MikaelKW/nodecast-tv-plus/pull/146

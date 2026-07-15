@@ -19,12 +19,19 @@ const baselines = [
     {
         version: '2.1.1',
         image: 'nodecast-tv-upstream-migration-test:2.1.1',
+        kind: 'upstream',
         context: 'https://github.com/technomancer702/nodecast-tv.git#3be14ef2faff81eb59f405c4641825a64f0b9c4a'
     },
     {
         version: '2.1.4',
         image: 'nodecast-tv-upstream-migration-test:2.1.4',
+        kind: 'upstream',
         context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
+    },
+    {
+        version: '2.2.1',
+        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.2.1',
+        kind: 'plus'
     }
 ];
 
@@ -83,13 +90,25 @@ async function ensureCandidateImage() {
     return true;
 }
 
-async function buildBaseline(baseline) {
-    console.log(`Building lightweight upstream ${baseline.version} baseline from its pinned commit...`);
-    await docker(['build', '-t', baseline.image, '-f', '-', baseline.context], {
-        stream: true,
-        input: baselineDockerfile,
-        timeoutMs: 300000
-    });
+async function prepareBaseline(baseline) {
+    if (await dockerObjectExists('image', baseline.image)) {
+        console.log(`Using existing ${baseline.kind} ${baseline.version} migration baseline image...`);
+        return false;
+    }
+
+    if (baseline.context) {
+        console.log(`Building lightweight upstream ${baseline.version} baseline from its pinned commit...`);
+        await docker(['build', '-t', baseline.image, '-f', '-', baseline.context], {
+            stream: true,
+            input: baselineDockerfile,
+            timeoutMs: 300000
+        });
+        return true;
+    }
+
+    console.log(`Pulling published Plus ${baseline.version} migration baseline...`);
+    await docker(['pull', baseline.image], { stream: true, timeoutMs: 300000 });
+    return true;
 }
 
 async function request(baseUrl, pathname, { method = 'GET', body, token, cookie } = {}) {
@@ -183,7 +202,7 @@ console.log(JSON.stringify({
     return JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
 }
 
-async function seedUpstreamData(containerName, { sourceName, sourceUrl, providerUsername, providerPassword }) {
+async function seedBaselineData(containerName, { sourceName, sourceUrl, providerUsername, providerPassword }) {
     const code = `
 const { sources } = require('/app/server/db');
 const { getDb } = require('/app/server/db/sqlite');
@@ -270,7 +289,7 @@ async function sanitizedLogs(containerName, valuesToRedact) {
 
 async function runBaseline(baseline) {
     const suffix = `${process.pid}-${baseline.version.replaceAll('.', '-')}`;
-    const upstreamContainer = `nodecast-upstream-migration-${suffix}`;
+    const baselineContainer = `nodecast-baseline-migration-${suffix}`;
     const plusContainer = `nodecast-plus-migration-${suffix}`;
     const volume = `nodecast-migration-data-${suffix}`;
     const username = `migration-admin-${suffix}`;
@@ -284,51 +303,61 @@ async function runBaseline(baseline) {
 
     await docker(['volume', 'create', volume]);
     try {
-        console.log(`Starting upstream ${baseline.version} with a disposable data volume...`);
-        const upstreamUrl = await startContainer({
-            name: upstreamContainer,
+        console.log(`Starting ${baseline.kind} ${baseline.version} with a disposable data volume...`);
+        const baselineUrl = await startContainer({
+            name: baselineContainer,
             image: baseline.image,
             volume,
-            jwtSecret
+            jwtSecret,
+            sessionSecret: baseline.kind === 'plus' ? sessionSecret : undefined
         });
-        await waitForVersion(upstreamUrl, baseline.version);
-        console.log(`Upstream ${baseline.version} is ready; creating account and migration records...`);
+        await waitForVersion(baselineUrl, baseline.version);
+        console.log(`${baseline.kind} ${baseline.version} is ready; creating account and migration records...`);
 
-        const setup = await request(upstreamUrl, '/api/auth/setup', {
+        const setup = await request(baselineUrl, '/api/auth/setup', {
             method: 'POST',
             body: { username, password }
         });
-        const legacyToken = setup.payload.token;
-        assert.ok(legacyToken, 'Upstream setup must return a bearer token.');
-        redactions.push(legacyToken);
-        const tokenAuth = { token: legacyToken };
+        let baselineAuth;
+        if (baseline.kind === 'upstream') {
+            const legacyToken = setup.payload.token;
+            assert.ok(legacyToken, 'Upstream setup must return a bearer token.');
+            redactions.push(legacyToken);
+            baselineAuth = { token: legacyToken };
+        } else {
+            const setCookie = setup.headers.get('set-cookie') || '';
+            const authCookie = setCookie.match(/nodecast_auth=[^;]+/)?.[0];
+            assert.ok(authCookie, 'The previous Plus release must issue an authentication cookie.');
+            redactions.push(authCookie);
+            baselineAuth = { cookie: authCookie };
+        }
 
-        await request(upstreamUrl, '/api/settings', {
-            ...tokenAuth,
+        await request(baselineUrl, '/api/settings', {
+            ...baselineAuth,
             method: 'PUT',
             body: { maxResolution: '720p', forceProxy: true, epgDays: 5 }
         });
-        const source = await seedUpstreamData(upstreamContainer, {
+        const source = await seedBaselineData(baselineContainer, {
             sourceName: `Migration fixture ${baseline.version}`,
             sourceUrl: playlistUrl,
             providerUsername,
             providerPassword
         });
 
-        const initialSqlite = await sqliteSnapshot(upstreamContainer, source.id);
+        const initialSqlite = await sqliteSnapshot(baselineContainer, source.id);
         assert.equal(initialSqlite.playlistItems, 2);
         assert.equal(initialSqlite.categories, 1);
         assert.equal(initialSqlite.epgPrograms, 1);
         assert.equal(initialSqlite.syncStatus, 1);
         assert.ok(initialSqlite.firstItemId);
 
-        await request(upstreamUrl, '/api/favorites', {
-            ...tokenAuth,
+        await request(baselineUrl, '/api/favorites', {
+            ...baselineAuth,
             method: 'POST',
             body: { sourceId: source.id, itemId: initialSqlite.firstItemId, itemType: 'channel' }
         });
-        await request(upstreamUrl, '/api/history', {
-            ...tokenAuth,
+        await request(baselineUrl, '/api/history', {
+            ...baselineAuth,
             method: 'POST',
             body: {
                 id: initialSqlite.firstItemId,
@@ -339,24 +368,24 @@ async function runBaseline(baseline) {
                 data: { title: 'Migration fixture' }
             }
         });
-        await request(upstreamUrl, '/api/channels/hide', {
-            ...tokenAuth,
+        await request(baselineUrl, '/api/channels/hide', {
+            ...baselineAuth,
             method: 'POST',
             body: { sourceId: source.id, itemId: initialSqlite.firstItemId, itemType: 'channel' }
         });
 
-        const upstreamState = await collectApiState(upstreamUrl, tokenAuth);
-        const upstreamSqlite = await sqliteSnapshot(upstreamContainer, source.id);
+        const baselineState = await collectApiState(baselineUrl, baselineAuth);
+        const baselineSqlite = await sqliteSnapshot(baselineContainer, source.id);
         const expectedCredentialDigest = localCredentialDigest({
             url: playlistUrl,
             username: providerUsername,
             password: providerPassword
         });
-        assert.equal(await sourceCredentialDigest(upstreamContainer, source.id), expectedCredentialDigest);
+        assert.equal(await sourceCredentialDigest(baselineContainer, source.id), expectedCredentialDigest);
 
-        await removeContainer(upstreamContainer);
+        await removeContainer(baselineContainer);
 
-        console.log(`Starting Plus ${expectedCandidateVersion} against upstream ${baseline.version} data...`);
+        console.log(`Starting Plus ${expectedCandidateVersion} against ${baseline.kind} ${baseline.version} data...`);
         const plusUrl = await startContainer({
             name: plusContainer,
             image: candidateImage,
@@ -367,10 +396,12 @@ async function runBaseline(baseline) {
         await waitForVersion(plusUrl, expectedCandidateVersion);
         console.log(`Plus ${expectedCandidateVersion} is ready; verifying migrated records...`);
 
-        const legacyMe = await request(plusUrl, '/api/auth/me', tokenAuth);
-        assert.equal(legacyMe.payload.username, username);
-        assert.match(legacyMe.headers.get('set-cookie') || '', /nodecast_auth=/,
-            'A valid legacy bearer token must migrate to an authentication cookie.');
+        const inheritedMe = await request(plusUrl, '/api/auth/me', baselineAuth);
+        assert.equal(inheritedMe.payload.username, username);
+        if (baseline.kind === 'upstream') {
+            assert.match(inheritedMe.headers.get('set-cookie') || '', /nodecast_auth=/,
+                'A valid legacy bearer token must migrate to an authentication cookie.');
+        }
 
         const login = await request(plusUrl, '/api/auth/login', {
             method: 'POST',
@@ -392,28 +423,28 @@ async function runBaseline(baseline) {
         const plusCredentialDigest = await sourceCredentialDigest(plusContainer, source.id);
 
         assert.equal(plusCredentialDigest, expectedCredentialDigest, 'Provider credentials must be preserved.');
-        assert.equal(plusState.settings.maxResolution, upstreamState.settings.maxResolution);
-        assert.equal(plusState.settings.forceProxy, upstreamState.settings.forceProxy);
-        assert.equal(plusState.settings.epgDays, upstreamState.settings.epgDays);
-        assert.equal(plusState.sources.length, upstreamState.sources.length);
-        assert.equal(plusState.sources[0].name, upstreamState.sources[0].name);
-        assert.equal(plusState.sources[0].type, upstreamState.sources[0].type);
+        assert.equal(plusState.settings.maxResolution, baselineState.settings.maxResolution);
+        assert.equal(plusState.settings.forceProxy, baselineState.settings.forceProxy);
+        assert.equal(plusState.settings.epgDays, baselineState.settings.epgDays);
+        assert.equal(plusState.sources.length, baselineState.sources.length);
+        assert.equal(plusState.sources[0].name, baselineState.sources[0].name);
+        assert.equal(plusState.sources[0].type, baselineState.sources[0].type);
         assert.equal(plusState.favorites.length, 1);
         assert.equal(plusState.history.length, 1);
         assert.equal(plusState.history[0].progress, 42);
         assert.equal(plusState.history[0].data.title, 'Migration fixture');
         assert.equal(plusState.hidden.length, 1);
-        assert.deepEqual(plusSqlite, upstreamSqlite);
+        assert.deepEqual(plusSqlite, baselineSqlite);
 
-        console.log(`Migration compatibility passed: upstream ${baseline.version} -> Plus ${expectedCandidateVersion}.`);
+        console.log(`Migration compatibility passed: ${baseline.kind} ${baseline.version} -> Plus ${expectedCandidateVersion}.`);
     } catch (error) {
-        const upstreamLogs = await sanitizedLogs(upstreamContainer, redactions);
+        const baselineLogs = await sanitizedLogs(baselineContainer, redactions);
         const plusLogs = await sanitizedLogs(plusContainer, redactions);
-        if (upstreamLogs) console.error(`Sanitized upstream ${baseline.version} logs:\n${upstreamLogs}`);
+        if (baselineLogs) console.error(`Sanitized ${baseline.kind} ${baseline.version} logs:\n${baselineLogs}`);
         if (plusLogs) console.error(`Sanitized Plus logs:\n${plusLogs}`);
         throw error;
     } finally {
-        await removeContainer(upstreamContainer);
+        await removeContainer(baselineContainer);
         await removeContainer(plusContainer);
         await removeVolume(volume);
     }
@@ -424,15 +455,16 @@ async function main() {
     if (dockerVersion.code !== 0) throw new Error('A running Docker engine is required for migration tests.');
 
     const candidateWasBuilt = await ensureCandidateImage();
+    const preparedBaselineImages = [];
     try {
         for (const baseline of baselines) {
-            await buildBaseline(baseline);
+            if (await prepareBaseline(baseline)) preparedBaselineImages.push(baseline.image);
             await runBaseline(baseline);
         }
-        console.log('All supported upstream migration baselines passed.');
+        console.log('All supported migration baselines passed.');
     } finally {
-        for (const baseline of baselines) {
-            if (await dockerObjectExists('image', baseline.image)) await docker(['image', 'rm', baseline.image]);
+        for (const image of preparedBaselineImages) {
+            if (await dockerObjectExists('image', image)) await docker(['image', 'rm', image]);
         }
         if (candidateWasBuilt && process.env.KEEP_MIGRATION_TEST_IMAGE !== 'true') {
             if (await dockerObjectExists('image', candidateImage)) await docker(['image', 'rm', candidateImage]);
