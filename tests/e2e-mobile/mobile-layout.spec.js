@@ -144,4 +144,31 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(navLayout.links.every(link => (
         link.visible && link.left >= 0 && link.right <= navLayout.viewportWidth + 1
     ))).toBe(true);
+
+    // iPhone Safari does not expose the standard element fullscreen API for
+    // the Live TV container. The custom control must fall back to native
+    // video fullscreen instead of silently doing nothing.
+    const nativeFullscreenCalls = await page.evaluate(() => {
+        const player = window.app?.player;
+        const fullscreenButton = document.getElementById('btn-fullscreen');
+        if (!player?.container || !player?.video || !fullscreenButton) return -1;
+
+        let calls = 0;
+        Object.defineProperty(player.container, 'requestFullscreen', {
+            configurable: true,
+            value: undefined
+        });
+        Object.defineProperty(player.container, 'webkitRequestFullscreen', {
+            configurable: true,
+            value: undefined
+        });
+        Object.defineProperty(player.video, 'webkitEnterFullscreen', {
+            configurable: true,
+            value: () => { calls += 1; }
+        });
+
+        fullscreenButton.click();
+        return calls;
+    });
+    expect(nativeFullscreenCalls).toBe(1);
 });
