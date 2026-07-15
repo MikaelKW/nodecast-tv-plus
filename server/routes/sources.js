@@ -88,8 +88,9 @@ router.post('/', auth.requireAdmin, async (req, res) => {
         const validatedUrl = validateHttpUrl(url, 'Source URL');
         const source = await sources.create({ type, name, url: validatedUrl, username, password });
         // Trigger Sync
+        const syncRequestedAt = Date.now();
         syncService.syncSource(source.id).catch(console.error);
-        res.status(201).json(maskSource(source));
+        res.status(201).json({ ...maskSource(source), syncRequestedAt });
     } catch (err) {
         logSafeError('Error creating source:', err);
         res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to create source' });
@@ -182,9 +183,10 @@ router.post('/:id/sync', auth.requireAdmin, async (req, res) => {
         if (!source) return res.status(404).json({ error: 'Source not found' });
 
         // Trigger sync (async)
+        const syncRequestedAt = Date.now();
         syncService.syncSource(id).catch(console.error);
 
-        res.json({ success: true, message: 'Sync started' });
+        res.json({ success: true, message: 'Sync started', syncRequestedAt });
     } catch (err) {
         console.error('Error starting sync:', err);
         res.status(500).json({ error: 'Failed to start sync' });
