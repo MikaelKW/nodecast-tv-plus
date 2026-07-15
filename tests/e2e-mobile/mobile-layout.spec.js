@@ -69,7 +69,7 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await page.locator('#username').fill('mobile-layout-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.pages?.series
     ))).toBe(true);
