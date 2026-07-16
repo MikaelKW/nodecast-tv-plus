@@ -84,7 +84,11 @@ async function run() {
         const setup = await request(baseUrl, '/api/auth/setup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: 'real-world-test-admin', password })
+            body: JSON.stringify({
+                username: 'real-world-test-admin',
+                password,
+                passwordConfirmation: password
+            })
         });
         const cookie = setup.response.headers.get('set-cookie')?.split(';')[0];
         assert(cookie, 'Setup did not return an authentication cookie');

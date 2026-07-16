@@ -88,6 +88,14 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
 
 4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
 
+5. Confirm that Docker reports the application as ready:
+
+   ```bash
+   docker inspect --format '{{.State.Health.Status}}' nodecast-tv-plus
+   ```
+
+   A ready container reports `healthy`. The lightweight `/api/health` endpoint returns only readiness status and the application version; it does not contact IPTV providers or expose configuration.
+
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
 For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. It defaults to `15` and accepts a whole number from `1` to `300`. The value applies to each startup attempt; because one retry may occur after an initial provider rejection, the total wait can be approximately twice the configured value.
