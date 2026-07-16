@@ -1,6 +1,6 @@
 const fs = require('fs/promises');
 const path = require('path');
-const { existsSync, mkdirSync } = require('fs');
+const { constants, existsSync, mkdirSync } = require('fs');
 
 // Ensure data directory exists (sync is fine for startup)
 const dataDir = process.env.NODECAST_DATA_DIR
@@ -53,6 +53,17 @@ async function loadDb() {
       nextId: 1
     };
   }
+}
+
+async function checkHealth() {
+  await fs.access(dataDir, constants.R_OK | constants.W_OK);
+  try {
+    const fileContent = await fs.readFile(dbPath, 'utf-8');
+    JSON.parse(fileContent);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return true;
 }
 
 // Default settings
@@ -601,4 +612,4 @@ const users = {
   }
 };
 
-module.exports = { loadDb, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS };
+module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS };

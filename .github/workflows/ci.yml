@@ -87,6 +87,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify container health
+        shell: bash
+        run: |
+          jwt_secret="$(openssl rand -hex 48)"
+          session_secret="$(openssl rand -hex 48)"
+          container_id="$(docker run -d --name nodecast-health-ci \
+            -e NODE_ENV=production \
+            -e JWT_SECRET="$jwt_secret" \
+            -e SESSION_SECRET="$session_secret" \
+            -p 127.0.0.1::3000 \
+            nodecast-tv-plus:ci)"
+          trap 'docker rm -f nodecast-health-ci >/dev/null 2>&1 || true' EXIT
+
+          for attempt in {1..40}; do
+            status="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")"
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
+          host_port="$(docker port "$container_id" 3000/tcp | awk -F: '{print $NF}')"
+          curl -fsS "http://127.0.0.1:${host_port}/api/health" | grep -q '"status":"ok"'
+
       - name: Verify upstream migration compatibility
         if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') }}
         run: npm run test:migration

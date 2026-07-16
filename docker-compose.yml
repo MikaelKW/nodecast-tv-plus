@@ -8,6 +8,12 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://127.0.0.1:$${PORT:-3000}$${NODECAST_BASE_PATH:-}/api/health\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     environment:
       NODE_ENV: production
       PORT: 3000 # Internal container port
