@@ -12,11 +12,47 @@ const https = require('https');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const auth = require('../auth');
 const { requestBasePath, withBasePath } = require('../config/basePath');
 const { redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
+const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
+
+async function collectResponseWithLimit(firstChunk, iterator, maxBytes) {
+    const chunks = [firstChunk];
+    let totalBytes = firstChunk.length;
+    if (totalBytes > maxBytes) {
+        const error = new Error('HLS manifest exceeds the proxy size limit');
+        error.code = 'HLS_MANIFEST_TOO_LARGE';
+        throw error;
+    }
+    let result = await iterator.next();
+
+    while (!result.done) {
+        const chunk = Buffer.from(result.value);
+        totalBytes += chunk.length;
+        if (totalBytes > maxBytes) {
+            const error = new Error('HLS manifest exceeds the proxy size limit');
+            error.code = 'HLS_MANIFEST_TOO_LARGE';
+            throw error;
+        }
+        chunks.push(chunk);
+        result = await iterator.next();
+    }
+
+    return Buffer.concat(chunks, totalBytes);
+}
+
+async function* prependResponseChunk(firstChunk, iterator) {
+    yield firstChunk;
+    let result = await iterator.next();
+    while (!result.done) {
+        yield Buffer.from(result.value);
+        result = await iterator.next();
+    }
+}
 
 router.use(auth.requireAuth);
 
@@ -616,6 +652,14 @@ router.get('/stream', async (req, res) => {
     }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const upstreamController = new AbortController();
+        const abortUpstream = () => {
+            if (!res.writableEnded && !upstreamController.signal.aborted) {
+                upstreamController.abort();
+            }
+        };
+        res.once('close', abortUpstream);
+
         try {
             // Forward some headers to be more "transparent" back to the origin
             // Pluto TV uses multiple domains for content delivery
@@ -637,11 +681,15 @@ router.get('/stream', async (req, res) => {
                 headers['Range'] = rangeHeader;
             }
 
-            const response = await fetch(url, { headers });
+            const response = await fetch(url, {
+                headers,
+                signal: upstreamController.signal
+            });
 
             // Retry on 5xx errors (transient upstream issues)
             if (response.status >= 500 && attempt < maxRetries) {
                 console.log(`[Proxy] Upstream 5xx error (attempt ${attempt}/${maxRetries}), retrying in 500ms...`);
+                await response.body?.cancel();
                 await new Promise(r => setTimeout(r, 500));
                 continue;
             }
@@ -692,17 +740,16 @@ router.get('/stream', async (req, res) => {
             const contentLooksLikeHls = textPrefix === '#EXTM3U';
 
             if (contentLooksLikeHls) {
-                // HLS Manifest: We must read the WHOLE manifest to rewrite it
-                const chunks = [firstChunk];
-
-                // Consume the rest of the stream
-                let result = await iterator.next();
-                while (!result.done) {
-                    chunks.push(Buffer.from(result.value));
-                    result = await iterator.next();
+                // HLS manifests must be buffered for URL rewriting, but the buffer is bounded.
+                let buffer;
+                try {
+                    buffer = await collectResponseWithLimit(firstChunk, iterator, MAX_HLS_MANIFEST_BYTES);
+                } catch (err) {
+                    if (err.code === 'HLS_MANIFEST_TOO_LARGE') {
+                        return res.status(502).json({ error: err.message });
+                    }
+                    throw err;
                 }
-
-                const buffer = Buffer.concat(chunks);
                 const finalUrl = response.url || url;
                 console.log(`[Proxy] Processing HLS manifest from: ${redactUrl(finalUrl)}`);
                 res.set('Content-Type', 'application/vnd.apple.mpegurl');
@@ -749,33 +796,34 @@ router.get('/stream', async (req, res) => {
                 return res.send(manifest);
             }
 
-            // Binary content (Video Segment or Key): Collect and send
-            console.log(`[Proxy] Serving binary content (${contentType})`);
+            // Stream binary media as it arrives so large responses do not accumulate in memory.
+            console.log(`[Proxy] Streaming binary content (${contentType})`);
             res.set('Content-Type', contentType || 'application/octet-stream');
-
-            // For small files (like encryption keys), collect all data and send at once
-            // This ensures proper Content-Length and response completion
-            const chunks = [firstChunk];
-            let result = await iterator.next();
-            while (!result.done) {
-                chunks.push(Buffer.from(result.value));
-                result = await iterator.next();
-            }
-            const fullContent = Buffer.concat(chunks);
-
-            // Set Content-Length for proper client handling
-            res.set('Content-Length', fullContent.length);
-            res.send(fullContent);
-            return; // Success - exit the retry loop
+            const stream = Readable.from(prependResponseChunk(firstChunk, iterator), { objectMode: false });
+            await pipeline(stream, res);
+            return;
 
         } catch (err) {
+            if (res.destroyed || upstreamController.signal.aborted) {
+                return;
+            }
+
             lastError = err;
             logSafeError(`Stream proxy error (attempt ${attempt}/${maxRetries}):`, err);
+
+            // A response that has started cannot be retried safely.
+            if (res.headersSent) {
+                res.destroy(err);
+                return;
+            }
+
             if (attempt < maxRetries) {
                 console.log('[Proxy] Retrying after error...');
                 await new Promise(r => setTimeout(r, 500));
                 continue;
             }
+        } finally {
+            res.off('close', abortUpstream);
         }
     }
 
