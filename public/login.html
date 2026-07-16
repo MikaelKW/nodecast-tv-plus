@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - NodeCast TV Plus</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="css/main.css?v=6">
+    <link rel="stylesheet" href="css/main.css?v=8">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html,
@@ -229,13 +229,14 @@
                 <div class="form-group">
                     <label for="password">Password</label>
                     <input type="password" id="password" name="password" required autocomplete="current-password"
-                        minlength="6" placeholder="Enter your password">
+                        minlength="6" placeholder="Enter your password" data-password-toggle>
                 </div>
 
                 <div class="form-group" id="confirm-password-group" hidden>
                     <label for="confirm-password">Confirm password</label>
                     <input type="password" id="confirm-password" name="passwordConfirmation"
-                        autocomplete="new-password" minlength="6" placeholder="Enter your password again" disabled>
+                        autocomplete="new-password" minlength="6" placeholder="Enter your password again"
+                        data-password-toggle disabled>
                 </div>
 
                 <button type="submit" class="btn-login" id="submit-btn">Sign In</button>
@@ -285,6 +286,7 @@
     </div>
 
     <script src="js/basePath.js?v=1"></script>
+    <script src="js/passwordVisibility.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
