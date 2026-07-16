@@ -289,6 +289,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(await video.evaluate(element => element.paused)).toBe(false);
     await expect(page.locator('.channel-item.active .channel-name')).toContainText('NodeCast Test Pattern');
 
+    // Selecting a visible channel must preserve both the expanded groups and
+    // the sidebar position instead of applying the former focus-mode reset.
+    const secondaryGroup = page.locator('.group-header', { hasText: 'Secondary Test' });
+    await secondaryGroup.click();
+    await expect(secondaryGroup).not.toHaveClass(/collapsed/);
+    const primaryGroup = page.locator('.group-header', { hasText: 'Local Test' });
+    await expect(primaryGroup).not.toHaveClass(/collapsed/);
+    const backupChannel = page.locator('.channel-item', { hasText: 'NodeCast Test Backup' });
+    const scrollBeforeSelection = await page.locator('#channel-list').evaluate(element => {
+        element.style.height = '90px';
+        element.style.flex = 'none';
+        element.scrollTop = element.scrollHeight;
+        return element.scrollTop;
+    });
+    expect(scrollBeforeSelection).toBeGreaterThan(0);
+    await backupChannel.click();
+    await expect(primaryGroup).not.toHaveClass(/collapsed/);
+    await expect(secondaryGroup).not.toHaveClass(/collapsed/);
+    await page.waitForTimeout(100);
+    expect(await page.locator('#channel-list').evaluate(element => element.scrollTop)).toBe(scrollBeforeSelection);
+    await page.locator('#channel-list').evaluate(element => {
+        element.style.height = '';
+        element.style.flex = '';
+    });
+
     // A fixed-resolution source should restart through the local FFmpeg session
     // when the user applies a lower session-only quality cap.
     await expect.poll(() => page.evaluate(() => (
