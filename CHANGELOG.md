@@ -6,6 +6,32 @@ The project follows [Semantic Versioning](https://semver.org/). Historical notes
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-07-16
+
+This patch release improves media-proxy efficiency, deployment health visibility, account-creation safeguards, and Live TV channel browsing.
+
+### Added
+
+- Added a lightweight application readiness endpoint and Docker health checks that verify the local data stores without contacting IPTV providers or exposing configuration details ([#176]).
+- Added accessible show/hide controls for password fields during sign-in, initial setup, and local-user creation, with passwords concealed again after form reset ([#186]).
+- Added matching password confirmation when creating the initial administrator and when administrators create additional local users, enforced in both the browser and server APIs ([#175], [#186]).
+
+### Changed
+
+- Streamed non-HLS media through the authenticated proxy as bytes arrive, preserving range responses and backpressure while cancelling upstream work after client disconnects; HLS manifest rewriting now uses a bounded buffer ([#174]).
+
+### Fixed
+
+- Kept the setup-only confirmation field hidden during ordinary sign-in after an initial account has already been created ([#178]).
+- Preserved expanded channel groups and the Live TV sidebar position when selecting channels already visible in the list ([#181]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.3.1`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values and preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Migration from the published 2.3.0 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.3.0` and the existing deployment secrets.
+
 ## [2.3.0] - 2026-07-16
 
 This feature release adds secure optional authenticator-app protection for local accounts and makes newly added sources usable without a separate manual refresh.
@@ -146,6 +172,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.3.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.0...v2.2.1
@@ -180,3 +207,9 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#146]: https://github.com/MikaelKW/nodecast-tv-plus/pull/146
 [#158]: https://github.com/MikaelKW/nodecast-tv-plus/pull/158
 [#165]: https://github.com/MikaelKW/nodecast-tv-plus/pull/165
+[#174]: https://github.com/MikaelKW/nodecast-tv-plus/pull/174
+[#175]: https://github.com/MikaelKW/nodecast-tv-plus/pull/175
+[#176]: https://github.com/MikaelKW/nodecast-tv-plus/pull/176
+[#178]: https://github.com/MikaelKW/nodecast-tv-plus/pull/178
+[#181]: https://github.com/MikaelKW/nodecast-tv-plus/pull/181
+[#186]: https://github.com/MikaelKW/nodecast-tv-plus/pull/186

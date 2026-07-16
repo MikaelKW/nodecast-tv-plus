@@ -52,5 +52,9 @@ RUN mkdir -p /app/data /app/transcode-cache && chmod 777 /app/transcode-cache
 # Expose port
 EXPOSE 3000
 
+# Confirm that the application and its local data stores are ready.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-3000}${NODECAST_BASE_PATH:-}/api/health" || exit 1
+
 # Start server
 CMD ["node", "server/index.js"]

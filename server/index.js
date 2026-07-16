@@ -8,10 +8,15 @@ const basePathConfig = require('./config/basePath');
 const auth = require('./auth');
 
 // Initialize database
-require('./db');
+const database = require('./db');
+const { getDb: getContentDb } = require('./db/sqlite');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const packageVersion = require('../package.json').version;
+let applicationReady = false;
+let shuttingDown = false;
+let server;
 
 // Trust proxy headers (X-Forwarded-Proto, X-Forwarded-For, etc.)
 // Required for correct protocol detection behind reverse proxies (nginx, Caddy, etc.)
@@ -167,9 +172,12 @@ async function loadPlugins() {
     }
 }
 
-// Graceful shutdown handler for plugins with shutdown hooks
-process.on('SIGTERM', async () => {
-    console.log('SIGTERM received, shutting down plugins...');
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    applicationReady = false;
+    console.log(`${signal} received, shutting down...`);
+
     for (const { name, plugin } of loadedPlugins) {
         if (plugin && typeof plugin.shutdown === 'function') {
             try {
@@ -180,7 +188,42 @@ process.on('SIGTERM', async () => {
             }
         }
     }
-    process.exit(0);
+
+    if (!server) return process.exit(0);
+
+    const forceExitTimer = setTimeout(() => {
+        console.error('Graceful shutdown timed out.');
+        process.exit(1);
+    }, 10000);
+    forceExitTimer.unref();
+
+    server.close(error => {
+        clearTimeout(forceExitTimer);
+        process.exit(error ? 1 : 0);
+    });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM').catch(error => {
+    console.error('Shutdown failed:', error);
+    process.exit(1);
+}));
+process.on('SIGINT', () => shutdown('SIGINT').catch(error => {
+    console.error('Shutdown failed:', error);
+    process.exit(1);
+}));
+
+// A minimal unauthenticated endpoint for container and reverse-proxy readiness checks.
+app.get('/api/health', async (req, res) => {
+    const unavailable = () => res.status(503).json({ status: 'unavailable', version: packageVersion });
+    if (!applicationReady || shuttingDown) return unavailable();
+
+    try {
+        await database.checkHealth();
+        getContentDb().prepare('SELECT 1').get();
+        return res.json({ status: 'ok', version: packageVersion });
+    } catch {
+        return unavailable();
+    }
 });
 
 // API Routes
@@ -199,8 +242,7 @@ app.use('/api/history', require('./routes/history'));
 
 // Version endpoint
 app.get('/api/version', (req, res) => {
-    const pkg = require('../package.json');
-    res.json({ version: pkg.version });
+    res.json({ version: packageVersion });
 });
 
 // SPA fallback - serve index.html for all non-API routes
@@ -214,13 +256,14 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, async () => {
+server = app.listen(PORT, async () => {
     console.log(`NodeCast TV Plus server running on http://localhost:${PORT}`);
 
     // Load plugins
     await loadPlugins().catch(err => {
         console.error('Plugin initialization failed:', err);
     });
+    applicationReady = true;
 
     // Test environments run explicit syncs and should not start persistent background work.
     if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {

@@ -145,10 +145,18 @@ router.post('/setup', async (req, res) => {
             return res.status(400).json({ error: 'Setup already completed' });
         }
 
-        const { username, password } = req.body;
+        const { username, password, passwordConfirmation } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password required' });
+        }
+
+        if (!passwordConfirmation) {
+            return res.status(400).json({ error: 'Password confirmation required' });
+        }
+
+        if (password !== passwordConfirmation) {
+            return res.status(400).json({ error: 'Passwords do not match' });
         }
 
         if (password.length < 6) {
@@ -281,10 +289,18 @@ router.get('/users', auth.requireAuth, auth.requireAdmin, async (req, res) => {
  */
 router.post('/users', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
-        const { username, password, role } = req.body;
+        const { username, password, passwordConfirmation, role } = req.body;
 
         if (!username || !password || !role) {
             return res.status(400).json({ error: 'Username, password, and role are required' });
+        }
+
+        if (!passwordConfirmation) {
+            return res.status(400).json({ error: 'Password confirmation required' });
+        }
+
+        if (password !== passwordConfirmation) {
+            return res.status(400).json({ error: 'Passwords do not match' });
         }
 
         if (password.length < 6) {

@@ -48,8 +48,24 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.goto('/login.html');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
     await expect(page.locator('#sso-login-section')).toBeHidden();
+    await expect(page.locator('#confirm-password-group')).toBeVisible();
+    await expect(page.locator('#confirm-password')).toBeEnabled();
+    const setupPasswordToggle = page.locator('.password-visibility-toggle[aria-controls="password"]');
+    await expect(setupPasswordToggle).toHaveAttribute('aria-label', 'Show password');
+    await setupPasswordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'text');
+    await expect(setupPasswordToggle).toHaveAttribute('aria-label', 'Hide password');
+    await setupPasswordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
+    await expect(page.locator('.password-visibility-toggle[aria-controls="confirm-password"]')).toBeVisible();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
+    await expect(page.locator('#confirm-password')).toBeVisible();
+    await page.locator('#confirm-password').fill(`${password}-different`);
+    await page.getByRole('button', { name: 'Create Account', exact: true }).click();
+    await expect(page.locator('#error-message')).toHaveText('Passwords do not match');
+    await expect(page).toHaveURL(/\/login\.html$/);
+    await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
     await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
@@ -98,6 +114,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST' }));
     await page.goto('/login.html');
+    await expect(page.locator('#confirm-password-group')).toBeHidden();
+    await expect(page.locator('#confirm-password')).toBeDisabled();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
@@ -111,6 +129,38 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('#users-tab').click();
+    await expect(page.locator('#tab-users')).toHaveClass(/active/);
+    const newPassword = `${password}-viewer`;
+    await page.locator('#new-username').fill('confirmed-viewer');
+    await page.locator('#new-password').fill(newPassword);
+    await page.locator('#new-password-confirmation').fill(`${newPassword}-different`);
+    const newPasswordToggle = page.locator('.password-visibility-toggle[aria-controls="new-password"]');
+    await newPasswordToggle.click();
+    await expect(page.locator('#new-password')).toHaveAttribute('type', 'text');
+    await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Hide password');
+    await page.getByRole('button', { name: 'Add User', exact: true }).click();
+    await expect(page.locator('#new-password-error')).toBeVisible();
+    await expect(page.locator('#new-password-error')).toHaveText('Passwords do not match.');
+    await expect(page.locator('#user-list')).not.toContainText('confirmed-viewer');
+
+    await page.locator('#new-password-confirmation').fill(newPassword);
+    const createdDialog = page.waitForEvent('dialog');
+    await page.getByRole('button', { name: 'Add User', exact: true }).click();
+    const dialog = await createdDialog;
+    expect(dialog.message()).toBe('User created successfully!');
+    await dialog.accept();
+    await expect(page.locator('#user-list')).toContainText('confirmed-viewer');
+    await expect(page.locator('#new-password')).toHaveValue('');
+    await expect(page.locator('#new-password-confirmation')).toHaveValue('');
+    await expect(page.locator('#new-password')).toHaveAttribute('type', 'password');
+    await expect(page.locator('#new-password-confirmation')).toHaveAttribute('type', 'password');
+    await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Show password');
+    await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
+        .toHaveAttribute('aria-label', 'Show password');
+
+    await page.locator('.tab[data-tab="sources"]').click();
+    await expect(page.locator('#tab-sources')).toHaveClass(/active/);
     await page.locator('#add-m3u').click();
     await page.locator('#source-name').fill('Controlled M3U');
     await page.locator('#source-url').fill(`${fixtureBaseUrl}/delayed-playlist.m3u`);
@@ -278,6 +328,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => video.evaluate(element => element.currentTime), { timeout: 15_000 }).toBeGreaterThan(0);
     expect(await video.evaluate(element => element.paused)).toBe(false);
     await expect(page.locator('.channel-item.active .channel-name')).toContainText('NodeCast Test Pattern');
+
+    // Selecting a visible channel must preserve both the expanded groups and
+    // the sidebar position instead of applying the former focus-mode reset.
+    const secondaryGroup = page.locator('.group-header', { hasText: 'Secondary Test' });
+    await secondaryGroup.click();
+    await expect(secondaryGroup).not.toHaveClass(/collapsed/);
+    const primaryGroup = page.locator('.group-header', { hasText: 'Local Test' });
+    await expect(primaryGroup).not.toHaveClass(/collapsed/);
+    const backupChannel = page.locator('.channel-item', { hasText: 'NodeCast Test Backup' });
+    const scrollBeforeSelection = await page.locator('#channel-list').evaluate(element => {
+        element.style.height = '90px';
+        element.style.flex = 'none';
+        element.scrollTop = element.scrollHeight;
+        return element.scrollTop;
+    });
+    expect(scrollBeforeSelection).toBeGreaterThan(0);
+    await backupChannel.click();
+    await expect(primaryGroup).not.toHaveClass(/collapsed/);
+    await expect(secondaryGroup).not.toHaveClass(/collapsed/);
+    await page.waitForTimeout(100);
+    expect(await page.locator('#channel-list').evaluate(element => element.scrollTop)).toBe(scrollBeforeSelection);
+    await page.locator('#channel-list').evaluate(element => {
+        element.style.height = '';
+        element.style.flex = '';
+    });
 
     // A fixed-resolution source should restart through the local FFmpeg session
     // when the user applies a lower session-only quality cap.

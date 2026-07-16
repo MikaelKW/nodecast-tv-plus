@@ -28,6 +28,7 @@ test('the application remains inside its configured reverse-proxy path', async (
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
     await page.locator('#username').fill('subpath-admin');
     await page.locator('#password').fill(password);
+    await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
 
     await page.waitForURL(url => url.pathname === '/nodecast/');

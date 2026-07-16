@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - NodeCast TV Plus</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="css/main.css?v=6">
+    <link rel="stylesheet" href="css/main.css?v=8">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html,
@@ -85,6 +85,10 @@
 
         .form-group {
             margin-bottom: var(--space-lg);
+        }
+
+        #confirm-password-group[hidden] {
+            display: none;
         }
 
         .form-group label {
@@ -225,7 +229,14 @@
                 <div class="form-group">
                     <label for="password">Password</label>
                     <input type="password" id="password" name="password" required autocomplete="current-password"
-                        minlength="6" placeholder="Enter your password">
+                        minlength="6" placeholder="Enter your password" data-password-toggle>
+                </div>
+
+                <div class="form-group" id="confirm-password-group" hidden>
+                    <label for="confirm-password">Confirm password</label>
+                    <input type="password" id="confirm-password" name="passwordConfirmation"
+                        autocomplete="new-password" minlength="6" placeholder="Enter your password again"
+                        data-password-toggle disabled>
                 </div>
 
                 <button type="submit" class="btn-login" id="submit-btn">Sign In</button>
@@ -275,6 +286,7 @@
     </div>
 
     <script src="js/basePath.js?v=1"></script>
+    <script src="js/passwordVisibility.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
@@ -332,7 +344,13 @@
                     document.getElementById('login-subtitle').textContent = 'Create Admin Account';
                     document.getElementById('submit-btn').textContent = 'Create Account';
                     document.getElementById('setup-message').classList.add('show');
-                    document.getElementById('password').placeholder = 'Minimum 6 characters';
+                    const passwordInput = document.getElementById('password');
+                    const confirmationInput = document.getElementById('confirm-password');
+                    passwordInput.placeholder = 'Minimum 6 characters';
+                    passwordInput.autocomplete = 'new-password';
+                    document.getElementById('confirm-password-group').hidden = false;
+                    confirmationInput.disabled = false;
+                    confirmationInput.required = true;
                 }
             } catch (err) {
                 console.error('Error checking setup status:', err);
@@ -358,6 +376,8 @@
 
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
+            const confirmationInput = document.getElementById('confirm-password');
+            const passwordConfirmation = confirmationInput.value;
             const submitBtn = document.getElementById('submit-btn');
             const errorMessage = document.getElementById('error-message');
 
@@ -365,18 +385,28 @@
             errorMessage.classList.remove('show');
             errorMessage.textContent = '';
 
+            if (isSetupMode && password !== passwordConfirmation) {
+                confirmationInput.setCustomValidity('Passwords do not match');
+                showError('Passwords do not match');
+                confirmationInput.reportValidity();
+                return;
+            }
+            confirmationInput.setCustomValidity('');
+
             // Disable button
             submitBtn.disabled = true;
             submitBtn.textContent = 'Please wait...';
 
             try {
                 const endpoint = isSetupMode ? '/api/auth/setup' : '/api/auth/login';
+                const credentials = { username, password };
+                if (isSetupMode) credentials.passwordConfirmation = passwordConfirmation;
                 const response = await fetch(NodeCastUrl.resolve(endpoint), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ username, password })
+                    body: JSON.stringify(credentials)
                 });
 
                 const data = await response.json();
@@ -403,6 +433,19 @@
                 submitBtn.textContent = isSetupMode ? 'Create Account' : 'Sign In';
             }
         });
+
+        const passwordInputs = [
+            document.getElementById('password'),
+            document.getElementById('confirm-password')
+        ];
+        passwordInputs.forEach(input => input.addEventListener('input', () => {
+            document.getElementById('confirm-password').setCustomValidity('');
+            const errorMessage = document.getElementById('error-message');
+            if (errorMessage.textContent === 'Passwords do not match') {
+                errorMessage.textContent = '';
+                errorMessage.classList.remove('show');
+            }
+        }));
 
         document.getElementById('two-factor-method-btn').addEventListener('click', () => {
             twoFactorMethod = twoFactorMethod === 'totp' ? 'recovery' : 'totp';

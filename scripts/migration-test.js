@@ -29,8 +29,8 @@ const baselines = [
         context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
     },
     {
-        version: '2.2.2',
-        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.2.2',
+        version: '2.3.0',
+        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.3.0',
         kind: 'plus'
     }
 ];
@@ -316,7 +316,7 @@ async function runBaseline(baseline) {
 
         const setup = await request(baselineUrl, '/api/auth/setup', {
             method: 'POST',
-            body: { username, password }
+            body: { username, password, passwordConfirmation: password }
         });
         let baselineAuth;
         if (baseline.kind === 'upstream') {

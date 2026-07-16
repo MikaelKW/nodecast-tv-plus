@@ -1118,37 +1118,27 @@ class ChannelList {
             activeItem.classList.add('active');
             activeItem.classList.add('nav-active'); // Add specific class for navigation tracking
 
-            // Handle Group Expansion & Scrolling (Focus Mode)
+            // Expand the selected channel's group when selection came from
+            // outside the sidebar, but preserve the user's other expanded groups.
             const groupHeader = activeItem.closest('.channel-group')?.querySelector('.group-header');
             if (groupHeader) {
                 const groupName = groupHeader.dataset.group;
 
-                // 1. Expand current group if needed
                 if (this.collapsedGroups.has(groupName)) {
                     this.collapsedGroups.delete(groupName);
-                    // Update DOM directly for immediate feedback
                     groupHeader.classList.remove('collapsed');
                     this.saveCollapsedState();
                 }
 
-                // 2. Collapse ALL other groups (Focus Mode)
-                document.querySelectorAll('.group-header').forEach(header => {
-                    if (header !== groupHeader && !header.classList.contains('collapsed')) {
-                        const otherGroup = header.dataset.group;
-                        this.collapsedGroups.add(otherGroup);
-                        header.classList.add('collapsed');
-                    }
-                });
-                this.saveCollapsedState();
-
-                // 3. Scroll Group to Top
-                // Use a small timeout to allow layout updates (e.g. collapse animations) to start
+                // Wait for a possible expansion to finish layout, then move only
+                // when the selected item is outside the channel-list viewport.
                 setTimeout(() => {
-                    groupHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    // Ensure active item is visible within the group
-                    setTimeout(() => {
+                    const listRect = this.container.getBoundingClientRect();
+                    const itemRect = activeItem.getBoundingClientRect();
+                    const isFullyVisible = itemRect.top >= listRect.top && itemRect.bottom <= listRect.bottom;
+                    if (!isFullyVisible) {
                         activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }, 50);
+                    }
                 }, 50);
             } else {
                 // Fallback for non-grouped items or flat list

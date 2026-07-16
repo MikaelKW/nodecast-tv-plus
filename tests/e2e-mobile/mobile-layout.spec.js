@@ -64,10 +64,19 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(loginLayout.scrollHeight).toBeGreaterThan(loginLayout.innerHeight);
     expect(loginLayout.scrollY).toBeGreaterThan(0);
     await expect(page.locator('#password')).toBeInViewport();
+    await expect(page.locator('#confirm-password')).toBeInViewport();
 
     await page.setViewportSize({ width: 402, height: 874 });
+    const passwordToggle = page.locator('.password-visibility-toggle[aria-controls="password"]');
+    await expect(passwordToggle).toBeVisible();
+    await passwordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'text');
+    await expect(passwordToggle).toHaveAttribute('aria-label', 'Hide password');
+    await passwordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
     await page.locator('#username').fill('mobile-layout-admin');
     await page.locator('#password').fill(password);
+    await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
     await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect.poll(() => page.evaluate(() => Boolean(
