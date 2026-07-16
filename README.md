@@ -230,6 +230,12 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
           NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
+          OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+          OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+          OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+          OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-}
+          DISABLE_LOCAL_AUTH: ${DISABLE_LOCAL_AUTH:-false}
+          OIDC_AUTO_REDIRECT: ${OIDC_AUTO_REDIRECT:-false}
     ```
 
 2.  Build and run the container:
@@ -304,6 +310,40 @@ OIDC_USERINFO_URL=https://your-idp.com/userinfo
 ```
 
 **Note:** New users signing in via SSO are automatically assigned the **Viewer** role. You must manually promote them to Admin if desired.
+
+#### Optional SSO-only sign-in
+
+After OIDC has been verified, local username/password sign-in can be disabled and
+the login page can redirect directly to the identity provider:
+
+```env
+DISABLE_LOCAL_AUTH=true
+OIDC_AUTO_REDIRECT=true
+```
+
+`DISABLE_LOCAL_AUTH=true` hides the local sign-in form and blocks the password
+login API. It does not delete local accounts or revoke sessions that were already
+issued. `OIDC_AUTO_REDIRECT=true` is a login-page convenience and can be enabled
+independently. When local sign-in remains enabled, append `?local=1` to
+`login.html` to bypass automatic redirect for that visit. Failed SSO callbacks
+and deliberate logout also stop at the login page instead of creating a redirect
+loop.
+
+Use this sequence to avoid losing administrator access:
+
+1. Complete the initial local administrator setup with local sign-in enabled.
+2. Configure OIDC and confirm that an SSO account can sign in.
+3. Promote the intended SSO account to **Admin** under **Settings -> Users**.
+4. Back up `/app/data`, then enable `DISABLE_LOCAL_AUTH` and optionally
+   `OIDC_AUTO_REDIRECT`.
+5. Restart the container and verify SSO administrator access before ending the
+   existing administrator session.
+
+The one-time administrator setup remains available while the database is empty,
+even if local sign-in is disabled. This is a bootstrap safeguard; after setup,
+that local account cannot sign in while `DISABLE_LOCAL_AUTH=true`. If SSO is
+unavailable at that point, correct the OIDC configuration or temporarily set
+`DISABLE_LOCAL_AUTH=false` and restart the application.
 
 ### Two-factor authentication
 
