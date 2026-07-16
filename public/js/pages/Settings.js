@@ -345,7 +345,7 @@ class SettingsPage {
             this.users = users;
 
             if (users.length === 0) {
-                userList.innerHTML = '<tr><td colspan="5" class="hint">No users found</td></tr>';
+                userList.innerHTML = '<tr><td colspan="6" class="hint">No users found</td></tr>';
                 return;
             }
 
@@ -359,6 +359,15 @@ class SettingsPage {
                     ? '<span class="user-badge user-badge-admin">Admin</span>'
                     : '<span class="user-badge user-badge-viewer">Viewer</span>';
 
+                const twoFactorBadge = user.twoFactorEnabled
+                    ? '<span class="user-badge user-badge-2fa">Enabled</span>'
+                    : '<span class="hint">Not enabled</span>';
+                const resetTwoFactorButton = user.twoFactorEnabled &&
+                    user.id !== this.app.currentUser?.id &&
+                    !this.app.currentUser?.oidcId
+                    ? `<button class="btn btn-sm btn-secondary" onclick="window.app.pages.settings.openResetTwoFactorModal(${user.id})">Reset 2FA</button>`
+                    : '';
+
                 return `
                 <tr>
                     <td>
@@ -369,17 +378,112 @@ class SettingsPage {
                     </td>
                     <td>${user.email || '<span class="hint">-</span>'}</td>
                     <td>${roleBadge}</td>
+                    <td>${twoFactorBadge}</td>
                     <td>${user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</td>
                     <td>
                         <button class="btn btn-sm btn-secondary" onclick="window.app.pages.settings.openEditUserModal(${user.id})">Edit</button>
+                        ${resetTwoFactorButton}
                         <button class="btn btn-sm btn-error" onclick="window.app.pages.settings.deleteUser(${user.id}, '${user.username}')">Delete</button>
                     </td>
                 </tr>
             `}).join('');
         } catch (err) {
             console.error('Error loading users:', err);
-            userList.innerHTML = '<tr><td colspan="5" class="hint">Error loading users</td></tr>';
+            userList.innerHTML = '<tr><td colspan="6" class="hint">Error loading users</td></tr>';
         }
+    }
+
+    openResetTwoFactorModal(userId) {
+        const user = this.users.find(candidate => candidate.id === userId);
+        if (!user?.twoFactorEnabled) return;
+
+        let overlay = document.getElementById('reset-two-factor-modal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'reset-two-factor-modal';
+            overlay.className = 'modal-overlay';
+            document.body.appendChild(overlay);
+        }
+
+        const factorFields = this.app.currentUser?.twoFactorEnabled ? `
+            <div class="modal-form-group">
+              <label for="reset-two-factor-method">Current verification method</label>
+              <select id="reset-two-factor-method" class="form-input">
+                <option value="totp">Authenticator code</option>
+                <option value="recovery">Recovery code</option>
+              </select>
+            </div>
+            <div class="modal-form-group">
+              <label for="reset-two-factor-code">Current verification code</label>
+              <input id="reset-two-factor-code" class="form-input" type="text" autocomplete="one-time-code" required>
+            </div>` : '';
+
+        overlay.innerHTML = `
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="modal-title">Reset two-factor authentication</h3>
+              <button type="button" class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+              <p class="hint">This removes two-factor protection from the selected account. It does not reveal or replace the existing secret.</p>
+              <form id="reset-two-factor-form">
+                <div class="modal-form-group">
+                  <label for="reset-two-factor-password">Your current password</label>
+                  <input id="reset-two-factor-password" class="form-input" type="password" autocomplete="current-password" required>
+                </div>
+                ${factorFields}
+                <div class="account-flow-error" role="alert"></div>
+              </form>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+              <button type="submit" form="reset-two-factor-form" class="btn btn-error">Reset 2FA</button>
+            </div>
+          </div>`;
+
+        const close = () => {
+            overlay.classList.remove('active');
+            overlay.replaceChildren();
+        };
+        overlay.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', close));
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) close();
+        }, { once: true });
+        const method = overlay.querySelector('#reset-two-factor-method');
+        const code = overlay.querySelector('#reset-two-factor-code');
+        if (method && code) {
+            const updateInputMode = () => {
+                const recovery = method.value === 'recovery';
+                code.value = '';
+                code.inputMode = recovery ? 'text' : 'numeric';
+                code.placeholder = recovery ? 'XXXXXX-XXXXXX-XXXXXX-XXXXXX' : '000000';
+            };
+            method.addEventListener('change', updateInputMode);
+            updateInputMode();
+        }
+        overlay.querySelector('form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const submit = overlay.querySelector('[type="submit"]');
+            const error = overlay.querySelector('.account-flow-error');
+            submit.disabled = true;
+            submit.textContent = 'Please wait…';
+            try {
+                await API.users.resetTwoFactor(userId, {
+                    password: overlay.querySelector('#reset-two-factor-password').value,
+                    credentialType: overlay.querySelector('#reset-two-factor-method')?.value || 'totp',
+                    credential: overlay.querySelector('#reset-two-factor-code')?.value || ''
+                });
+                close();
+                await this.loadUsers();
+            } catch (requestError) {
+                error.textContent = requestError.message;
+                error.classList.add('show');
+                submit.disabled = false;
+                submit.textContent = 'Reset 2FA';
+            }
+        });
+        overlay.classList.add('active');
+        overlay.querySelector('#reset-two-factor-password').focus();
     }
 
     openEditUserModal(userId) {

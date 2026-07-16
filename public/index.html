@@ -10,7 +10,7 @@
   <title>NodeCast TV Plus | IPTV Player</title>
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/main.css?v=5">
+  <link rel="stylesheet" href="css/main.css?v=7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -89,6 +89,20 @@
             </svg></span>
           <span>Settings</span>
         </a>
+        <div class="account-menu" id="account-menu">
+          <button type="button" class="account-menu-trigger" id="account-menu-trigger" aria-haspopup="menu"
+            aria-expanded="false" aria-label="Open account menu">
+            <span id="account-menu-initial" aria-hidden="true">?</span>
+          </button>
+          <div class="account-menu-popover hidden" id="account-menu-popover" role="menu">
+            <button type="button" class="account-menu-item" id="account-security-link" role="menuitem">
+              Account security
+            </button>
+            <button type="button" class="account-menu-item account-menu-logout" id="logout-btn" role="menuitem">
+              Logout
+            </button>
+          </div>
+        </div>
       </div>
     </nav>
 
@@ -788,13 +802,14 @@
                       <th>Username</th>
                       <th>Email</th>
                       <th>Role</th>
+                      <th>2FA</th>
                       <th>Created</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody id="user-list">
                     <tr>
-                      <td colspan="4" class="hint">Loading users...</td>
+                      <td colspan="6" class="hint">Loading users...</td>
                     </tr>
                   </tbody>
                 </table>
@@ -823,6 +838,27 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Account Security Page -->
+      <div id="page-account" class="page">
+        <div class="account-container">
+          <h2>Account Security</h2>
+          <p class="hint">Manage sign-in protection for this account.</p>
+
+          <section class="account-security-card" aria-labelledby="two-factor-heading">
+            <div class="account-security-header">
+              <div>
+                <h3 id="two-factor-heading">Two-factor authentication</h3>
+                <p class="hint">Use a standard authenticator app to protect password sign-in.</p>
+              </div>
+              <span id="two-factor-status-badge" class="security-status-badge">Loading…</span>
+            </div>
+            <div id="two-factor-status-message" class="account-message" role="status"></div>
+            <div id="two-factor-actions" class="account-actions"></div>
+            <div id="two-factor-flow" class="account-flow hidden"></div>
+          </section>
         </div>
       </div>
 
@@ -1122,7 +1158,7 @@
   <!-- JavaScript -->
   <script src="js/basePath.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=2"></script>
+  <script src="js/api.js?v=3"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
   <script src="js/components/VideoPlayer.js?v=7"></script>
   <script src="js/components/ChannelList.js?v=3"></script>
@@ -1133,9 +1169,10 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=4"></script>
   <script src="js/pages/SeriesPage.js?v=2"></script>
-  <script src="js/pages/Settings.js?v=2"></script>
+  <script src="js/pages/Settings.js?v=3"></script>
+  <script src="js/pages/Account.js?v=2"></script>
   <script src="js/pages/WatchPage.js?v=6"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/app.js?v=6"></script>
 </body>
 
 </html>

@@ -4,6 +4,16 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [Unreleased]
+
+### Added
+
+- Added optional per-account authenticator-app two-factor authentication for local accounts, with guided QR enrollment, single-use recovery codes, replay protection, attempt limits, and administrator reset controls.
+
+### Security
+
+- TOTP secrets are encrypted at rest with a dedicated deployment key, recovery codes are stored only as keyed hashes, and the password step uses a short-lived server-side challenge instead of exposing temporary authentication tokens to browser storage or URLs.
+
 ## [2.2.2] - 2026-07-15
 
 This patch release improves XMLTV compatibility, iPhone and mobile-browser usability, and deployments served beneath a reverse-proxy subpath.

@@ -21,6 +21,7 @@ class App {
         this.pages.movies = new MoviesPage(this);
         this.pages.series = new SeriesPage(this);
         this.pages.settings = new SettingsPage(this);
+        this.pages.account = new AccountPage(this);
         this.pages.watch = new WatchPage(this);
 
         this.init();
@@ -191,8 +192,7 @@ class App {
                 }
             }
 
-            // Add logout button to navbar
-            this.addLogoutButton();
+            this.setupAccountMenu();
 
         } catch (err) {
             console.error('Authentication error:', err);
@@ -201,34 +201,63 @@ class App {
         }
     }
 
-    addLogoutButton() {
-        const navbar = document.querySelector('.navbar-menu');
-        if (!navbar || document.getElementById('logout-btn')) return;
+    setupAccountMenu() {
+        const menu = document.getElementById('account-menu');
+        const trigger = document.getElementById('account-menu-trigger');
+        const popover = document.getElementById('account-menu-popover');
+        const initial = document.getElementById('account-menu-initial');
+        const securityLink = document.getElementById('account-security-link');
+        const logoutButton = document.getElementById('logout-btn');
+        if (!menu || !trigger || !popover || !initial || !securityLink || !logoutButton) return;
 
-        const logoutLink = document.createElement('a');
-        logoutLink.href = '#';
-        logoutLink.className = 'nav-link';
-        logoutLink.id = 'logout-btn';
-        logoutLink.innerHTML = `
-            <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
-                <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
-            </svg></span>
-            <span>Logout</span>
-        `;
+        const username = String(this.currentUser?.username || '').trim();
+        initial.textContent = Array.from(username)[0]?.toLocaleUpperCase() || '?';
+        trigger.title = username ? `Account: ${username}` : 'Account';
 
-        logoutLink.addEventListener('click', async (e) => {
-            e.preventDefault();
+        const closeMenu = () => {
+            popover.classList.add('hidden');
+            trigger.setAttribute('aria-expanded', 'false');
+        };
+        const toggleMenu = () => {
+            const opening = popover.classList.contains('hidden');
+            popover.classList.toggle('hidden', !opening);
+            trigger.setAttribute('aria-expanded', String(opening));
+            if (opening) securityLink.focus();
+        };
 
-            const token = localStorage.getItem('authToken');
-            const headers = {};
-            if (token) headers.Authorization = `Bearer ${token}`;
-            await fetch(NodeCastUrl.resolve('/api/auth/logout'), { method: 'POST', headers });
-
-            localStorage.removeItem('authToken');
-            window.location.replace(NodeCastUrl.resolve('/login.html'));
+        trigger.addEventListener('click', event => {
+            event.stopPropagation();
+            toggleMenu();
         });
+        popover.addEventListener('click', event => event.stopPropagation());
+        securityLink.addEventListener('click', () => {
+            closeMenu();
+            this.closeMobileMenu();
+            this.navigateTo('account');
+        });
+        logoutButton.addEventListener('click', () => this.logout());
+        document.addEventListener('click', closeMenu);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && !popover.classList.contains('hidden')) {
+                closeMenu();
+                trigger.focus();
+            }
+        });
+    }
 
-        navbar.appendChild(logoutLink);
+    closeMobileMenu() {
+        document.getElementById('mobile-menu-toggle')?.classList.remove('active');
+        document.getElementById('navbar-menu')?.classList.remove('active');
+    }
+
+    async logout() {
+        const token = localStorage.getItem('authToken');
+        const headers = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        await fetch(NodeCastUrl.resolve('/api/auth/logout'), { method: 'POST', headers });
+
+        localStorage.removeItem('authToken');
+        window.location.replace(NodeCastUrl.resolve('/login.html'));
     }
 
     navigateTo(pageName, replaceHistory = false) {
@@ -250,6 +279,7 @@ class App {
         document.querySelectorAll('.nav-link').forEach(link => {
             link.classList.toggle('active', link.dataset.page === pageName);
         });
+        document.getElementById('account-menu-trigger')?.classList.toggle('active', pageName === 'account');
 
         // Update pages
         document.querySelectorAll('.page').forEach(page => {

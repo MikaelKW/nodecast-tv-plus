@@ -364,8 +364,44 @@ function createUsernameConflictError() {
   return error;
 }
 
+function toPublicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    oidcId: user.oidcId || null,
+    email: user.email || null,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    twoFactorEnabled: Boolean(user.totp?.enabled)
+  };
+}
+
+let userSecurityMutationQueue = Promise.resolve();
+
+function mutateUserSecurity(id, mutator) {
+  const operation = userSecurityMutationQueue.then(async () => {
+    const db = await loadDb();
+    const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
+    if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
+
+    const outcome = await mutator(db.users[userIndex]);
+    if (outcome?.changed !== false) {
+      db.users[userIndex].updatedAt = new Date().toISOString();
+      await saveDb(db);
+    }
+    return outcome?.result;
+  });
+
+  userSecurityMutationQueue = operation.catch(() => {});
+  return operation;
+}
+
 // User operations
 const users = {
+  toPublic: toPublicUser,
+
   async getAll() {
     const db = await loadDb();
     return db.users || [];
@@ -428,8 +464,7 @@ const users = {
     await saveDb(db);
 
     // Return user without password hash
-    const { passwordHash, ...userWithoutPassword } = newUser;
-    return userWithoutPassword;
+    return toPublicUser(newUser);
   },
 
   async update(id, updates) {
@@ -457,8 +492,7 @@ const users = {
     await saveDb(db);
 
     // Return user without password hash
-    const { passwordHash, ...userWithoutPassword } = db.users[userIndex];
-    return userWithoutPassword;
+    return toPublicUser(db.users[userIndex]);
   },
 
   async delete(id) {
@@ -486,6 +520,84 @@ const users = {
   async count() {
     const db = await loadDb();
     return db.users?.length || 0;
+  },
+
+  async setTotpPending(id, pending) {
+    return mutateUserSecurity(id, user => {
+      user.totpPending = {
+        enrollmentId: pending.enrollmentId,
+        encryptedSecret: pending.encryptedSecret,
+        expiresAt: pending.expiresAt,
+        createdAt: new Date().toISOString()
+      };
+      return { result: true };
+    });
+  },
+
+  async clearTotpPending(id, enrollmentId = null) {
+    return mutateUserSecurity(id, user => {
+      if (!user.totpPending || (enrollmentId && user.totpPending.enrollmentId !== enrollmentId)) {
+        return { changed: false, result: false };
+      }
+      delete user.totpPending;
+      return { result: true };
+    });
+  },
+
+  async activateTotp(id, enrollmentId, recoveryCodeHashes, lastUsedStep) {
+    return mutateUserSecurity(id, user => {
+      const pending = user.totpPending;
+      if (!pending || pending.enrollmentId !== enrollmentId || pending.expiresAt <= Date.now()) {
+        return { changed: false, result: false };
+      }
+
+      user.totp = {
+        enabled: true,
+        encryptedSecret: pending.encryptedSecret,
+        enabledAt: new Date().toISOString(),
+        lastUsedStep,
+        recoveryCodeHashes: [...recoveryCodeHashes]
+      };
+      delete user.totpPending;
+      return { result: true };
+    });
+  },
+
+  async consumeTotpStep(id, step) {
+    return mutateUserSecurity(id, user => {
+      if (!user.totp?.enabled || (user.totp.lastUsedStep !== null && user.totp.lastUsedStep !== undefined && step <= user.totp.lastUsedStep)) {
+        return { changed: false, result: false };
+      }
+      user.totp.lastUsedStep = step;
+      return { result: true };
+    });
+  },
+
+  async consumeRecoveryCode(id, recoveryCodeHash) {
+    return mutateUserSecurity(id, user => {
+      const hashes = user.totp?.recoveryCodeHashes || [];
+      const index = hashes.indexOf(recoveryCodeHash);
+      if (index === -1) return { changed: false, result: false };
+      hashes.splice(index, 1);
+      return { result: true };
+    });
+  },
+
+  async replaceRecoveryCodes(id, recoveryCodeHashes) {
+    return mutateUserSecurity(id, user => {
+      if (!user.totp?.enabled) return { changed: false, result: false };
+      user.totp.recoveryCodeHashes = [...recoveryCodeHashes];
+      return { result: true };
+    });
+  },
+
+  async disableTotp(id) {
+    return mutateUserSecurity(id, user => {
+      if (!user.totp && !user.totpPending) return { changed: false, result: false };
+      delete user.totp;
+      delete user.totpPending;
+      return { result: true };
+    });
   }
 };
 

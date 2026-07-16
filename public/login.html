@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - NodeCast TV Plus</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="css/main.css?v=5">
+    <link rel="stylesheet" href="css/main.css?v=6">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html,
@@ -177,6 +177,23 @@
         .setup-message.show {
             display: block;
         }
+
+        .two-factor-help {
+            margin: 0 0 var(--space-lg);
+            color: var(--color-text-secondary);
+            font-size: 14px;
+        }
+
+        .login-secondary-action {
+            width: 100%;
+            margin-top: var(--space-md);
+            padding: 10px;
+            border: 0;
+            background: transparent;
+            color: var(--color-accent);
+            cursor: pointer;
+            font: inherit;
+        }
     </style>
 </head>
 
@@ -212,6 +229,18 @@
                 </div>
 
                 <button type="submit" class="btn-login" id="submit-btn">Sign In</button>
+            </form>
+
+            <form id="two-factor-form" hidden>
+                <p class="two-factor-help" id="two-factor-help">Enter the six-digit code from your authenticator app.</p>
+                <div class="form-group">
+                    <label for="two-factor-code" id="two-factor-code-label">Authenticator code</label>
+                    <input type="text" id="two-factor-code" name="code" inputmode="numeric" pattern="[0-9]{6}"
+                        maxlength="6" autocomplete="one-time-code" placeholder="000000">
+                </div>
+                <button type="submit" class="btn-login" id="two-factor-submit-btn">Verify</button>
+                <button type="button" class="login-secondary-action" id="two-factor-method-btn">Use a recovery code</button>
+                <button type="button" class="login-secondary-action" id="two-factor-cancel-btn">Start over</button>
             </form>
 
             <div id="sso-login-section" hidden>
@@ -265,6 +294,33 @@
 
         // Check if setup is required
         let isSetupMode = false;
+        let twoFactorMethod = 'totp';
+
+        function showError(message) {
+            const errorMessage = document.getElementById('error-message');
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+        }
+
+        function showTwoFactorChallenge() {
+            document.getElementById('login-form').hidden = true;
+            document.getElementById('sso-login-section').hidden = true;
+            document.getElementById('two-factor-form').hidden = false;
+            document.getElementById('login-subtitle').textContent = 'Two-factor verification';
+            document.getElementById('two-factor-code').focus();
+        }
+
+        async function checkTwoFactorChallenge() {
+            try {
+                const response = await fetch(NodeCastUrl.resolve('/api/auth/2fa/challenge'));
+                if (!response.ok) return false;
+                const data = await response.json();
+                if (data.required) showTwoFactorChallenge();
+                return Boolean(data.required);
+            } catch {
+                return false;
+            }
+        }
 
         async function checkSetupRequired() {
             try {
@@ -329,6 +385,14 @@
                     throw new Error(data.error || 'Authentication failed');
                 }
 
+                if (data.requiresTwoFactor) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Sign In';
+                    document.getElementById('password').value = '';
+                    showTwoFactorChallenge();
+                    return;
+                }
+
                 // Redirect to main app (replace history to prevent back button issues)
                 window.location.replace(NodeCastUrl.resolve('/'));
 
@@ -340,8 +404,67 @@
             }
         });
 
+        document.getElementById('two-factor-method-btn').addEventListener('click', () => {
+            twoFactorMethod = twoFactorMethod === 'totp' ? 'recovery' : 'totp';
+            const code = document.getElementById('two-factor-code');
+            const label = document.getElementById('two-factor-code-label');
+            const help = document.getElementById('two-factor-help');
+            const methodButton = document.getElementById('two-factor-method-btn');
+            code.value = '';
+            if (twoFactorMethod === 'recovery') {
+                label.textContent = 'Recovery code';
+                help.textContent = 'Enter one of the recovery codes saved during setup.';
+                methodButton.textContent = 'Use an authenticator code';
+                code.inputMode = 'text';
+                code.removeAttribute('pattern');
+                code.removeAttribute('maxlength');
+                code.placeholder = 'XXXXXX-XXXXXX-XXXXXX-XXXXXX';
+            } else {
+                label.textContent = 'Authenticator code';
+                help.textContent = 'Enter the six-digit code from your authenticator app.';
+                methodButton.textContent = 'Use a recovery code';
+                code.inputMode = 'numeric';
+                code.pattern = '[0-9]{6}';
+                code.maxLength = 6;
+                code.placeholder = '000000';
+            }
+            code.focus();
+        });
+
+        document.getElementById('two-factor-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const submit = document.getElementById('two-factor-submit-btn');
+            const code = document.getElementById('two-factor-code');
+            document.getElementById('error-message').classList.remove('show');
+            submit.disabled = true;
+            submit.textContent = 'Please wait...';
+            try {
+                const response = await fetch(NodeCastUrl.resolve('/api/auth/2fa/verify'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credentialType: twoFactorMethod, credential: code.value })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Verification failed');
+                window.location.replace(NodeCastUrl.resolve('/'));
+            } catch (error) {
+                showError(error.message);
+                code.value = '';
+                code.focus();
+                submit.disabled = false;
+                submit.textContent = 'Verify';
+            }
+        });
+
+        document.getElementById('two-factor-cancel-btn').addEventListener('click', async () => {
+            await fetch(NodeCastUrl.resolve('/api/auth/logout'), { method: 'POST' });
+            window.location.replace(NodeCastUrl.resolve('/login.html'));
+        });
+
         // Determine setup mode before deciding whether SSO should be offered.
-        checkSetupRequired().then(showSsoWhenAvailable);
+        checkTwoFactorChallenge().then(required => {
+            if (!required) return checkSetupRequired().then(showSsoWhenAvailable);
+        });
     </script>
 </body>
 
