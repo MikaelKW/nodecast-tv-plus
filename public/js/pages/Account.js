@@ -144,13 +144,14 @@ class AccountPage {
 
     async startEnrollment(event) {
         event.preventDefault();
-        const submit = event.currentTarget.querySelector('[type="submit"]');
+        const form = event.currentTarget;
+        const submit = form.querySelector('[type="submit"]');
         this.setBusy(submit, true);
         try {
             const enrollment = await API.twoFactor.enroll(this.credentialPayload());
             this.showEnrollmentQr(enrollment);
         } catch (error) {
-            this.showFlowError(event.currentTarget, error.message);
+            this.showFlowError(form, error.message);
             this.setBusy(submit, false);
         }
     }
@@ -185,13 +186,14 @@ class AccountPage {
 
     async confirmEnrollment(event) {
         event.preventDefault();
-        const submit = event.currentTarget.querySelector('[type="submit"]');
+        const form = event.currentTarget;
+        const submit = form.querySelector('[type="submit"]');
         this.setBusy(submit, true);
         try {
             const result = await API.twoFactor.confirm(document.getElementById('account-confirm-code').value);
             this.showRecoveryCodes(result.recoveryCodes, 'Two-factor authentication is enabled');
         } catch (error) {
-            this.showFlowError(event.currentTarget, error.message);
+            this.showFlowError(form, error.message);
             this.setBusy(submit, false);
         }
     }
@@ -220,7 +222,8 @@ class AccountPage {
 
     async submitProtectedAction(event, action) {
         event.preventDefault();
-        const submit = event.currentTarget.querySelector('[type="submit"]');
+        const form = event.currentTarget;
+        const submit = form.querySelector('[type="submit"]');
         this.setBusy(submit, true);
         try {
             if (action === 'recovery') {
@@ -232,7 +235,7 @@ class AccountPage {
                 await this.loadStatus();
             }
         } catch (error) {
-            this.showFlowError(event.currentTarget, error.message);
+            this.showFlowError(form, error.message);
             this.setBusy(submit, false);
         }
     }

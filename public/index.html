@@ -10,7 +10,7 @@
   <title>NodeCast TV Plus | IPTV Player</title>
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/main.css?v=6">
+  <link rel="stylesheet" href="css/main.css?v=7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -89,13 +89,20 @@
             </svg></span>
           <span>Settings</span>
         </a>
-        <a href="#" class="nav-link" data-page="account">
-          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-              class="icon">
-              <path d="M12 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 12c-4.42 0-8 2.24-8 5v2h16v-2c0-2.76-3.58-5-8-5z" />
-            </svg></span>
-          <span>Account</span>
-        </a>
+        <div class="account-menu" id="account-menu">
+          <button type="button" class="account-menu-trigger" id="account-menu-trigger" aria-haspopup="menu"
+            aria-expanded="false" aria-label="Open account menu">
+            <span id="account-menu-initial" aria-hidden="true">?</span>
+          </button>
+          <div class="account-menu-popover hidden" id="account-menu-popover" role="menu">
+            <button type="button" class="account-menu-item" id="account-security-link" role="menuitem">
+              Account security
+            </button>
+            <button type="button" class="account-menu-item account-menu-logout" id="logout-btn" role="menuitem">
+              Logout
+            </button>
+          </div>
+        </div>
       </div>
     </nav>
 
@@ -1163,9 +1170,9 @@
   <script src="js/pages/MoviesPage.js?v=4"></script>
   <script src="js/pages/SeriesPage.js?v=2"></script>
   <script src="js/pages/Settings.js?v=3"></script>
-  <script src="js/pages/Account.js?v=1"></script>
+  <script src="js/pages/Account.js?v=2"></script>
   <script src="js/pages/WatchPage.js?v=6"></script>
-  <script src="js/app.js?v=5"></script>
+  <script src="js/app.js?v=6"></script>
 </body>
 
 </html>
