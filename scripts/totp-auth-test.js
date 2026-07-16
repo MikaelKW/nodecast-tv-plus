@@ -197,6 +197,7 @@ async function run() {
         username: 'SecurityAdmin',
         password: crypto.randomBytes(24).toString('base64url')
     };
+    admin.passwordConfirmation = admin.password;
     let server;
     const sensitiveValues = [admin.password, ...Object.values(secrets)];
 

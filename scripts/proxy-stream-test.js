@@ -164,12 +164,14 @@ async function run() {
 
     try {
         await waitForServer(appBaseUrl, child);
+        const setupPassword = crypto.randomBytes(24).toString('base64url');
         const setup = await fetch(`${appBaseUrl}/api/auth/setup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 username: 'proxy-test-admin',
-                password: crypto.randomBytes(24).toString('base64url')
+                password: setupPassword,
+                passwordConfirmation: setupPassword
             })
         });
         assert.equal(setup.status, 201);

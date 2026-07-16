@@ -145,10 +145,18 @@ router.post('/setup', async (req, res) => {
             return res.status(400).json({ error: 'Setup already completed' });
         }
 
-        const { username, password } = req.body;
+        const { username, password, passwordConfirmation } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password required' });
+        }
+
+        if (!passwordConfirmation) {
+            return res.status(400).json({ error: 'Password confirmation required' });
+        }
+
+        if (password !== passwordConfirmation) {
+            return res.status(400).json({ error: 'Passwords do not match' });
         }
 
         if (password.length < 6) {

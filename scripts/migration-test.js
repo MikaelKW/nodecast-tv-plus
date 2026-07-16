@@ -316,7 +316,7 @@ async function runBaseline(baseline) {
 
         const setup = await request(baselineUrl, '/api/auth/setup', {
             method: 'POST',
-            body: { username, password }
+            body: { username, password, passwordConfirmation: password }
         });
         let baselineAuth;
         if (baseline.kind === 'upstream') {
