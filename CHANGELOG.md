@@ -6,13 +6,35 @@ The project follows [Semantic Versioning](https://semver.org/). Historical notes
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-07-16
+
+This feature release adds secure optional authenticator-app protection for local accounts and makes newly added sources usable without a separate manual refresh.
+
 ### Added
 
-- Added optional per-account authenticator-app two-factor authentication for local accounts, with guided QR enrollment, single-use recovery codes, replay protection, attempt limits, and administrator reset controls.
+- Added automatic initial synchronization for M3U, standalone EPG, and Xtream sources, with visible progress, recoverable failures, and duplicate-submission prevention ([#158]).
+- Added optional per-account authenticator-app two-factor authentication for local accounts, with guided QR enrollment, single-use recovery codes, replay protection, attempt limits, and administrator reset controls ([#165]).
+
+### Changed
+
+- Replaced the separate Account and Logout navigation destinations with a username-initial menu containing Account security and Logout ([#165]).
+
+### Fixed
+
+- Kept Account Security, enrollment controls, and the account menu reachable at constrained desktop and mobile viewport sizes ([#165]).
+- Restored enrollment and protected-action controls after rejected authentication input instead of leaving the action indefinitely busy ([#165]).
 
 ### Security
 
-- TOTP secrets are encrypted at rest with a dedicated deployment key, recovery codes are stored only as keyed hashes, and the password step uses a short-lived server-side challenge instead of exposing temporary authentication tokens to browser storage or URLs.
+- TOTP secrets are encrypted at rest with a dedicated deployment key, recovery codes are stored only as keyed hashes, and the password step uses a short-lived server-side challenge instead of exposing temporary authentication tokens to browser storage or URLs ([#165]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.3.0`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values.
+- `TOTP_ENCRYPTION_KEY` is optional. Configure a third independent strong value to allow local accounts to enable authenticator-app 2FA, then preserve it across upgrades and include it in secure deployment backups.
+- No manual database migration is required. Migration from the published 2.2.2 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.2.2` and the existing deployment secrets.
 
 ## [2.2.2] - 2026-07-15
 
@@ -124,6 +146,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.3.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.1.1...v2.2.0
@@ -155,3 +178,5 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#139]: https://github.com/MikaelKW/nodecast-tv-plus/pull/139
 [#142]: https://github.com/MikaelKW/nodecast-tv-plus/pull/142
 [#146]: https://github.com/MikaelKW/nodecast-tv-plus/pull/146
+[#158]: https://github.com/MikaelKW/nodecast-tv-plus/pull/158
+[#165]: https://github.com/MikaelKW/nodecast-tv-plus/pull/165
