@@ -257,7 +257,12 @@ async function run() {
         const viewer = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
             jar: recovered.jar,
-            body: { username: 'SecurityViewer', password: viewerPassword, role: 'viewer' }
+            body: {
+                username: 'SecurityViewer',
+                password: viewerPassword,
+                passwordConfirmation: viewerPassword,
+                role: 'viewer'
+            }
         });
         assert.equal(viewer.response.status, 201);
 

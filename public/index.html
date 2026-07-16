@@ -10,7 +10,7 @@
   <title>NodeCast TV Plus | IPTV Player</title>
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/main.css?v=7">
+  <link rel="stylesheet" href="css/main.css?v=8">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -824,7 +824,14 @@
                   </div>
                   <div class="form-group">
                     <label for="new-password">Password</label>
-                    <input type="password" id="new-password" name="password" class="form-input" required minlength="6">
+                    <input type="password" id="new-password" name="password" class="form-input" required minlength="6"
+                      autocomplete="new-password" data-password-toggle>
+                  </div>
+                  <div class="form-group">
+                    <label for="new-password-confirmation">Confirm password</label>
+                    <input type="password" id="new-password-confirmation" name="passwordConfirmation" class="form-input"
+                      required minlength="6" autocomplete="new-password" data-password-toggle>
+                    <p class="field-error hidden" id="new-password-error" role="alert">Passwords do not match.</p>
                   </div>
                   <div class="form-group">
                     <label for="new-role">Role</label>
@@ -1157,6 +1164,7 @@
 
   <!-- JavaScript -->
   <script src="js/basePath.js?v=1"></script>
+  <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/icons.js"></script>
   <script src="js/api.js?v=3"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
@@ -1169,7 +1177,7 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=4"></script>
   <script src="js/pages/SeriesPage.js?v=2"></script>
-  <script src="js/pages/Settings.js?v=3"></script>
+  <script src="js/pages/Settings.js?v=4"></script>
   <script src="js/pages/Account.js?v=2"></script>
   <script src="js/pages/WatchPage.js?v=6"></script>
   <script src="js/app.js?v=6"></script>
