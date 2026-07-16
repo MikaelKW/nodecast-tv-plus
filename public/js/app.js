@@ -257,7 +257,7 @@ class App {
         await fetch(NodeCastUrl.resolve('/api/auth/logout'), { method: 'POST', headers });
 
         localStorage.removeItem('authToken');
-        window.location.replace(NodeCastUrl.resolve('/login.html'));
+        window.location.replace(NodeCastUrl.resolve('/login.html?signed_out=1'));
     }
 
     navigateTo(pageName, replaceHistory = false) {

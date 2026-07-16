@@ -72,7 +72,9 @@ async function run() {
             OIDC_CLIENT_SECRET: '',
             OIDC_AUTH_URL: '',
             OIDC_TOKEN_URL: '',
-            OIDC_USERINFO_URL: ''
+            OIDC_USERINFO_URL: '',
+            DISABLE_LOCAL_AUTH: '',
+            OIDC_AUTO_REDIRECT: ''
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -93,7 +95,11 @@ async function run() {
 
         const oidcStatusResponse = await fetch(`${baseUrl}/api/auth/oidc/status`);
         assert.equal(oidcStatusResponse.status, 200);
-        assert.deepEqual(await oidcStatusResponse.json(), { enabled: false });
+        assert.deepEqual(await oidcStatusResponse.json(), {
+            enabled: false,
+            localAuthEnabled: true,
+            autoRedirect: false
+        });
 
         for (const protectedPath of [
             '/api/sources',

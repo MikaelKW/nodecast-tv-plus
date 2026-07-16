@@ -155,7 +155,9 @@ async function run() {
             SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
             OIDC_ISSUER_URL: '',
             OIDC_CLIENT_ID: '',
-            OIDC_CLIENT_SECRET: ''
+            OIDC_CLIENT_SECRET: '',
+            DISABLE_LOCAL_AUTH: '',
+            OIDC_AUTO_REDIRECT: ''
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
