@@ -50,6 +50,12 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#sso-login-section')).toBeHidden();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
+    await expect(page.locator('#confirm-password')).toBeVisible();
+    await page.locator('#confirm-password').fill(`${password}-different`);
+    await page.getByRole('button', { name: 'Create Account', exact: true }).click();
+    await expect(page.locator('#error-message')).toHaveText('Passwords do not match');
+    await expect(page).toHaveURL(/\/login\.html$/);
+    await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
     await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();

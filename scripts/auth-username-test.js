@@ -100,9 +100,23 @@ async function run() {
     try {
         server = await startServer(dataDirectory);
 
+        const mismatch = await request(server.baseUrl, '/api/auth/setup', {
+            method: 'POST',
+            body: {
+                username: 'MobileUser',
+                password,
+                passwordConfirmation: `${password}-different`
+            }
+        });
+        assert.equal(mismatch.response.status, 400);
+        assert.equal(mismatch.payload.error, 'Passwords do not match');
+
+        const stillRequired = await request(server.baseUrl, '/api/auth/setup-required');
+        assert.equal(stillRequired.payload.setupRequired, true);
+
         const setup = await request(server.baseUrl, '/api/auth/setup', {
             method: 'POST',
-            body: { username: 'MobileUser', password }
+            body: { username: 'MobileUser', password, passwordConfirmation: password }
         });
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
