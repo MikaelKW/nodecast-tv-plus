@@ -136,15 +136,36 @@ async function run() {
         const duplicate = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
             cookie: adminCookie,
-            body: { username: 'mObIlEuSeR', password, role: 'viewer' }
+            body: { username: 'mObIlEuSeR', password, passwordConfirmation: password, role: 'viewer' }
         });
         assert.equal(duplicate.response.status, 409);
         assert.equal(duplicate.payload.error, 'Username already exists');
 
+        const missingConfirmation = await request(server.baseUrl, '/api/auth/users', {
+            method: 'POST',
+            cookie: adminCookie,
+            body: { username: 'MissingConfirmation', password, role: 'viewer' }
+        });
+        assert.equal(missingConfirmation.response.status, 400);
+        assert.equal(missingConfirmation.payload.error, 'Password confirmation required');
+
+        const mismatchedConfirmation = await request(server.baseUrl, '/api/auth/users', {
+            method: 'POST',
+            cookie: adminCookie,
+            body: {
+                username: 'MismatchedConfirmation',
+                password,
+                passwordConfirmation: `${password}-different`,
+                role: 'viewer'
+            }
+        });
+        assert.equal(mismatchedConfirmation.response.status, 400);
+        assert.equal(mismatchedConfirmation.payload.error, 'Passwords do not match');
+
         const viewer = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
             cookie: adminCookie,
-            body: { username: 'ViewerAccount', password, role: 'viewer' }
+            body: { username: 'ViewerAccount', password, passwordConfirmation: password, role: 'viewer' }
         });
         assert.equal(viewer.response.status, 201);
 

@@ -1855,6 +1855,55 @@ kbd {
   border-color: var(--color-accent);
 }
 
+.password-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.password-input-wrapper>input[data-password-toggle] {
+  padding-right: 48px;
+}
+
+.password-visibility-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.password-visibility-toggle:hover,
+.password-visibility-toggle:focus-visible {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.password-visibility-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.password-visibility-toggle .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.field-error {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-error);
+  font-size: 0.8125rem;
+}
+
 /* =====================================================
    Context Menu
    ===================================================== */

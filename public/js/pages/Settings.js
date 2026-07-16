@@ -316,17 +316,36 @@ class SettingsPage {
         // Handle add user form
         const addUserForm = document.getElementById('add-user-form');
         if (addUserForm) {
+            const confirmationInput = document.getElementById('new-password-confirmation');
+            const passwordError = document.getElementById('new-password-error');
+            const clearPasswordError = () => {
+                confirmationInput.setCustomValidity('');
+                passwordError.classList.add('hidden');
+            };
+            document.getElementById('new-password').addEventListener('input', clearPasswordError);
+            confirmationInput.addEventListener('input', clearPasswordError);
+
             addUserForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
 
                 const username = document.getElementById('new-username').value;
                 const password = document.getElementById('new-password').value;
+                const passwordConfirmation = confirmationInput.value;
                 const role = document.getElementById('new-role').value;
 
+                if (password !== passwordConfirmation) {
+                    confirmationInput.setCustomValidity('Passwords do not match');
+                    passwordError.classList.remove('hidden');
+                    confirmationInput.reportValidity();
+                    return;
+                }
+                clearPasswordError();
+
                 try {
-                    await API.users.create({ username, password, role });
+                    await API.users.create({ username, password, passwordConfirmation, role });
                     alert('User created successfully!');
                     addUserForm.reset();
+                    clearPasswordError();
                     this.loadUsers();
                 } catch (err) {
                     alert('Error creating user: ' + err.message);

@@ -50,6 +50,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#sso-login-section')).toBeHidden();
     await expect(page.locator('#confirm-password-group')).toBeVisible();
     await expect(page.locator('#confirm-password')).toBeEnabled();
+    const setupPasswordToggle = page.locator('.password-visibility-toggle[aria-controls="password"]');
+    await expect(setupPasswordToggle).toHaveAttribute('aria-label', 'Show password');
+    await setupPasswordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'text');
+    await expect(setupPasswordToggle).toHaveAttribute('aria-label', 'Hide password');
+    await setupPasswordToggle.click();
+    await expect(page.locator('#password')).toHaveAttribute('type', 'password');
+    await expect(page.locator('.password-visibility-toggle[aria-controls="confirm-password"]')).toBeVisible();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await expect(page.locator('#confirm-password')).toBeVisible();
@@ -121,6 +129,38 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('#users-tab').click();
+    await expect(page.locator('#tab-users')).toHaveClass(/active/);
+    const newPassword = `${password}-viewer`;
+    await page.locator('#new-username').fill('confirmed-viewer');
+    await page.locator('#new-password').fill(newPassword);
+    await page.locator('#new-password-confirmation').fill(`${newPassword}-different`);
+    const newPasswordToggle = page.locator('.password-visibility-toggle[aria-controls="new-password"]');
+    await newPasswordToggle.click();
+    await expect(page.locator('#new-password')).toHaveAttribute('type', 'text');
+    await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Hide password');
+    await page.getByRole('button', { name: 'Add User', exact: true }).click();
+    await expect(page.locator('#new-password-error')).toBeVisible();
+    await expect(page.locator('#new-password-error')).toHaveText('Passwords do not match.');
+    await expect(page.locator('#user-list')).not.toContainText('confirmed-viewer');
+
+    await page.locator('#new-password-confirmation').fill(newPassword);
+    const createdDialog = page.waitForEvent('dialog');
+    await page.getByRole('button', { name: 'Add User', exact: true }).click();
+    const dialog = await createdDialog;
+    expect(dialog.message()).toBe('User created successfully!');
+    await dialog.accept();
+    await expect(page.locator('#user-list')).toContainText('confirmed-viewer');
+    await expect(page.locator('#new-password')).toHaveValue('');
+    await expect(page.locator('#new-password-confirmation')).toHaveValue('');
+    await expect(page.locator('#new-password')).toHaveAttribute('type', 'password');
+    await expect(page.locator('#new-password-confirmation')).toHaveAttribute('type', 'password');
+    await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Show password');
+    await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
+        .toHaveAttribute('aria-label', 'Show password');
+
+    await page.locator('.tab[data-tab="sources"]').click();
+    await expect(page.locator('#tab-sources')).toHaveClass(/active/);
     await page.locator('#add-m3u').click();
     await page.locator('#source-name').fill('Controlled M3U');
     await page.locator('#source-url').fill(`${fixtureBaseUrl}/delayed-playlist.m3u`);
