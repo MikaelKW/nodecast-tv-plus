@@ -387,6 +387,8 @@ async function start() {
     process.env.OIDC_AUTH_URL = '';
     process.env.OIDC_TOKEN_URL = '';
     process.env.OIDC_USERINFO_URL = '';
+    process.env.DISABLE_LOCAL_AUTH = '';
+    process.env.OIDC_AUTO_REDIRECT = '';
 
     require('../../server/index');
 

@@ -633,6 +633,96 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.goto('/login.html');
     await expect(page.locator('#sso-login-section')).toBeVisible();
 
+    const oidcStatusRoute = '**/api/auth/oidc/status';
+    const setupRequiredRoute = '**/api/auth/setup-required';
+    const oidcLoginRoute = '**/api/auth/oidc/login';
+    const fulfillJson = (route, payload) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(payload)
+    });
+
+    // SSO-only mode hides every local-login control, while an OIDC callback
+    // error remains on the page for a deliberate retry instead of looping.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?error=SSO%20Failed');
+    await expect(page.locator('#login-form')).toBeHidden();
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#sso-divider')).toBeHidden();
+    await expect(page.locator('#error-message')).toHaveText('SSO Failed');
+    await page.unroute(oidcStatusRoute);
+
+    // Automatic redirect remains optional, and local=1 provides an explicit
+    // escape only while password sign-in is still enabled.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: true,
+        autoRedirect: true
+    }));
+    await page.route(oidcLoginRoute, route => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<title>Controlled OIDC redirect</title>'
+    }));
+    await page.goto('/login.html');
+    await expect(page).toHaveURL(/\/api\/auth\/oidc\/login$/);
+    await page.goto('/login.html?local=1');
+    await expect(page.locator('#login-form')).toBeVisible();
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#sso-divider')).toBeVisible();
+    await page.unroute(oidcStatusRoute);
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?local=1');
+    await expect(page).toHaveURL(/\/api\/auth\/oidc\/login$/);
+    await page.unroute(oidcLoginRoute);
+    await page.unroute(oidcStatusRoute);
+
+    // A deliberate logout suppresses automatic redirect once, including in
+    // SSO-only mode, so the user is not immediately signed back in.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?signed_out=1');
+    await expect(page.locator('#setup-message')).toHaveText('You have been signed out.');
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#login-form')).toBeHidden();
+    await page.unroute(oidcStatusRoute);
+
+    // Misconfigured SSO-only mode fails closed with a useful explanation.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: false,
+        localAuthEnabled: false,
+        autoRedirect: false
+    }));
+    await page.goto('/login.html');
+    await expect(page.locator('#login-form')).toBeHidden();
+    await expect(page.locator('#sso-login-section')).toBeHidden();
+    await expect(page.locator('#error-message')).toHaveText(
+        'Single sign-on is unavailable. Check the server OIDC configuration.'
+    );
+    await page.unroute(oidcStatusRoute);
+
+    // The empty-database bootstrap form remains available even when the
+    // eventual sign-in mode will be SSO-only.
+    await page.route(setupRequiredRoute, route => fulfillJson(route, { setupRequired: true }));
+    await page.goto('/login.html');
+    await expect(page.locator('#login-form')).toBeVisible();
+    await expect(page.locator('#setup-message')).toHaveText(
+        'Welcome! Please create your admin account to get started.'
+    );
+    await expect(page.locator('#sso-login-section')).toBeHidden();
+    await page.unroute(setupRequiredRoute);
+
     expect(expectedRejectedResourceErrors).toBe(0);
     expect(expectedAuthenticationErrors).toBe(0);
     expect(browserErrors, browserErrors.join('\n')).toEqual([]);

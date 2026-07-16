@@ -63,7 +63,7 @@ test('the application remains inside its configured reverse-proxy path', async (
     await page.locator('#account-menu-trigger').click();
     await expect(page.locator('#account-menu-popover')).toBeVisible();
     await page.locator('#logout-btn').click();
-    await expect(page).toHaveURL(/\/nodecast\/login\.html$/);
+    await expect(page).toHaveURL(/\/nodecast\/login\.html\?signed_out=1$/);
 
     expect(localRequestsOutsideBasePath).toEqual([]);
 });

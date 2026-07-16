@@ -102,7 +102,9 @@ async function run() {
                 OIDC_CALLBACK_URL: `http://127.0.0.1:${appPort}/api/auth/oidc/callback`,
                 OIDC_AUTH_URL: '',
                 OIDC_TOKEN_URL: '',
-                OIDC_USERINFO_URL: ''
+                OIDC_USERINFO_URL: '',
+                DISABLE_LOCAL_AUTH: 'true',
+                OIDC_AUTO_REDIRECT: 'true'
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true
@@ -114,7 +116,34 @@ async function run() {
             await waitForServer(`http://127.0.0.1:${appPort}/api/version`);
             const statusResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/oidc/status`);
             assert.equal(statusResponse.status, 200);
-            assert.deepEqual(await statusResponse.json(), { enabled: true });
+            assert.deepEqual(await statusResponse.json(), {
+                enabled: true,
+                localAuthEnabled: false,
+                autoRedirect: true
+            });
+
+            const bootstrapPassword = crypto.randomBytes(24).toString('base64url');
+            const setupResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/setup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: 'bootstrap-admin',
+                    password: bootstrapPassword,
+                    passwordConfirmation: bootstrapPassword
+                })
+            });
+            assert.equal(setupResponse.status, 201, appErrors);
+
+            const localLoginResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: 'bootstrap-admin', password: bootstrapPassword })
+            });
+            assert.equal(localLoginResponse.status, 403);
+            assert.deepEqual(await localLoginResponse.json(), {
+                error: 'Local sign-in is disabled. Use single sign-on.'
+            });
+
             const loginResponse = await fetch(`http://127.0.0.1:${appPort}/api/auth/oidc/login`, {
                 redirect: 'manual'
             });
