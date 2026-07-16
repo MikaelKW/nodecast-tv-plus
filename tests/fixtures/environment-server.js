@@ -42,7 +42,7 @@ function controlledPlaylist(baseUrl) {
         '#EXTM3U',
         `#EXTINF:-1 tvg-id="nodecast.test.one" tvg-name="NodeCast Test Pattern" tvg-logo="${baseUrl}/logo.svg" group-title="Local Test",NodeCast Test Pattern`,
         `${baseUrl}/sample.mp4`,
-        `#EXTINF:-1 tvg-id="nodecast.test.two" tvg-name="NodeCast Test Backup" group-title="Local Test",NodeCast Test Backup`,
+        `#EXTINF:-1 tvg-id="nodecast.test.two" tvg-name="NodeCast Test Backup" group-title="Secondary Test",NodeCast Test Backup`,
         `${baseUrl}/sample.mp4`
     ].join('\n');
 }
