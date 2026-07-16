@@ -48,6 +48,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.goto('/login.html');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
     await expect(page.locator('#sso-login-section')).toBeHidden();
+    await expect(page.locator('#confirm-password-group')).toBeVisible();
+    await expect(page.locator('#confirm-password')).toBeEnabled();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await expect(page.locator('#confirm-password')).toBeVisible();
@@ -104,6 +106,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST' }));
     await page.goto('/login.html');
+    await expect(page.locator('#confirm-password-group')).toBeHidden();
+    await expect(page.locator('#confirm-password')).toBeDisabled();
     await page.locator('#username').fill('e2e-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
