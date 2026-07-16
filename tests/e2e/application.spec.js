@@ -18,6 +18,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const qualityLogs = [];
     const qualitySessionSources = [];
     let expectedRejectedResourceErrors = 0;
+    let expectedAuthenticationErrors = 0;
     page.on('pageerror', error => browserErrors.push(`pageerror: ${error.message}`));
     page.on('console', message => {
         if (message.text().includes('[Player]') && /quality|restor/i.test(message.text())) {
@@ -26,6 +27,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         if (message.type() !== 'error') return;
         if (expectedRejectedResourceErrors > 0 && message.text().includes('Failed to load resource')) {
             expectedRejectedResourceErrors -= 1;
+            return;
+        }
+        if (expectedAuthenticationErrors > 0 && message.text().includes('Failed to load resource')) {
+            expectedAuthenticationErrors -= 1;
             return;
         }
         browserErrors.push(`console: ${message.text()}`);
@@ -55,7 +60,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // Enroll through the same guided flow presented to local accounts, then
     // prove password sign-in stops at the server-side challenge until a fresh
     // authenticator code is supplied.
-    await page.locator('.nav-link[data-page="account"]').click();
+    await expect(page.locator('#account-menu-initial')).toHaveText('E');
+    await page.locator('#account-menu-trigger').click();
+    await expect(page.locator('#account-menu-popover')).toBeVisible();
+    await page.locator('#account-security-link').click();
     await expect(page.locator('#page-account')).toHaveClass(/active/);
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
     await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
@@ -71,6 +79,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         period: 30,
         secret: OTPAuth.Secret.fromBase32(enrollmentSecret)
     });
+    const initialAuthenticatorCode = authenticator.generate();
+    const wrongAuthenticatorCode = `${initialAuthenticatorCode.slice(0, -1)}${(Number(initialAuthenticatorCode.at(-1)) + 1) % 10}`;
+    await page.locator('#account-confirm-code').fill(wrongAuthenticatorCode);
+    expectedAuthenticationErrors += 1;
+    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    await expect(page.locator('.account-flow-error')).toHaveText('Invalid authentication code.');
+    await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeEnabled();
     await page.locator('#account-confirm-code').fill(authenticator.generate());
     await page.getByRole('button', { name: 'Enable', exact: true }).click();
     await expect(page.locator('#account-recovery-codes')).toBeVisible();
@@ -544,5 +559,6 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#sso-login-section')).toBeVisible();
 
     expect(expectedRejectedResourceErrors).toBe(0);
+    expect(expectedAuthenticationErrors).toBe(0);
     expect(browserErrors, browserErrors.join('\n')).toEqual([]);
 });

@@ -128,24 +128,35 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#content-tree', '.settings-container');
 
-    await page.evaluate(() => window.app.navigateTo('account'));
+    await page.locator('#mobile-menu-toggle').click();
+    await page.locator('#account-menu-trigger').click();
+    await expect(page.locator('#account-menu-popover')).toBeVisible();
+    await page.locator('#account-security-link').click();
     await expect(page.locator('#page-account')).toHaveClass(/active/);
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
     await expect(page.getByRole('button', { name: 'Enable two-factor authentication' })).toBeVisible();
+    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
+    await page.locator('#account-password').fill(password);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.locator('#totp-qr-image')).toBeVisible();
+    const accountScroll = await scrollToBottom(page, '#page-account');
+    expect(accountScroll.scrollHeight).toBeGreaterThan(accountScroll.clientHeight);
+    expect(accountScroll.scrollTop).toBeGreaterThan(0);
+    await expectInsideScroller(page, '#account-enroll-confirm-form', '#page-account');
 
-    // Compact landscape navigation must keep every destination, including
-    // Logout, inside the visible viewport.
+    // Compact landscape navigation must keep every destination and the
+    // account menu inside the visible viewport.
     await page.setViewportSize({ width: 874, height: 402 });
     const navLayout = await page.evaluate(() => ({
         viewportWidth: window.innerWidth,
-        links: [...document.querySelectorAll('.navbar-menu .nav-link')].map(link => ({
+        links: [...document.querySelectorAll('.navbar-menu .nav-link, #account-menu-trigger')].map(link => ({
             id: link.id || link.dataset.page,
             left: link.getBoundingClientRect().left,
             right: link.getBoundingClientRect().right,
             visible: getComputedStyle(link).display !== 'none'
         }))
     }));
-    expect(navLayout.links.find(link => link.id === 'logout-btn')).toBeTruthy();
+    expect(navLayout.links.find(link => link.id === 'account-menu-trigger')).toBeTruthy();
     expect(navLayout.links.every(link => (
         link.visible && link.left >= 0 && link.right <= navLayout.viewportWidth + 1
     ))).toBe(true);
