@@ -4,9 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0f">
     <title>Login - NodeCast TV Plus</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="css/main.css?v=8">
+    <script src="js/theme.js?v=1"></script>
+    <link rel="stylesheet" href="css/main.css?v=10">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html,
@@ -219,7 +221,7 @@
                 Welcome! Please create your admin account to get started.
             </div>
 
-            <form id="login-form">
+            <form id="login-form" hidden>
                 <div class="form-group">
                     <label for="username">Username</label>
                     <input type="text" id="username" name="username" required autocomplete="username"
@@ -255,7 +257,7 @@
             </form>
 
             <div id="sso-login-section" hidden>
-                <div class="sso-divider" style="text-align: center; margin: 20px 0; position: relative;">
+                <div class="sso-divider" id="sso-divider" style="text-align: center; margin: 20px 0; position: relative;">
                     <span
                         style="background: var(--color-bg-secondary); padding: 0 10px; color: var(--color-text-secondary); font-size: 14px; position: relative; z-index: 1;">OR</span>
                     <div
@@ -263,7 +265,7 @@
                     </div>
                 </div>
 
-                <button id="btn-sso-login" class="btn-login"
+                <button type="button" id="btn-sso-login" class="btn-login"
                     style="background: transparent; border: 1px solid var(--color-border); color: var(--color-text-primary); display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.2s;">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
                         style="width: 20px; height: 20px;">
@@ -287,6 +289,7 @@
 
     <script src="js/basePath.js?v=1"></script>
     <script src="js/passwordVisibility.js?v=1"></script>
+    <script src="js/onboarding.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
@@ -296,12 +299,19 @@
         // Check for URL Error params
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get('error');
+        const signedOut = urlParams.get('signed_out') === '1';
+        const localLoginRequested = urlParams.get('local') === '1';
         if (error) {
             const errorMessage = document.getElementById('error-message');
             errorMessage.textContent = error;
             errorMessage.classList.add('show');
             // Clean URL
             window.history.replaceState({}, document.title, window.location.pathname);
+        }
+        if (signedOut) {
+            const message = document.getElementById('setup-message');
+            message.textContent = 'You have been signed out.';
+            message.classList.add('show');
         }
 
         // Check if setup is required
@@ -341,9 +351,12 @@
 
                 if (data.setupRequired) {
                     isSetupMode = true;
+                    document.getElementById('login-form').hidden = false;
                     document.getElementById('login-subtitle').textContent = 'Create Admin Account';
                     document.getElementById('submit-btn').textContent = 'Create Account';
-                    document.getElementById('setup-message').classList.add('show');
+                    const setupMessage = document.getElementById('setup-message');
+                    setupMessage.textContent = 'Welcome! Please create your admin account to get started.';
+                    setupMessage.classList.add('show');
                     const passwordInput = document.getElementById('password');
                     const confirmationInput = document.getElementById('confirm-password');
                     passwordInput.placeholder = 'Minimum 6 characters';
@@ -351,22 +364,55 @@
                     document.getElementById('confirm-password-group').hidden = false;
                     confirmationInput.disabled = false;
                     confirmationInput.required = true;
+                    return true;
                 }
+                return false;
             } catch (err) {
                 console.error('Error checking setup status:', err);
+                showError('Sign-in options could not be loaded. Please try again.');
+                return null;
             }
         }
 
-        async function showSsoWhenAvailable() {
-            if (isSetupMode) return;
-
+        async function configureLoginMethods() {
             try {
                 const response = await fetch(NodeCastUrl.resolve('/api/auth/oidc/status'));
-                if (!response.ok) return;
-                const { enabled } = await response.json();
-                if (enabled) document.getElementById('sso-login-section').hidden = false;
+                if (!response.ok) throw new Error(`Sign-in configuration request failed (${response.status})`);
+                const options = await response.json();
+                const enabled = Boolean(options.enabled);
+                const localAuthEnabled = options.localAuthEnabled !== false;
+                const autoRedirect = Boolean(options.autoRedirect);
+                const loginForm = document.getElementById('login-form');
+                const ssoSection = document.getElementById('sso-login-section');
+                const ssoDivider = document.getElementById('sso-divider');
+
+                loginForm.hidden = !localAuthEnabled;
+                ssoSection.hidden = !enabled;
+                ssoDivider.hidden = !localAuthEnabled;
+
+                if (!localAuthEnabled) {
+                    document.getElementById('login-subtitle').textContent = enabled
+                        ? 'Sign in with your SSO provider'
+                        : 'Sign-in unavailable';
+                }
+
+                if (!enabled && !localAuthEnabled) {
+                    showError('Single sign-on is unavailable. Check the server OIDC configuration.');
+                    return;
+                }
+
+                const suppressAutoRedirect = Boolean(error)
+                    || signedOut
+                    || (localAuthEnabled && localLoginRequested);
+                if (enabled && autoRedirect && !suppressAutoRedirect) {
+                    loginForm.hidden = true;
+                    ssoDivider.hidden = true;
+                    document.getElementById('login-subtitle').textContent = 'Redirecting to SSO...';
+                    window.location.replace(NodeCastUrl.resolve('/api/auth/oidc/login'));
+                }
             } catch (err) {
                 console.warn('Could not check SSO availability:', err);
+                showError('Sign-in options could not be loaded. Please try again.');
             }
         }
 
@@ -421,6 +467,10 @@
                     document.getElementById('password').value = '';
                     showTwoFactorChallenge();
                     return;
+                }
+
+                if (isSetupMode && data.onboarding?.mfaEnrollmentRecommended) {
+                    NodeCastOnboarding.markMfaPending();
                 }
 
                 // Redirect to main app (replace history to prevent back button issues)
@@ -505,8 +555,10 @@
         });
 
         // Determine setup mode before deciding whether SSO should be offered.
-        checkTwoFactorChallenge().then(required => {
-            if (!required) return checkSetupRequired().then(showSsoWhenAvailable);
+        checkTwoFactorChallenge().then(async required => {
+            if (required) return;
+            const setupRequired = await checkSetupRequired();
+            if (setupRequired === false) await configureLoginMethods();
         });
     </script>
 </body>

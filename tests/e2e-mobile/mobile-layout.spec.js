@@ -78,10 +78,33 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await page.locator('#password').fill(password);
     await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
-    await expect(page).toHaveURL(/\/(?:#home)?$/);
+    await expect(page).toHaveURL(/\/#mfa-onboarding$/);
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.pages?.series
     ))).toBe(true);
+    await expect(page.locator('#page-mfa-onboarding')).toHaveClass(/active/);
+    await expect(page.getByRole('heading', { name: 'Protect your account with MFA' })).toBeVisible();
+
+    // The first-run prompt and its actions remain reachable in a short iPhone
+    // landscape viewport before the optional Skip path is completed.
+    await page.setViewportSize({ width: 874, height: 402 });
+    const onboardingScroll = await scrollToBottom(page, '#page-mfa-onboarding');
+    expect(onboardingScroll.scrollHeight).toBeGreaterThan(onboardingScroll.clientHeight);
+    await expectInsideScroller(page, '#mfa-onboarding-skip', '#page-mfa-onboarding');
+    await page.setViewportSize({ width: 402, height: 874 });
+
+    await page.getByRole('button', { name: 'Skip for now' }).click();
+    await expect(page.getByRole('dialog', { name: 'Set up MFA later' })).toBeVisible();
+    await expect(page.locator('#mfa-onboarding-skip-description')).toContainText('Account security');
+    await page.getByRole('button', { name: 'Go back' }).click();
+    await expect(page.locator('#mfa-onboarding-skip-dialog')).toBeHidden();
+    await page.getByRole('button', { name: 'Skip for now' }).click();
+    await page.getByRole('button', { name: 'Continue to NodeCast' }).click();
+    await expect(page).toHaveURL(/\/#home$/);
+    expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
+    await page.reload();
+    await expect(page).toHaveURL(/\/#home$/);
+    await expect(page.locator('#page-mfa-onboarding')).not.toHaveClass(/active/);
 
     const seriesSource = await page.evaluate(async values => {
         const response = await fetch('/api/sources', {
@@ -132,6 +155,29 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expect(page.locator('.shortcuts-grid')).toBeVisible();
     await expectInsideScroller(page, '.shortcuts-grid', '.settings-container');
+
+    await page.locator('.tab[data-tab="interface"]').click();
+    const themeCards = page.locator('.theme-option-content');
+    await expect(themeCards).toHaveCount(3);
+    const themeLayout = await page.evaluate(() => ({
+        viewportWidth: window.innerWidth,
+        cards: [...document.querySelectorAll('.theme-option-content')].map(card => ({
+            left: card.getBoundingClientRect().left,
+            right: card.getBoundingClientRect().right,
+            width: card.getBoundingClientRect().width
+        }))
+    }));
+    expect(themeLayout.cards.every(card => (
+        card.left >= 0 && card.right <= themeLayout.viewportWidth + 1 && card.width > 0
+    ))).toBe(true);
+    await page.locator('input[name="theme-preference"][value="light"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.locator('input[name="theme-preference"][value="system"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.locator('input[name="theme-preference"][value="dark"]').check();
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.interface-settings-actions', '.settings-container');
 
     await page.locator('.tab[data-tab="content"]').click();
     await scrollToBottom(page, '.settings-container');

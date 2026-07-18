@@ -30,6 +30,7 @@ Release history and upgrade details are available in the [changelog](CHANGELOG.m
   - Support for Xtream Codes and M3U playlists.
   - Manage hidden content categories.
   - Playback preferences (volume memory, auto-play).
+  - Choose the starting page and which main navigation tabs are shown.
 - **🎛️ Hardware Transcoding**: GPU-accelerated transcoding with NVIDIA NVENC, AMD AMF, Intel QuickSync, and VAAPI support.
 - **🔊 Smart Audio**: Configurable 5.1→Stereo downmix presets (ITU, Night Mode, Cinematic) with automatic passthrough for compatible sources.
 - **📦 Stream Processing**: Auto-detection of stream codecs with smart remux/transcode decisions.
@@ -83,7 +84,7 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
      --env-file .env \
      -p 3000:3000 \
      -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:2.3.1
+     ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
    ```
 
 4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
@@ -102,17 +103,17 @@ For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEO
 
 ### Migrate from upstream NodeCast TV
 
-NodeCast TV Plus 2.3.1 has verified migration paths from these versions:
+NodeCast TV Plus 2.4.0 has verified migration paths from these versions:
 
 | Existing installation | Target | Status |
 | --- | --- | --- |
-| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.3.1 | Verified by automated release gate |
-| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.3.1 | Verified by automated release gate |
-| NodeCast TV Plus 2.3.0 (previous stable Plus release) | NodeCast TV Plus 2.3.1 | Verified by automated release gate using the published image |
+| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
+| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
+| NodeCast TV Plus 2.3.1 (previous stable Plus release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate using the published image |
 
 The migration tests reuse each baseline's `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and authentication state. Upstream baselines additionally verify migration from a valid legacy bearer token to the Plus authentication cookie.
 
-Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.3.0 image to the 2.3.1 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.3.1 image to the 2.4.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
 
 Before migrating:
 
@@ -135,7 +136,7 @@ docker run -d \
   --env-file .env \
   -p 3000:3000 \
   -v EXISTING_UPSTREAM_VOLUME:/app/data \
-  ghcr.io/mikaelkw/nodecast-tv-plus:2.3.1
+  ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
 ```
 
 For an existing bind-mounted directory, mount its absolute path instead:
@@ -196,7 +197,7 @@ npm run test:migration   # upgrades pinned upstream Docker baselines into the lo
 
 The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
 
-The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, pulls the published previous stable Plus image, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the test containers, volumes, and baseline images afterward. The lightweight upstream baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
+The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, pulls the published previous stable Plus image, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the disposable containers and volumes afterward. Prepared images are also removed when no other local container still references them. The lightweight upstream baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
 
 ### Docker Compose for local builds
 
@@ -230,6 +231,12 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
           NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
+          OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+          OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+          OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+          OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-}
+          DISABLE_LOCAL_AUTH: ${DISABLE_LOCAL_AUTH:-false}
+          OIDC_AUTO_REDIRECT: ${OIDC_AUTO_REDIRECT:-false}
     ```
 
 2.  Build and run the container:
@@ -304,6 +311,40 @@ OIDC_USERINFO_URL=https://your-idp.com/userinfo
 ```
 
 **Note:** New users signing in via SSO are automatically assigned the **Viewer** role. You must manually promote them to Admin if desired.
+
+#### Optional SSO-only sign-in
+
+After OIDC has been verified, local username/password sign-in can be disabled and
+the login page can redirect directly to the identity provider:
+
+```env
+DISABLE_LOCAL_AUTH=true
+OIDC_AUTO_REDIRECT=true
+```
+
+`DISABLE_LOCAL_AUTH=true` hides the local sign-in form and blocks the password
+login API. It does not delete local accounts or revoke sessions that were already
+issued. `OIDC_AUTO_REDIRECT=true` is a login-page convenience and can be enabled
+independently. When local sign-in remains enabled, append `?local=1` to
+`login.html` to bypass automatic redirect for that visit. Failed SSO callbacks
+and deliberate logout also stop at the login page instead of creating a redirect
+loop.
+
+Use this sequence to avoid losing administrator access:
+
+1. Complete the initial local administrator setup with local sign-in enabled.
+2. Configure OIDC and confirm that an SSO account can sign in.
+3. Promote the intended SSO account to **Admin** under **Settings -> Users**.
+4. Back up `/app/data`, then enable `DISABLE_LOCAL_AUTH` and optionally
+   `OIDC_AUTO_REDIRECT`.
+5. Restart the container and verify SSO administrator access before ending the
+   existing administrator session.
+
+The one-time administrator setup remains available while the database is empty,
+even if local sign-in is disabled. This is a bootstrap safeguard; after setup,
+that local account cannot sign in while `DISABLE_LOCAL_AUTH=true`. If SSO is
+unavailable at that point, correct the OIDC configuration or temporarily set
+`DISABLE_LOCAL_AUTH=false` and restart the application.
 
 ### Two-factor authentication
 

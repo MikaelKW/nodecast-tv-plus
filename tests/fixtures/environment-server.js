@@ -241,6 +241,33 @@ async function start() {
                         timestamp_now: Math.floor(Date.now() / 1000)
                     }
                 };
+            } else if (action === 'get_live_categories') {
+                response = [{ category_id: '15', category_name: 'Visibility Live Test', parent_id: 0 }];
+            } else if (action === 'get_live_streams') {
+                response = [{
+                    num: 1,
+                    name: 'Controlled Visibility Channel',
+                    stream_type: 'live',
+                    stream_id: 1501,
+                    stream_icon: `${baseUrl}/logo.svg`,
+                    epg_channel_id: 'visibility.live.test',
+                    added: '1784073598',
+                    category_id: '15',
+                    container_extension: 'm3u8'
+                }];
+            } else if (action === 'get_vod_categories') {
+                response = [{ category_id: '16', category_name: 'Visibility Movie Test', parent_id: 0 }];
+            } else if (action === 'get_vod_streams') {
+                response = [{
+                    num: 1,
+                    name: 'Controlled Visibility Movie',
+                    stream_type: 'movie',
+                    stream_id: 1601,
+                    stream_icon: `${baseUrl}/logo.svg`,
+                    added: '1784073599',
+                    category_id: '16',
+                    container_extension: 'mp4'
+                }];
             } else if (action === 'get_series_categories') {
                 response = [{ category_id: '17', category_name: 'Safari Layout Test', parent_id: 0 }];
             } else if (action === 'get_series') {
@@ -387,6 +414,8 @@ async function start() {
     process.env.OIDC_AUTH_URL = '';
     process.env.OIDC_TOKEN_URL = '';
     process.env.OIDC_USERINFO_URL = '';
+    process.env.DISABLE_LOCAL_AUTH = '';
+    process.env.OIDC_AUTO_REDIRECT = '';
 
     require('../../server/index');
 

@@ -50,6 +50,7 @@ const API = {
 
     // Sources
     sources: {
+        isVisibleIn: (source, section) => source?.contentVisibility?.[section] !== false,
         getAll: () => API.request('GET', '/sources'),
         getByType: (type) => API.request('GET', `/sources/type/${type}`),
         getById: (id) => API.request('GET', `/sources/${id}`),

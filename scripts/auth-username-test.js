@@ -66,7 +66,9 @@ async function startServer(dataDirectory) {
             OIDC_CLIENT_SECRET: '',
             OIDC_AUTH_URL: '',
             OIDC_TOKEN_URL: '',
-            OIDC_USERINFO_URL: ''
+            OIDC_USERINFO_URL: '',
+            DISABLE_LOCAL_AUTH: '',
+            OIDC_AUTO_REDIRECT: ''
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -120,6 +122,7 @@ async function run() {
         });
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
+        assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
 

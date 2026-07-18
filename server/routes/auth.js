@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
+const authenticationConfig = require('../config/authentication');
 const { requestBasePath, withBasePath } = require('../config/basePath');
 const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
@@ -55,6 +56,16 @@ const oidcReady = auth.configureOidcStrategy(
     async (userData) => await db.users.create(userData)
 );
 
+oidcReady.then(enabled => {
+    if (!authenticationConfig.localAuthEnabled && !enabled) {
+        console.error('[Auth] Local sign-in is disabled, but single sign-on is unavailable. Check the OIDC configuration before ending the bootstrap administrator session.');
+    }
+}).catch(() => {
+    if (!authenticationConfig.localAuthEnabled) {
+        console.error('[Auth] Local sign-in is disabled, but single sign-on could not be initialized.');
+    }
+});
+
 function authenticateOidc(options) {
     return async (req, res, next) => {
         try {
@@ -71,15 +82,14 @@ function authenticateOidc(options) {
 }
 
 /**
- * Report whether the optional OIDC provider is ready. This deliberately
- * exposes only a boolean so the public login page never receives provider
- * credentials or internal configuration details.
+ * Report the public sign-in methods. This deliberately exposes only booleans
+ * so the login page never receives provider credentials or internal details.
  */
 router.get('/oidc/status', async (req, res) => {
     try {
-        res.json({ enabled: Boolean(await oidcReady) });
+        res.json(authenticationConfig.publicLoginOptions(await oidcReady));
     } catch {
-        res.json({ enabled: false });
+        res.json(authenticationConfig.publicLoginOptions(false));
     }
 });
 
@@ -177,7 +187,10 @@ router.post('/setup', async (req, res) => {
 
         res.status(201).json({
             message: 'Admin user created successfully',
-            user: adminUser
+            user: adminUser,
+            onboarding: {
+                mfaEnrollmentRecommended: true
+            }
         });
     } catch (err) {
         console.error('Error in /setup:', err);
@@ -190,6 +203,10 @@ router.post('/setup', async (req, res) => {
  * POST /api/auth/login
  */
 router.post('/login', (req, res, next) => {
+    if (!authenticationConfig.localAuthEnabled) {
+        return res.status(403).json({ error: 'Local sign-in is disabled. Use single sign-on.' });
+    }
+
     const identityKey = loginIdentityKey(req);
     const ipKey = loginIpKey(req);
     if (rejectRateLimited(res, [

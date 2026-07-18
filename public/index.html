@@ -7,10 +7,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0a0f">
   <title>NodeCast TV Plus | IPTV Player</title>
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/main.css?v=8">
+  <script src="js/theme.js?v=1"></script>
+  <link rel="stylesheet" href="css/main.css?v=10">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -422,6 +424,7 @@
           <!-- Tabs -->
           <div class="tabs">
             <button class="tab active" data-tab="sources">Sources</button>
+            <button class="tab" data-tab="interface">Interface</button>
             <button class="tab" data-tab="player">Player</button>
             <button class="tab" data-tab="transcode">Transcoding</button>
             <button class="tab" data-tab="content">Manage Content</button>
@@ -477,6 +480,90 @@
                     d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                 </svg> button next to EPG sources for manual refresh</p>
             </div>
+          </div>
+
+          <!-- Interface Tab -->
+          <div id="tab-interface" class="tab-content">
+            <div class="settings-section">
+              <h3>Appearance</h3>
+              <p class="hint interface-settings-hint">Choose how NodeCast looks in this browser. System follows your device's light or dark appearance.</p>
+              <fieldset class="theme-options" aria-describedby="theme-settings-status">
+                <legend class="sr-only">Color theme</legend>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="system">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-system" aria-hidden="true"></span>
+                    <span><strong>System</strong><small>Follow this device</small></span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="dark">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-dark" aria-hidden="true"></span>
+                    <span><strong>Dark</strong><small>Current appearance</small></span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="light">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-light" aria-hidden="true"></span>
+                    <span><strong>Light</strong><small>Bright appearance</small></span>
+                  </span>
+                </label>
+              </fieldset>
+              <p id="theme-settings-status" class="hint theme-settings-status" role="status"></p>
+            </div>
+
+            <form id="interface-settings-form">
+              <div class="settings-section">
+                <h3>Starting Page</h3>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-label">Open NodeCast on</span>
+                    <span class="setting-hint">Choose the first page shown after sign-in or when opening the app without a direct page link.</span>
+                  </div>
+                  <select id="setting-landing-page" class="form-input interface-page-select">
+                    <option value="home">Home</option>
+                    <option value="live">Live TV</option>
+                    <option value="guide">TV Guide</option>
+                    <option value="movies">Movies</option>
+                    <option value="series">Series</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h3>Main Navigation</h3>
+                <p class="hint interface-settings-hint">Choose which main pages appear in the navigation bar. Settings and the account menu always remain available to authorized users.</p>
+                <div class="interface-navigation-options">
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="home" checked>
+                    <span class="setting-info"><span class="setting-label">Home</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="live" checked>
+                    <span class="setting-info"><span class="setting-label">Live TV</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="guide" checked>
+                    <span class="setting-info"><span class="setting-label">TV Guide</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="movies" checked>
+                    <span class="setting-info"><span class="setting-label">Movies</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="series" checked>
+                    <span class="setting-info"><span class="setting-label">Series</span></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="interface-settings-actions">
+                <button type="submit" class="btn btn-primary">Save interface settings</button>
+                <span id="interface-settings-status" class="hint hidden" role="status"></span>
+              </div>
+            </form>
           </div>
 
           <!-- Player Tab -->
@@ -869,6 +956,48 @@
         </div>
       </div>
 
+      <!-- First-run MFA Onboarding Page -->
+      <div id="page-mfa-onboarding" class="page mfa-onboarding-page">
+        <section class="mfa-onboarding-card" aria-labelledby="mfa-onboarding-heading">
+          <div class="mfa-onboarding-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
+              <path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4Zm-1 16-4-4 1.41-1.41L11 14.17l5.59-5.59L18 10l-7 7Z" />
+            </svg>
+          </div>
+          <p class="mfa-onboarding-eyebrow">One more security step</p>
+          <h2 id="mfa-onboarding-heading" tabindex="-1">Protect your account with MFA</h2>
+          <p class="mfa-onboarding-intro">
+            Multi-factor authentication adds an authenticator-app code after your password. It helps protect the
+            administrator account if the password is ever exposed.
+          </p>
+          <ul class="mfa-onboarding-benefits">
+            <li>Uses a standard authenticator app.</li>
+            <li>Provides one-time recovery codes for safe backup access.</li>
+            <li>Can be disabled later from Account security.</li>
+          </ul>
+          <div class="mfa-onboarding-actions">
+            <button type="button" class="btn btn-primary" id="mfa-onboarding-continue">Continue</button>
+            <button type="button" class="btn btn-secondary" id="mfa-onboarding-skip">Skip for now</button>
+          </div>
+          <p class="hint">MFA is recommended but optional.</p>
+        </section>
+
+        <div class="mfa-onboarding-dialog-backdrop hidden" id="mfa-onboarding-skip-dialog">
+          <section class="mfa-onboarding-dialog" role="dialog" aria-modal="true"
+            aria-labelledby="mfa-onboarding-skip-heading" aria-describedby="mfa-onboarding-skip-description">
+            <h3 id="mfa-onboarding-skip-heading">Set up MFA later</h3>
+            <p id="mfa-onboarding-skip-description">
+              Open the account menu marked with your username initial, then choose <strong>Account security</strong>
+              whenever you are ready to enable MFA.
+            </p>
+            <div class="mfa-onboarding-actions">
+              <button type="button" class="btn btn-primary" id="mfa-onboarding-skip-confirm">Continue to NodeCast</button>
+              <button type="button" class="btn btn-secondary" id="mfa-onboarding-skip-back">Go back</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
       <!-- Watch Page (VOD Player) - Not in navigation -->
       <div id="page-watch" class="page watch-page">
         <!-- Video Section (100vh) -->
@@ -1165,6 +1294,7 @@
   <!-- JavaScript -->
   <script src="js/basePath.js?v=1"></script>
   <script src="js/passwordVisibility.js?v=1"></script>
+  <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
   <script src="js/api.js?v=3"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
@@ -1179,6 +1309,7 @@
   <script src="js/pages/SeriesPage.js?v=2"></script>
   <script src="js/pages/Settings.js?v=4"></script>
   <script src="js/pages/Account.js?v=2"></script>
+  <script src="js/pages/MfaOnboarding.js?v=1"></script>
   <script src="js/pages/WatchPage.js?v=6"></script>
   <script src="js/app.js?v=6"></script>
 </body>

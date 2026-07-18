@@ -15,6 +15,27 @@ const maskSource = source => ({
     password: source.password ? '********' : null
 });
 
+const parseContentVisibility = value => {
+    if (value === undefined) return undefined;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        const error = new Error('Content visibility must be an object');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const visibility = {};
+    for (const key of ['live', 'movies', 'series']) {
+        if (value[key] === undefined) continue;
+        if (typeof value[key] !== 'boolean') {
+            const error = new Error(`Content visibility value for ${key} must be true or false`);
+            error.statusCode = 400;
+            throw error;
+        }
+        visibility[key] = value[key];
+    }
+    return visibility;
+};
+
 router.use(auth.requireAuth);
 
 // Get all sources
@@ -24,8 +45,8 @@ router.get('/', async (req, res) => {
         // Don't expose passwords in list view
         const sanitized = req.user.role === 'admin'
             ? allSources.map(maskSource)
-            : allSources.map(({ id, type, name, enabled, created_at, updated_at }) => ({
-                id, type, name, enabled, created_at, updated_at
+            : allSources.map(({ id, type, name, enabled, contentVisibility, created_at, updated_at }) => ({
+                id, type, name, enabled, contentVisibility, created_at, updated_at
             }));
         res.json(sanitized);
     } catch (err) {
@@ -86,7 +107,8 @@ router.post('/', auth.requireAdmin, async (req, res) => {
         }
 
         const validatedUrl = validateHttpUrl(url, 'Source URL');
-        const source = await sources.create({ type, name, url: validatedUrl, username, password });
+        const contentVisibility = parseContentVisibility(req.body.contentVisibility);
+        const source = await sources.create({ type, name, url: validatedUrl, username, password, contentVisibility });
         // Trigger Sync
         const syncRequestedAt = Date.now();
         syncService.syncSource(source.id).catch(console.error);
@@ -106,15 +128,22 @@ router.put('/:id', auth.requireAdmin, async (req, res) => {
         }
 
         const { name, url, username, password } = req.body;
+        const contentVisibility = parseContentVisibility(req.body.contentVisibility);
         const validatedUrl = url ? validateHttpUrl(url, 'Source URL') : existing.url;
-        const updated = await sources.update(req.params.id, {
+        const connectionChanged = validatedUrl !== existing.url
+            || (username !== undefined && username !== existing.username)
+            || (password !== undefined && password !== existing.password);
+        const updates = {
             name: name || existing.name,
             url: validatedUrl,
             username: username !== undefined ? username : existing.username,
             password: password !== undefined ? password : existing.password
-        });
-        // Trigger Sync (if critical fields changed? safely just trigger it)
-        syncService.syncSource(parseInt(req.params.id)).catch(console.error);
+        };
+        if (contentVisibility !== undefined) updates.contentVisibility = contentVisibility;
+        const updated = await sources.update(req.params.id, updates);
+        if (connectionChanged) {
+            syncService.syncSource(parseInt(req.params.id)).catch(console.error);
+        }
         res.json(maskSource(updated));
     } catch (err) {
         logSafeError('Error updating source:', err);

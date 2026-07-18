@@ -96,8 +96,44 @@ function getDefaultSettings() {
     // Upscaling settings
     upscaleEnabled: false,
     upscaleMethod: 'hardware',    // hardware | software
-    upscaleTarget: '1080p'        // 1080p | 4k | 720p
+    upscaleTarget: '1080p',       // 1080p | 4k | 720p
+    navigation: getDefaultNavigationSettings()
   };
+}
+
+const NAVIGATION_PAGES = Object.freeze(['home', 'live', 'guide', 'movies', 'series']);
+
+function getDefaultNavigationSettings() {
+  return {
+    landingPage: 'home',
+    visibleTabs: Object.fromEntries(NAVIGATION_PAGES.map(page => [page, true]))
+  };
+}
+
+function normalizeNavigationSettings(navigation = {}) {
+  const defaults = getDefaultNavigationSettings();
+  const requestedVisibility = navigation?.visibleTabs || {};
+  const visibleTabs = Object.fromEntries(NAVIGATION_PAGES.map(page => [
+    page,
+    requestedVisibility[page] === undefined
+      ? defaults.visibleTabs[page]
+      : requestedVisibility[page] !== false
+  ]));
+
+  // Keep at least one primary destination available, including for viewers
+  // who do not have access to the Settings page.
+  if (!NAVIGATION_PAGES.some(page => visibleTabs[page])) {
+    visibleTabs.home = true;
+  }
+
+  const requestedLandingPage = NAVIGATION_PAGES.includes(navigation?.landingPage)
+    ? navigation.landingPage
+    : defaults.landingPage;
+  const landingPage = visibleTabs[requestedLandingPage]
+    ? requestedLandingPage
+    : NAVIGATION_PAGES.find(page => visibleTabs[page]);
+
+  return { landingPage, visibleTabs };
 }
 
 // User-Agent presets
@@ -140,21 +176,43 @@ async function saveDb(data) {
   return writeQueue;
 }
 
+const DEFAULT_SOURCE_CONTENT_VISIBILITY = Object.freeze({
+  live: true,
+  movies: true,
+  series: true
+});
+
+function normalizeSourceContentVisibility(visibility = {}) {
+  return {
+    live: visibility.live === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.live : visibility.live !== false,
+    movies: visibility.movies === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.movies : visibility.movies !== false,
+    series: visibility.series === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.series : visibility.series !== false
+  };
+}
+
+function normalizeSource(source) {
+  if (!source) return source;
+  return {
+    ...source,
+    contentVisibility: normalizeSourceContentVisibility(source.contentVisibility)
+  };
+}
+
 // Source CRUD operations
 const sources = {
   async getAll() {
     const db = await loadDb();
-    return db.sources;
+    return db.sources.map(normalizeSource);
   },
 
   async getById(id) {
     const db = await loadDb();
-    return db.sources.find(s => s.id === parseInt(id));
+    return normalizeSource(db.sources.find(s => s.id === parseInt(id)));
   },
 
   async getByType(type) {
     const db = await loadDb();
-    return db.sources.filter(s => s.type === type && s.enabled);
+    return db.sources.filter(s => s.type === type && s.enabled).map(normalizeSource);
   },
 
   async create(source) {
@@ -162,6 +220,7 @@ const sources = {
     const newSource = {
       id: db.nextId++,
       ...source,
+      contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
       enabled: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -176,13 +235,21 @@ const sources = {
     const index = db.sources.findIndex(s => s.id === parseInt(id));
     if (index === -1) return null;
 
+    const contentVisibility = updates.contentVisibility
+      ? normalizeSourceContentVisibility({
+          ...db.sources[index].contentVisibility,
+          ...updates.contentVisibility
+        })
+      : normalizeSourceContentVisibility(db.sources[index].contentVisibility);
+
     db.sources[index] = {
       ...db.sources[index],
       ...updates,
+      contentVisibility,
       updated_at: new Date().toISOString()
     };
     await saveDb(db);
-    return db.sources[index];
+    return normalizeSource(db.sources[index]);
   },
 
   async delete(id) {
@@ -202,7 +269,7 @@ const sources = {
       source.updated_at = new Date().toISOString();
       await saveDb(db);
     }
-    return source;
+    return normalizeSource(source);
   }
 };
 
@@ -347,14 +414,27 @@ const favorites = {
 const settings = {
   async get() {
     const db = await loadDb();
-    return { ...getDefaultSettings(), ...db.settings };
+    const currentSettings = { ...getDefaultSettings(), ...db.settings };
+    currentSettings.navigation = normalizeNavigationSettings(db.settings?.navigation);
+    return currentSettings;
   },
 
   async update(newSettings) {
     const db = await loadDb();
-    db.settings = { ...db.settings, ...newSettings };
+    const updates = { ...newSettings };
+    if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
+      updates.navigation = normalizeNavigationSettings({
+        ...normalizeNavigationSettings(db.settings?.navigation),
+        ...updates.navigation,
+        visibleTabs: {
+          ...normalizeNavigationSettings(db.settings?.navigation).visibleTabs,
+          ...(updates.navigation?.visibleTabs || {})
+        }
+      });
+    }
+    db.settings = { ...db.settings, ...updates };
     await saveDb(db);
-    return db.settings;
+    return this.get();
   },
 
   async reset() {

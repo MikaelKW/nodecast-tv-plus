@@ -14,6 +14,7 @@ async function waitForSync(page, sourceId) {
 }
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
+    test.setTimeout(120_000);
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
@@ -46,6 +47,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     const password = crypto.randomBytes(24).toString('base64url');
     await page.goto('/login.html');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
     await expect(page.locator('#sso-login-section')).toBeHidden();
     await expect(page.locator('#confirm-password-group')).toBeVisible();
@@ -67,22 +70,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page).toHaveURL(/\/login\.html$/);
     await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
-    await expect(page).toHaveURL(/\/(?:#home)?$/);
+    await expect(page).toHaveURL(/\/#mfa-onboarding$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.sourceManager && window.app?.channelList
     ))).toBe(true);
+    await expect(page.locator('#page-mfa-onboarding')).toHaveClass(/active/);
+    await expect(page.getByRole('heading', { name: 'Protect your account with MFA' })).toBeVisible();
+    await expect(page.getByText('MFA is recommended but optional.')).toBeVisible();
+
+    // An unfinished prompt survives refresh, but Continue replaces it in
+    // history and opens the existing protected enrollment flow.
+    await page.reload();
+    await expect(page).toHaveURL(/\/#mfa-onboarding$/);
+    await expect(page.locator('#page-mfa-onboarding')).toHaveClass(/active/);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page).toHaveURL(/\/#account$/);
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+    await expect(page.locator('#account-enroll-start-form')).toBeVisible();
+    expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
 
     // Enroll through the same guided flow presented to local accounts, then
     // prove password sign-in stops at the server-side challenge until a fresh
     // authenticator code is supplied.
     await expect(page.locator('#account-menu-initial')).toHaveText('E');
-    await page.locator('#account-menu-trigger').click();
-    await expect(page.locator('#account-menu-popover')).toBeVisible();
-    await page.locator('#account-security-link').click();
-    await expect(page.locator('#page-account')).toHaveClass(/active/);
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
-    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
     await page.locator('#account-password').fill(password);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('#totp-qr-image')).toBeVisible();
@@ -126,6 +138,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.getByRole('button', { name: 'Verify', exact: true }).click();
     await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect.poll(() => page.evaluate(() => window.app?.currentUser?.twoFactorEnabled)).toBe(true);
+    await expect(page.locator('#page-mfa-onboarding')).not.toHaveClass(/active/);
+    expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
+
+    // An existing installation cannot reopen first-run onboarding by using
+    // its internal hash directly.
+    await page.goto('/?existing-installation-check=1#mfa-onboarding');
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#home');
+    await expect(page.locator('#page-mfa-onboarding')).not.toHaveClass(/active/);
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
@@ -280,10 +300,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         return (await response.json()).find(source => source.name === 'Controlled Safari Series');
     });
     expect(seriesSource).toBeTruthy();
+    expect(seriesSource.contentVisibility).toEqual({ live: true, movies: true, series: true });
     await waitForSync(page, seriesSource.id);
+
+    // Source-level visibility is independent for Live TV, Movies, and Series.
+    // Existing and newly created sources default to visible everywhere.
+    await seriesSourceRow.locator('[data-action="edit"]').click();
+    await expect(page.locator('#source-visible-live')).toBeChecked();
+    await expect(page.locator('#source-visible-movies')).toBeChecked();
+    await expect(page.locator('#source-visible-series')).toBeChecked();
+    await page.locator('#source-visible-live').uncheck();
+    await page.locator('#source-visible-movies').uncheck();
+    await page.locator('#modal-save').click();
+    await expect(seriesSourceRow.locator('.source-visibility-summary')).toHaveText('Shown in: Series');
+
+    const restrictedVisibility = await page.evaluate(async id => {
+        const response = await fetch(`/api/sources/${id}`);
+        return (await response.json()).contentVisibility;
+    }, seriesSource.id);
+    expect(restrictedVisibility).toEqual({ live: false, movies: false, series: true });
+
+    await page.evaluate(() => window.app.navigateTo('live'));
+    await expect(page.locator('#source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.channel-name', { hasText: 'Controlled Visibility Channel' })).toHaveCount(0);
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page.locator('#movies-source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toHaveCount(0);
 
     await page.evaluate(() => window.app.navigateTo('series'));
     await expect(page.locator('#page-series')).toHaveClass(/active/);
+    await expect(page.locator('#series-source-select')).toContainText('Controlled Safari Series');
     const controlledSeries = page.locator('.series-card', { hasText: 'Controlled Safari Series' });
     await expect(controlledSeries).toBeVisible();
     await controlledSeries.click();
@@ -316,6 +363,144 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('.series-back-btn').click();
     await expect(controlledSeries).toBeVisible();
     await expect(seriesDetails).toBeHidden();
+
+    // Invert the choices to prove Series can be hidden independently while
+    // the same source remains available in Live TV and Movies.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="interface"]').click();
+    await expect(page.locator('#tab-interface')).toHaveClass(/active/);
+
+    // Appearance is browser-scoped, applies immediately, and is initialized
+    // before the stylesheet on both the app and sign-in pages.
+    await expect(page.locator('input[name="theme-preference"][value="dark"]')).toBeChecked();
+    await page.locator('input[name="theme-preference"][value="light"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('#theme-settings-status')).toContainText('Light is active. Saved in this browser.');
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(247, 247, 251)');
+    const lightLogoStyle = await page.evaluate(() => {
+        const logo = document.createElement('img');
+        logo.className = 'channel-logo';
+        document.body.appendChild(logo);
+        const style = getComputedStyle(logo);
+        const result = { backgroundColor: style.backgroundColor, filter: style.filter };
+        logo.remove();
+        return result;
+    });
+    expect(lightLogoStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    expect(lightLogoStyle.filter).not.toBe('none');
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.goto('/login.html');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.goto('/#settings');
+    await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('.tab[data-tab="interface"]').click();
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.locator('input[name="theme-preference"][value="system"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    expect(await page.evaluate(() => {
+        const logo = document.createElement('img');
+        logo.className = 'channel-logo';
+        document.body.appendChild(logo);
+        const filter = getComputedStyle(logo).filter;
+        logo.remove();
+        return filter;
+    })).toBe('none');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
+    await expect(page.locator('#theme-settings-status')).toContainText('System is active and currently using dark.');
+    await page.locator('input[name="theme-preference"][value="dark"]').check();
+
+    // The server repairs an invalid request so viewers can never be left with
+    // no accessible primary page.
+    const repairedNavigation = await page.evaluate(async () => {
+        const settings = await window.API.settings.update({
+            navigation: {
+                landingPage: 'series',
+                visibleTabs: {
+                    home: false,
+                    live: false,
+                    guide: false,
+                    movies: false,
+                    series: false
+                }
+            }
+        });
+        await window.API.settings.update({
+            navigation: {
+                landingPage: 'home',
+                visibleTabs: {
+                    home: true,
+                    live: true,
+                    guide: true,
+                    movies: true,
+                    series: true
+                }
+            }
+        });
+        return settings.navigation;
+    });
+    expect(repairedNavigation.landingPage).toBe('home');
+    expect(repairedNavigation.visibleTabs.home).toBe(true);
+
+    await page.locator('[data-navigation-page="home"]').uncheck();
+    await page.locator('[data-navigation-page="guide"]').uncheck();
+    await page.locator('[data-navigation-page="movies"]').uncheck();
+    await page.locator('[data-navigation-page="series"]').uncheck();
+    await page.locator('[data-navigation-page="live"]').click();
+    await expect(page.locator('[data-navigation-page="live"]')).toBeChecked();
+    await expect(page.locator('#interface-settings-status')).toHaveText('Keep at least one main navigation page visible.');
+    await page.locator('#setting-landing-page').selectOption('live');
+    await page.getByRole('button', { name: 'Save interface settings' }).click();
+    await expect(page.locator('#interface-settings-status')).toHaveText('Interface settings saved.');
+    await expect(page.locator('.nav-link[data-page="home"]')).toBeHidden();
+    await expect(page.locator('.nav-link[data-page="movies"]')).toBeHidden();
+    await expect(page.locator('.nav-link[data-page="settings"]')).toBeVisible();
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page).toHaveURL(/#live$/);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/#live$/);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+
+    // Restore the default navigation so the remainder of this broad workflow
+    // continues to exercise every destination.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="interface"]').click();
+    for (const pageName of ['home', 'guide', 'movies', 'series']) {
+        await page.locator(`[data-navigation-page="${pageName}"]`).check();
+    }
+    await page.locator('#setting-landing-page').selectOption('home');
+    await page.getByRole('button', { name: 'Save interface settings' }).click();
+    await expect(page.locator('.nav-link[data-page="home"]')).toBeVisible();
+
+    await page.locator('.tab[data-tab="sources"]').click();
+    await seriesSourceRow.locator('[data-action="edit"]').click();
+    await page.locator('#source-visible-live').check();
+    await page.locator('#source-visible-movies').check();
+    await page.locator('#source-visible-series').uncheck();
+    await page.locator('#modal-save').click();
+    await expect(seriesSourceRow.locator('.source-visibility-summary')).toHaveText('Shown in: Live TV, Movies');
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page.locator('#movies-source-select')).toContainText('Controlled Safari Series');
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toBeVisible();
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('#series-source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.series-card', { hasText: 'Controlled Safari Series' })).toHaveCount(0);
+
+    // Hiding a source leaves its synchronized data intact. Keep the controlled
+    // Live source hidden for the remaining fixed-geometry channel scenarios.
+    const retainedLiveStreams = await page.evaluate(async id => API.proxy.xtream.liveStreams(id), seriesSource.id);
+    expect(retainedLiveStreams.map(stream => stream.name)).toContain('Controlled Visibility Channel');
+    await page.evaluate(async id => {
+        await API.sources.update(id, { contentVisibility: { live: false, movies: true, series: false } });
+        await window.app.channelList.loadSources();
+        await window.app.channelList.loadChannels();
+    }, seriesSource.id);
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
@@ -632,6 +817,96 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // subsequent login visits.
     await page.goto('/login.html');
     await expect(page.locator('#sso-login-section')).toBeVisible();
+
+    const oidcStatusRoute = '**/api/auth/oidc/status';
+    const setupRequiredRoute = '**/api/auth/setup-required';
+    const oidcLoginRoute = '**/api/auth/oidc/login';
+    const fulfillJson = (route, payload) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(payload)
+    });
+
+    // SSO-only mode hides every local-login control, while an OIDC callback
+    // error remains on the page for a deliberate retry instead of looping.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?error=SSO%20Failed');
+    await expect(page.locator('#login-form')).toBeHidden();
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#sso-divider')).toBeHidden();
+    await expect(page.locator('#error-message')).toHaveText('SSO Failed');
+    await page.unroute(oidcStatusRoute);
+
+    // Automatic redirect remains optional, and local=1 provides an explicit
+    // escape only while password sign-in is still enabled.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: true,
+        autoRedirect: true
+    }));
+    await page.route(oidcLoginRoute, route => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<title>Controlled OIDC redirect</title>'
+    }));
+    await page.goto('/login.html');
+    await expect(page).toHaveURL(/\/api\/auth\/oidc\/login$/);
+    await page.goto('/login.html?local=1');
+    await expect(page.locator('#login-form')).toBeVisible();
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#sso-divider')).toBeVisible();
+    await page.unroute(oidcStatusRoute);
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?local=1');
+    await expect(page).toHaveURL(/\/api\/auth\/oidc\/login$/);
+    await page.unroute(oidcLoginRoute);
+    await page.unroute(oidcStatusRoute);
+
+    // A deliberate logout suppresses automatic redirect once, including in
+    // SSO-only mode, so the user is not immediately signed back in.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: true,
+        localAuthEnabled: false,
+        autoRedirect: true
+    }));
+    await page.goto('/login.html?signed_out=1');
+    await expect(page.locator('#setup-message')).toHaveText('You have been signed out.');
+    await expect(page.locator('#sso-login-section')).toBeVisible();
+    await expect(page.locator('#login-form')).toBeHidden();
+    await page.unroute(oidcStatusRoute);
+
+    // Misconfigured SSO-only mode fails closed with a useful explanation.
+    await page.route(oidcStatusRoute, route => fulfillJson(route, {
+        enabled: false,
+        localAuthEnabled: false,
+        autoRedirect: false
+    }));
+    await page.goto('/login.html');
+    await expect(page.locator('#login-form')).toBeHidden();
+    await expect(page.locator('#sso-login-section')).toBeHidden();
+    await expect(page.locator('#error-message')).toHaveText(
+        'Single sign-on is unavailable. Check the server OIDC configuration.'
+    );
+    await page.unroute(oidcStatusRoute);
+
+    // The empty-database bootstrap form remains available even when the
+    // eventual sign-in mode will be SSO-only.
+    await page.route(setupRequiredRoute, route => fulfillJson(route, { setupRequired: true }));
+    await page.goto('/login.html');
+    await expect(page.locator('#login-form')).toBeVisible();
+    await expect(page.locator('#setup-message')).toHaveText(
+        'Welcome! Please create your admin account to get started.'
+    );
+    await expect(page.locator('#sso-login-section')).toBeHidden();
+    await page.unroute(setupRequiredRoute);
 
     expect(expectedRejectedResourceErrors).toBe(0);
     expect(expectedAuthenticationErrors).toBe(0);
