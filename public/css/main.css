@@ -1364,6 +1364,47 @@ video::cue {
   word-break: break-all;
 }
 
+.source-visibility-summary {
+  margin-top: var(--space-xs);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.source-visibility-fields {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-lg) 0 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.source-visibility-fields legend {
+  padding: 0 var(--space-xs);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.source-visibility-fields .hint {
+  margin: 0 0 var(--space-xs);
+}
+
+.source-visibility-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 36px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.source-visibility-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+}
+
 .source-sync-status {
   display: none;
   align-items: center;
