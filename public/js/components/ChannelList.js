@@ -665,8 +665,8 @@ class ChannelList {
             console.log('[ChannelList] loadSources: Got', this.sources?.length || 0, 'sources');
             this.sourceSelect.innerHTML = '<option value="">All Sources</option>';
 
-            const xtreamSources = this.sources.filter(s => s.type === 'xtream' && s.enabled);
-            const m3uSources = this.sources.filter(s => s.type === 'm3u' && s.enabled);
+            const xtreamSources = this.sources.filter(s => s.type === 'xtream' && s.enabled && API.sources.isVisibleIn(s, 'live'));
+            const m3uSources = this.sources.filter(s => s.type === 'm3u' && s.enabled && API.sources.isVisibleIn(s, 'live'));
 
             if (xtreamSources.length > 0) {
                 const optgroup = document.createElement('optgroup');
@@ -750,8 +750,8 @@ class ChannelList {
         try {
             this.container.innerHTML = '<div class="loading"></div>';
 
-            const xtreamSources = this.sources.filter(s => s.type === 'xtream' && s.enabled);
-            const m3uSources = this.sources.filter(s => s.type === 'm3u' && s.enabled);
+            const xtreamSources = this.sources.filter(s => s.type === 'xtream' && s.enabled && API.sources.isVisibleIn(s, 'live'));
+            const m3uSources = this.sources.filter(s => s.type === 'm3u' && s.enabled && API.sources.isVisibleIn(s, 'live'));
             console.log('[ChannelList] loadAllChannels: xtream=', xtreamSources.length, 'm3u=', m3uSources.length);
 
             for (const source of xtreamSources) {

@@ -93,7 +93,7 @@ class MoviesPage {
     async loadSources() {
         try {
             const allSources = await API.sources.getAll();
-            this.sources = allSources.filter(s => s.type === 'xtream' && s.enabled);
+            this.sources = allSources.filter(s => s.type === 'xtream' && s.enabled && API.sources.isVisibleIn(s, 'movies'));
 
             this.sourceSelect.innerHTML = '<option value="">All Sources</option>';
             this.sources.forEach(s => {
