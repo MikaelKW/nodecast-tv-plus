@@ -140,21 +140,43 @@ async function saveDb(data) {
   return writeQueue;
 }
 
+const DEFAULT_SOURCE_CONTENT_VISIBILITY = Object.freeze({
+  live: true,
+  movies: true,
+  series: true
+});
+
+function normalizeSourceContentVisibility(visibility = {}) {
+  return {
+    live: visibility.live === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.live : visibility.live !== false,
+    movies: visibility.movies === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.movies : visibility.movies !== false,
+    series: visibility.series === undefined ? DEFAULT_SOURCE_CONTENT_VISIBILITY.series : visibility.series !== false
+  };
+}
+
+function normalizeSource(source) {
+  if (!source) return source;
+  return {
+    ...source,
+    contentVisibility: normalizeSourceContentVisibility(source.contentVisibility)
+  };
+}
+
 // Source CRUD operations
 const sources = {
   async getAll() {
     const db = await loadDb();
-    return db.sources;
+    return db.sources.map(normalizeSource);
   },
 
   async getById(id) {
     const db = await loadDb();
-    return db.sources.find(s => s.id === parseInt(id));
+    return normalizeSource(db.sources.find(s => s.id === parseInt(id)));
   },
 
   async getByType(type) {
     const db = await loadDb();
-    return db.sources.filter(s => s.type === type && s.enabled);
+    return db.sources.filter(s => s.type === type && s.enabled).map(normalizeSource);
   },
 
   async create(source) {
@@ -162,6 +184,7 @@ const sources = {
     const newSource = {
       id: db.nextId++,
       ...source,
+      contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
       enabled: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -176,13 +199,21 @@ const sources = {
     const index = db.sources.findIndex(s => s.id === parseInt(id));
     if (index === -1) return null;
 
+    const contentVisibility = updates.contentVisibility
+      ? normalizeSourceContentVisibility({
+          ...db.sources[index].contentVisibility,
+          ...updates.contentVisibility
+        })
+      : normalizeSourceContentVisibility(db.sources[index].contentVisibility);
+
     db.sources[index] = {
       ...db.sources[index],
       ...updates,
+      contentVisibility,
       updated_at: new Date().toISOString()
     };
     await saveDb(db);
-    return db.sources[index];
+    return normalizeSource(db.sources[index]);
   },
 
   async delete(id) {
@@ -202,7 +233,7 @@ const sources = {
       source.updated_at = new Date().toISOString();
       await saveDb(db);
     }
-    return source;
+    return normalizeSource(source);
   }
 };
 

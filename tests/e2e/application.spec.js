@@ -297,10 +297,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         return (await response.json()).find(source => source.name === 'Controlled Safari Series');
     });
     expect(seriesSource).toBeTruthy();
+    expect(seriesSource.contentVisibility).toEqual({ live: true, movies: true, series: true });
     await waitForSync(page, seriesSource.id);
+
+    // Source-level visibility is independent for Live TV, Movies, and Series.
+    // Existing and newly created sources default to visible everywhere.
+    await seriesSourceRow.locator('[data-action="edit"]').click();
+    await expect(page.locator('#source-visible-live')).toBeChecked();
+    await expect(page.locator('#source-visible-movies')).toBeChecked();
+    await expect(page.locator('#source-visible-series')).toBeChecked();
+    await page.locator('#source-visible-live').uncheck();
+    await page.locator('#source-visible-movies').uncheck();
+    await page.locator('#modal-save').click();
+    await expect(seriesSourceRow.locator('.source-visibility-summary')).toHaveText('Shown in: Series');
+
+    const restrictedVisibility = await page.evaluate(async id => {
+        const response = await fetch(`/api/sources/${id}`);
+        return (await response.json()).contentVisibility;
+    }, seriesSource.id);
+    expect(restrictedVisibility).toEqual({ live: false, movies: false, series: true });
+
+    await page.evaluate(() => window.app.navigateTo('live'));
+    await expect(page.locator('#source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.channel-name', { hasText: 'Controlled Visibility Channel' })).toHaveCount(0);
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page.locator('#movies-source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toHaveCount(0);
 
     await page.evaluate(() => window.app.navigateTo('series'));
     await expect(page.locator('#page-series')).toHaveClass(/active/);
+    await expect(page.locator('#series-source-select')).toContainText('Controlled Safari Series');
     const controlledSeries = page.locator('.series-card', { hasText: 'Controlled Safari Series' });
     await expect(controlledSeries).toBeVisible();
     await controlledSeries.click();
@@ -333,6 +360,34 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('.series-back-btn').click();
     await expect(controlledSeries).toBeVisible();
     await expect(seriesDetails).toBeHidden();
+
+    // Invert the choices to prove Series can be hidden independently while
+    // the same source remains available in Live TV and Movies.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="sources"]').click();
+    await seriesSourceRow.locator('[data-action="edit"]').click();
+    await page.locator('#source-visible-live').check();
+    await page.locator('#source-visible-movies').check();
+    await page.locator('#source-visible-series').uncheck();
+    await page.locator('#modal-save').click();
+    await expect(seriesSourceRow.locator('.source-visibility-summary')).toHaveText('Shown in: Live TV, Movies');
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page.locator('#movies-source-select')).toContainText('Controlled Safari Series');
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toBeVisible();
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('#series-source-select')).not.toContainText('Controlled Safari Series');
+    await expect(page.locator('.series-card', { hasText: 'Controlled Safari Series' })).toHaveCount(0);
+
+    // Hiding a source leaves its synchronized data intact. Keep the controlled
+    // Live source hidden for the remaining fixed-geometry channel scenarios.
+    const retainedLiveStreams = await page.evaluate(async id => API.proxy.xtream.liveStreams(id), seriesSource.id);
+    expect(retainedLiveStreams.map(stream => stream.name)).toContain('Controlled Visibility Channel');
+    await page.evaluate(async id => {
+        await API.sources.update(id, { contentVisibility: { live: false, movies: true, series: false } });
+        await window.app.channelList.loadSources();
+        await window.app.channelList.loadChannels();
+    }, seriesSource.id);
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);

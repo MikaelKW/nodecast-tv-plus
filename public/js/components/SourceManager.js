@@ -122,6 +122,7 @@ class SourceManager {
         <div class="source-info">
           <div class="source-name">${source.name}</div>
           <div class="source-url">${source.url}</div>
+          ${type !== 'epg' ? `<div class="source-visibility-summary">Shown in: ${this.getSourceVisibilityLabels(source, type).join(', ') || 'Nowhere'}</div>` : ''}
           <div class="source-sync-status" role="status" aria-live="polite"></div>
         </div>
         <div class="source-actions">
@@ -147,6 +148,14 @@ class SourceManager {
             item.querySelector('[data-action="delete"]').addEventListener('click', () => this.deleteSource(id));
             this.renderInitialSyncState(item, id, type);
         });
+    }
+
+    getSourceVisibilityLabels(source, type) {
+        const labels = [];
+        if (API.sources.isVisibleIn(source, 'live')) labels.push('Live TV');
+        if (type === 'xtream' && API.sources.isVisibleIn(source, 'movies')) labels.push('Movies');
+        if (type === 'xtream' && API.sources.isVisibleIn(source, 'series')) labels.push('Series');
+        return labels;
     }
 
     setInitialSyncState(id, type, status, message = '') {
@@ -395,6 +404,29 @@ class SourceManager {
       </div>
     `;
 
+        const visibility = source.contentVisibility || {};
+        const checked = section => visibility[section] !== false ? ' checked' : '';
+        const visibilityFields = type === 'epg' ? '' : `
+          <fieldset class="source-visibility-fields">
+            <legend>Show source in</legend>
+            <p class="hint">Choose where this source appears. Provider data remains synchronized and is not deleted.</p>
+            <label class="source-visibility-option" for="source-visible-live">
+              <input type="checkbox" id="source-visible-live"${checked('live')}>
+              <span>Live TV and TV Guide</span>
+            </label>
+            ${type === 'xtream' ? `
+              <label class="source-visibility-option" for="source-visible-movies">
+                <input type="checkbox" id="source-visible-movies"${checked('movies')}>
+                <span>Movies</span>
+              </label>
+              <label class="source-visibility-option" for="source-visible-series">
+                <input type="checkbox" id="source-visible-series"${checked('series')}>
+                <span>Series</span>
+              </label>
+            ` : ''}
+          </fieldset>
+        `;
+
         if (type === 'xtream') {
             return `
         ${nameField}
@@ -408,10 +440,24 @@ class SourceManager {
           <input type="password" id="source-password" class="form-input" 
                  value="${source.password && source.password !== '********' && !source.password.includes('•') ? source.password : ''}">
         </div>
+        ${visibilityFields}
       `;
         }
 
-        return nameField + urlField;
+        return nameField + urlField + visibilityFields;
+    }
+
+    getSourceContentVisibility(type) {
+        if (type === 'epg') return undefined;
+        return {
+            live: document.getElementById('source-visible-live')?.checked !== false,
+            movies: type === 'xtream'
+                ? document.getElementById('source-visible-movies')?.checked !== false
+                : true,
+            series: type === 'xtream'
+                ? document.getElementById('source-visible-series')?.checked !== false
+                : true
+        };
     }
 
     /**
@@ -424,6 +470,7 @@ class SourceManager {
         const url = document.getElementById('source-url').value.trim();
         const username = document.getElementById('source-username')?.value.trim() || null;
         const password = document.getElementById('source-password')?.value.trim() || null;
+        const contentVisibility = this.getSourceContentVisibility(type);
 
         if (!name || !url) {
             alert('Name and URL are required');
@@ -456,7 +503,7 @@ class SourceManager {
                 }
             }
 
-            const source = await API.sources.create({ type, name, url, username, password });
+            const source = await API.sources.create({ type, name, url, username, password, contentVisibility });
             this.setInitialSyncState(source.id, type, 'syncing', 'Synchronizing source data…');
             document.getElementById('modal').classList.remove('active');
             this.setSourceSubmissionLoading(false);
@@ -485,6 +532,7 @@ class SourceManager {
         const url = document.getElementById('source-url').value.trim();
         const username = document.getElementById('source-username')?.value.trim();
         const password = document.getElementById('source-password')?.value.trim();
+        const contentVisibility = this.getSourceContentVisibility(type);
 
         if (!name || !url) {
             alert('Name and URL are required');
@@ -492,7 +540,7 @@ class SourceManager {
         }
 
         try {
-            const data = { name, url };
+            const data = { name, url, contentVisibility };
             if (type === 'xtream') {
                 data.username = username;
                 if (password) data.password = password;
@@ -501,9 +549,44 @@ class SourceManager {
             await API.sources.update(id, data);
             document.getElementById('modal').classList.remove('active');
             await this.loadSources();
+            await this.refreshVisibleContentViews();
         } catch (err) {
             alert('Error updating source: ' + err.message);
         }
+    }
+
+    async refreshVisibleContentViews() {
+        const refreshes = [];
+
+        if (window.app?.channelList) {
+            refreshes.push((async () => {
+                await window.app.channelList.loadSources();
+                await window.app.channelList.loadChannels();
+            })());
+        }
+
+        if (window.app?.pages?.movies) {
+            refreshes.push((async () => {
+                await window.app.pages.movies.loadSources();
+                await window.app.pages.movies.loadCategories();
+                await window.app.pages.movies.loadMovies();
+            })());
+        }
+
+        if (window.app?.pages?.series) {
+            refreshes.push((async () => {
+                await window.app.pages.series.loadSources();
+                await window.app.pages.series.loadCategories();
+                await window.app.pages.series.loadSeries();
+            })());
+        }
+
+        const results = await Promise.allSettled(refreshes);
+        results.filter(result => result.status === 'rejected').forEach(result => {
+            console.warn('[SourceManager] Content visibility refresh failed:', result.reason);
+        });
+
+        if (window.app?.epgGuide) window.app.epgGuide.render();
     }
 
     /**
