@@ -83,6 +83,15 @@ async function dockerObjectExists(type, name) {
     return result.code === 0;
 }
 
+async function removePreparedImage(image) {
+    if (!(await dockerObjectExists('image', image))) return;
+
+    const result = await docker(['image', 'rm', image], { allowFailure: true });
+    if (result.code !== 0) {
+        console.warn(`Keeping prepared migration image ${image}; another local container may still reference it.`);
+    }
+}
+
 async function ensureCandidateImage() {
     if (await dockerObjectExists('image', candidateImage)) return false;
     console.log(`Building migration candidate image ${candidateImage}...`);
@@ -464,10 +473,10 @@ async function main() {
         console.log('All supported migration baselines passed.');
     } finally {
         for (const image of preparedBaselineImages) {
-            if (await dockerObjectExists('image', image)) await docker(['image', 'rm', image]);
+            await removePreparedImage(image);
         }
         if (candidateWasBuilt && process.env.KEEP_MIGRATION_TEST_IMAGE !== 'true') {
-            if (await dockerObjectExists('image', candidateImage)) await docker(['image', 'rm', candidateImage]);
+            await removePreparedImage(candidateImage);
         }
     }
 }
