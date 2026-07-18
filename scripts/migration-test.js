@@ -29,8 +29,8 @@ const baselines = [
         context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
     },
     {
-        version: '2.3.0',
-        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.3.0',
+        version: '2.3.1',
+        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.3.1',
         kind: 'plus'
     }
 ];
@@ -81,6 +81,15 @@ const docker = (args, options) => run('docker', args, options);
 async function dockerObjectExists(type, name) {
     const result = await docker([type, 'inspect', name], { allowFailure: true });
     return result.code === 0;
+}
+
+async function removePreparedImage(image) {
+    if (!(await dockerObjectExists('image', image))) return;
+
+    const result = await docker(['image', 'rm', image], { allowFailure: true });
+    if (result.code !== 0) {
+        console.warn(`Keeping prepared migration image ${image}; another local container may still reference it.`);
+    }
 }
 
 async function ensureCandidateImage() {
@@ -464,10 +473,10 @@ async function main() {
         console.log('All supported migration baselines passed.');
     } finally {
         for (const image of preparedBaselineImages) {
-            if (await dockerObjectExists('image', image)) await docker(['image', 'rm', image]);
+            await removePreparedImage(image);
         }
         if (candidateWasBuilt && process.env.KEEP_MIGRATION_TEST_IMAGE !== 'true') {
-            if (await dockerObjectExists('image', candidateImage)) await docker(['image', 'rm', candidateImage]);
+            await removePreparedImage(candidateImage);
         }
     }
 }

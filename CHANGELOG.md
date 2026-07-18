@@ -6,6 +6,40 @@ The project follows [Semantic Versioning](https://semver.org/). Historical notes
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-07-18
+
+This feature release adds deployment-level sign-in controls, guided first-run account protection, configurable content and navigation visibility, and browser theme selection.
+
+### Added
+
+- Added optional SSO-only authentication and automatic identity-provider redirection, with deliberate logout and failed-callback safeguards that prevent redirect loops ([#193]).
+- Added a first-run MFA recommendation after initial administrator setup, including guided enrollment and a clear path for postponing setup until later ([#195]).
+- Added per-source controls for showing Xtream content in Live TV, Movies, and Series, plus the applicable Live TV and TV Guide control for M3U sources ([#197]).
+- Added a configurable starting page and independent visibility controls for Home, Live TV, TV Guide, Movies, and Series, while ensuring at least one primary page remains available ([#199]).
+- Added browser-scoped Dark, Light, and System theme preferences, with System mode following operating-system changes without a page refresh ([#201]).
+
+### Changed
+
+- Source visibility now controls presentation without deleting or stopping synchronization of provider data ([#197]).
+- The sign-in page reports the available authentication methods without exposing provider credentials or internal OIDC configuration ([#193]).
+
+### Fixed
+
+- Improved the contrast of pale and transparent provider artwork across Live TV, Home, and TV Guide in Light mode without changing Dark mode rendering ([#203]).
+- Kept successful migration gates successful when optional image cleanup encounters a retained local container that still references a prepared baseline image ([#206]).
+
+### Security
+
+- SSO-only mode hides the local sign-in form and rejects direct local password-login requests while preserving the initial administrator bootstrap safeguard and a documented recovery path ([#193]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.4.0`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- `DISABLE_LOCAL_AUTH` and `OIDC_AUTO_REDIRECT` remain optional and default to `false`. Verify SSO administrator access before disabling local sign-in.
+- No manual database migration is required. Migration from the published 2.3.1 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.3.1` and the existing deployment secrets.
+
 ## [2.3.1] - 2026-07-16
 
 This patch release improves media-proxy efficiency, deployment health visibility, account-creation safeguards, and Live TV channel browsing.
@@ -172,6 +206,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.4.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.1...v2.2.2
@@ -213,3 +248,10 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#178]: https://github.com/MikaelKW/nodecast-tv-plus/pull/178
 [#181]: https://github.com/MikaelKW/nodecast-tv-plus/pull/181
 [#186]: https://github.com/MikaelKW/nodecast-tv-plus/pull/186
+[#193]: https://github.com/MikaelKW/nodecast-tv-plus/pull/193
+[#195]: https://github.com/MikaelKW/nodecast-tv-plus/pull/195
+[#197]: https://github.com/MikaelKW/nodecast-tv-plus/pull/197
+[#199]: https://github.com/MikaelKW/nodecast-tv-plus/pull/199
+[#201]: https://github.com/MikaelKW/nodecast-tv-plus/pull/201
+[#203]: https://github.com/MikaelKW/nodecast-tv-plus/pull/203
+[#206]: https://github.com/MikaelKW/nodecast-tv-plus/pull/206
