@@ -4890,6 +4890,137 @@ kbd {
   }
 }
 
+/* =====================================================
+   First-run MFA Onboarding
+   ===================================================== */
+body.mfa-onboarding-active .navbar-menu,
+body.mfa-onboarding-active .mobile-menu-toggle {
+  display: none;
+}
+
+.mfa-onboarding-page {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-xl);
+  padding-left: max(var(--space-xl), var(--safe-area-inset-left));
+  padding-right: max(var(--space-xl), var(--safe-area-inset-right));
+  padding-bottom: calc(var(--space-2xl) + var(--safe-area-inset-bottom));
+}
+
+.mfa-onboarding-page.active {
+  display: grid;
+  place-items: center;
+}
+
+.mfa-onboarding-card {
+  width: min(620px, 100%);
+  padding: clamp(var(--space-lg), 5vw, var(--space-2xl));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-lg);
+}
+
+.mfa-onboarding-icon {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  margin-bottom: var(--space-lg);
+  border-radius: var(--radius-lg);
+  color: var(--color-accent);
+  background: var(--color-accent-dim);
+}
+
+.mfa-onboarding-icon .icon {
+  width: 30px;
+  height: 30px;
+}
+
+.mfa-onboarding-eyebrow {
+  margin-bottom: var(--space-xs);
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mfa-onboarding-intro {
+  margin-top: var(--space-md);
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+}
+
+.mfa-onboarding-benefits {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+  padding-left: var(--space-lg);
+  color: var(--color-text-secondary);
+}
+
+.mfa-onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xl);
+}
+
+.mfa-onboarding-card > .hint {
+  margin-top: var(--space-md);
+}
+
+.mfa-onboarding-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: var(--space-lg);
+  padding-left: max(var(--space-lg), var(--safe-area-inset-left));
+  padding-right: max(var(--space-lg), var(--safe-area-inset-right));
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.mfa-onboarding-dialog {
+  width: min(480px, 100%);
+  max-height: calc(100dvh - (2 * var(--space-lg)));
+  overflow-y: auto;
+  padding: var(--space-xl);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-lg);
+}
+
+.mfa-onboarding-dialog p {
+  margin-top: var(--space-md);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .mfa-onboarding-page {
+    place-items: start center;
+    padding: var(--space-lg);
+    padding-left: max(var(--space-lg), var(--safe-area-inset-left));
+    padding-right: max(var(--space-lg), var(--safe-area-inset-right));
+    padding-bottom: calc(var(--space-xl) + var(--safe-area-inset-bottom));
+  }
+
+  .mfa-onboarding-actions .btn {
+    width: 100%;
+  }
+}
+
+@media (max-height: 520px) and (orientation: landscape) {
+  .mfa-onboarding-page.active {
+    place-items: start center;
+  }
+}
+
 /* Modal Form Styles */
 .modal-overlay .modal-form-group {
   margin-bottom: var(--space-md);

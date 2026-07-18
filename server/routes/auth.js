@@ -187,7 +187,10 @@ router.post('/setup', async (req, res) => {
 
         res.status(201).json({
             message: 'Admin user created successfully',
-            user: adminUser
+            user: adminUser,
+            onboarding: {
+                mfaEnrollmentRecommended: true
+            }
         });
     } catch (err) {
         console.error('Error in /setup:', err);

@@ -22,6 +22,7 @@ class App {
         this.pages.series = new SeriesPage(this);
         this.pages.settings = new SettingsPage(this);
         this.pages.account = new AccountPage(this);
+        this.pages['mfa-onboarding'] = new MfaOnboardingPage(this);
         this.pages.watch = new WatchPage(this);
 
         this.init();
@@ -159,7 +160,11 @@ class App {
 
         // Navigate to the page from URL hash, or default to home
         const hash = window.location.hash.slice(1); // Remove #
-        const initialPage = hash && this.pages[hash] ? hash : 'home';
+        const mfaOnboardingPending = NodeCastOnboarding.isMfaPending();
+        const requestedPage = hash && this.pages[hash] ? hash : 'home';
+        const initialPage = mfaOnboardingPending
+            ? 'mfa-onboarding'
+            : (requestedPage === 'mfa-onboarding' ? 'home' : requestedPage);
         this.navigateTo(initialPage, true); // true = replace history (don't add)
 
         console.log('NodeCast TV Plus initialized');

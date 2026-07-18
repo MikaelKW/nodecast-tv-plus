@@ -122,6 +122,7 @@ async function run() {
         });
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
+        assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
 

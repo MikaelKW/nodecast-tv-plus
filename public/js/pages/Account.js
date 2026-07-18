@@ -3,10 +3,19 @@ class AccountPage {
         this.app = app;
         this.status = null;
         this.recoveryCodes = [];
+        this.enrollOnNextShow = false;
     }
 
     async show() {
         await this.loadStatus();
+        if (this.enrollOnNextShow) {
+            this.enrollOnNextShow = false;
+            if (!this.status?.enabled && this.status?.canEnroll) this.openEnrollment();
+        }
+    }
+
+    requestEnrollmentOnNextShow() {
+        this.enrollOnNextShow = true;
     }
 
     hide() {
