@@ -12,6 +12,7 @@ const testRoot = path.join(projectRoot, '.test-data', `playwright-${process.pid}
 const dataDir = path.join(testRoot, 'data');
 const cacheDir = path.join(testRoot, 'cache');
 const mediaPath = path.join(testRoot, 'sample.mp4');
+const multiTrackMediaPath = path.join(testRoot, 'multi-track.mkv');
 const recoverableHlsDir = path.join(testRoot, 'recoverable-hls');
 const appPort = Number(process.env.NODECAST_TEST_APP_PORT || 3210);
 const fixturePort = Number(process.env.NODECAST_TEST_FIXTURE_PORT || 3211);
@@ -77,6 +78,33 @@ function generateMedia() {
 
     if (result.status !== 0) {
         throw new Error(`Unable to generate test media: ${result.stderr || 'FFmpeg failed'}`);
+    }
+
+    const englishSubtitles = path.join(testRoot, 'english.srt');
+    const norwegianSubtitles = path.join(testRoot, 'norwegian.srt');
+    fs.writeFileSync(englishSubtitles, '1\n00:00:00,500 --> 00:00:18,000\nEnglish controlled subtitle\n');
+    fs.writeFileSync(norwegianSubtitles, '1\n00:00:00,500 --> 00:00:18,000\nNorsk kontrollert undertekst\n');
+    const multiTrackResult = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+        '-f', 'lavfi', '-i', 'sine=frequency=880:sample_rate=48000',
+        '-f', 'srt', '-i', englishSubtitles,
+        '-f', 'srt', '-i', norwegianSubtitles,
+        '-t', '20',
+        '-map', '0:v:0', '-map', '1:a:0', '-map', '2:a:0', '-map', '3:s:0', '-map', '4:s:0',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '50', '-keyint_min', '50', '-sc_threshold', '0',
+        '-c:a', 'aac', '-b:a', '128k', '-c:s', 'srt',
+        '-metadata:s:a:0', 'language=eng', '-metadata:s:a:0', 'title=English 440 Hz',
+        '-metadata:s:a:1', 'language=nor', '-metadata:s:a:1', 'title=Norwegian 880 Hz',
+        '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=English',
+        '-metadata:s:s:1', 'language=nor', '-metadata:s:s:1', 'title=Norwegian',
+        '-disposition:a:0', 'default', '-disposition:a:1', '0',
+        multiTrackMediaPath
+    ], { encoding: 'utf8' });
+
+    if (multiTrackResult.status !== 0) {
+        throw new Error(`Unable to generate multi-track media: ${multiTrackResult.stderr || 'FFmpeg failed'}`);
     }
 
     fs.mkdirSync(recoverableHlsDir, { recursive: true });
@@ -330,6 +358,7 @@ async function start() {
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');
+        if (pathname === '/multi-track.mkv') return sendFile(req, res, multiTrackMediaPath, 'video/x-matroska');
         if (pathname === '/recoverable-hls/playlist.m3u8') {
             return sendFile(req, res, path.join(recoverableHlsDir, 'playlist.m3u8'), 'application/vnd.apple.mpegurl');
         }

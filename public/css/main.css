@@ -4146,7 +4146,8 @@ kbd {
   backdrop-filter: blur(16px);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  min-width: 160px;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 32px));
   overflow: hidden;
   box-shadow: var(--shadow-lg);
   z-index: 30;
@@ -4188,6 +4189,11 @@ kbd {
 
 .captions-option.active {
   color: var(--color-accent);
+}
+
+.captions-option:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .captions-option.active::before {

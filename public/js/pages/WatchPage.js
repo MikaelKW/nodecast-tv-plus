@@ -64,6 +64,7 @@ class WatchPage {
         this.captionsBtn = document.getElementById('watch-captions-btn');
         this.captionsMenu = document.getElementById('watch-captions-menu');
         this.captionsList = document.getElementById('watch-captions-list');
+        this.audioList = document.getElementById('watch-audio-list');
 
         // Transcode Status
         this.transcodeStatusEx = document.getElementById('watch-transcode-status');
@@ -90,6 +91,16 @@ class WatchPage {
         this.isFavorite = false;
         this.returnPage = null;
         this.captionsMenuOpen = false;
+        this.availableAudioTracks = [];
+        this.availableSubtitleTracks = [];
+        this.subtitleStreamUrl = null;
+        this.probeSubtitleCues = new WeakMap();
+        this.selectedSubtitleStreamIndex = null;
+        this.audioTrackMode = 'none';
+        this.selectedAudioTrackIndex = null;
+        this.selectedHlsAudioTrack = -1;
+        this.audioSelectionExplicit = false;
+        this.audioTrackChanging = false;
 
         // Overlay timer
         this.overlayTimeout = null;
@@ -277,6 +288,7 @@ class WatchPage {
      * @param {string} streamUrl - Stream URL
      */
     async play(content, streamUrl) {
+        this.resetMediaTracks();
         this.content = content;
         this.contentType = content.type;
         this.seriesInfo = content.seriesInfo || null;
@@ -377,8 +389,8 @@ class WatchPage {
             this.currentSessionId = session.sessionId;
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
-            if (options.maxResolution) {
-                console.warn('[WatchPage] Quality session start failed:', err.message);
+            if (options.maxResolution || Number.isInteger(options.audioStreamIndex)) {
+                console.warn('[WatchPage] Selected playback session failed:', err.message);
                 throw err;
             }
             console.error('[WatchPage] Session start failed:', err);
@@ -397,7 +409,8 @@ class WatchPage {
             videoCodec: streamInfo?.video,
             audioCodec: streamInfo?.audio,
             audioChannels: streamInfo?.audioChannels,
-            videoHeight: Number(streamInfo?.height) || undefined
+            videoHeight: Number(streamInfo?.height) || undefined,
+            ...this.getSelectedAudioOptions(streamInfo)
         });
         this.playHls(playlistUrl);
         this.setVolumeFromStorage();
@@ -624,6 +637,23 @@ class WatchPage {
         const isRawTs = url.includes('.ts') && !url.includes('.m3u8');
         const isDirectVideo = url.includes('.mp4') || url.includes('.mkv') || url.includes('.avi');
 
+        // Track selection still needs stream metadata when smart transcoding is
+        // disabled. A failed optional probe must never block ordinary playback.
+        if (!forceDirectFallback && !settings.autoTranscode && !skipProbe) {
+            try {
+                const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
+                const info = await probeRes.json();
+                if (probeRes.ok && !info.error) {
+                    this.currentStreamInfo = info;
+                    this.updateQualityBadge();
+                    this.applyProbeTracks(info, url);
+                }
+            } catch (error) {
+                console.warn('[WatchPage] Optional track discovery failed:', error.message);
+            }
+        }
+
         // Priority 0: Auto Transcode (Smart) - probe first, then decide
         if (!forceDirectFallback && settings.autoTranscode && !skipProbe) {
             console.log('[WatchPage] Auto Transcode enabled. Probing stream...');
@@ -639,6 +669,7 @@ class WatchPage {
                 // Store early probe info for quality display
                 this.currentStreamInfo = info;
                 this.updateQualityBadge();
+                this.applyProbeTracks(info, url);
 
                 const globalResolution = settings.maxResolution || '1080p';
                 const globalHeight = PlaybackQuality.getHeight(globalResolution);
@@ -676,7 +707,8 @@ class WatchPage {
                         videoCodec: info.video,
                         audioCodec: info.audio,
                         audioChannels: info.audioChannels,
-                        videoHeight: info.height
+                        videoHeight: info.height,
+                        ...this.getSelectedAudioOptions(info)
                     });
                     this.playHls(playlistUrl);
                     this.setVolumeFromStorage();
@@ -716,7 +748,8 @@ class WatchPage {
             this.updateTranscodeStatus(statusMode, statusText);
             const playlistUrl = await this.startTranscodeSession(url, {
                 videoMode: 'encode',
-                seekOffset: this.resumeTime
+                seekOffset: this.resumeTime,
+                ...this.getSelectedAudioOptions()
             });
             this.playHls(playlistUrl);
             this.setVolumeFromStorage();
@@ -734,12 +767,15 @@ class WatchPage {
                 const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
                 videoCodec = info.video;
+                this.currentStreamInfo = info;
+                this.applyProbeTracks(info, url);
             } catch (e) { console.warn('Probe failed for force audio, assuming h264'); }
 
             const playlistUrl = await this.startTranscodeSession(url, {
                 videoMode: 'copy',
                 videoCodec,
-                seekOffset: this.resumeTime
+                seekOffset: this.resumeTime,
+                ...this.getSelectedAudioOptions()
             });
             this.playHls(playlistUrl);
             this.setVolumeFromStorage();
@@ -818,6 +854,19 @@ class WatchPage {
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
 
+        this.hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event, data) => {
+            if (!this.currentSessionId) {
+                this.applyHlsAudioTracks(data.audioTracks || []);
+            }
+        });
+
+        this.hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+            if (!this.currentSessionId) {
+                this.selectedHlsAudioTrack = Number(data.id);
+                this.updateAudioTracks();
+            }
+        });
+
         // Listen for subtitle track updates
         this.hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
             console.log('[WatchPage] Subtitle tracks updated:', data.subtitleTracks);
@@ -830,12 +879,16 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (!this.currentSessionId && Array.isArray(this.hls?.audioTracks)) {
+                this.applyHlsAudioTracks(this.hls.audioTracks);
+            }
             if (!this.currentSessionId && this.playbackQuality !== 'auto') {
                 this.applyAdaptiveQuality(this.playbackQuality);
             }
             this.video.play().catch(e => {
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
+            this.renderProbeSubtitleTracks();
         });
 
         this.hls.on(Hls.Events.FRAG_LOADED, () => {
@@ -1193,12 +1246,319 @@ class WatchPage {
         this.loadingSpinner?.classList.remove('show');
     }
 
-    // === Captions ===
+    // === Audio and subtitles ===
+
+    resetMediaTracks() {
+        this.video?.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
+        this.availableAudioTracks = [];
+        this.availableSubtitleTracks = [];
+        this.subtitleStreamUrl = null;
+        this.probeSubtitleCues = new WeakMap();
+        this.selectedSubtitleStreamIndex = null;
+        this.audioTrackMode = 'none';
+        this.selectedAudioTrackIndex = null;
+        this.selectedHlsAudioTrack = -1;
+        this.audioSelectionExplicit = false;
+        this.updateAudioTracks();
+        this.updateCaptionsTracks();
+    }
+
+    getLanguageName(language) {
+        const code = String(language || '').trim().toLowerCase();
+        if (!code || code === 'und') return '';
+        try {
+            return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code.toUpperCase();
+        } catch {
+            return code.toUpperCase();
+        }
+    }
+
+    getAudioTrackLabel(track, position) {
+        const parts = [];
+        const title = String(track?.title || track?.name || '').trim();
+        const language = this.getLanguageName(track?.language || track?.lang);
+        if (title) parts.push(title);
+        if (language && !parts.some(part => part.toLowerCase() === language.toLowerCase())) {
+            parts.push(language);
+        }
+        const codec = String(track?.codec || track?.audioCodec || '').trim().toUpperCase();
+        if (codec) parts.push(codec);
+        const channels = Number(track?.channels) || 0;
+        if (channels === 1) parts.push('Mono');
+        if (channels === 2) parts.push('Stereo');
+        if (channels > 2) parts.push(`${channels} channels`);
+        return parts.join(' · ') || `Audio ${position + 1}`;
+    }
+
+    applyProbeTracks(info, streamUrl) {
+        const tracks = Array.isArray(info?.audioTracks)
+            ? info.audioTracks.filter(track => Number.isInteger(Number(track.index)))
+            : [];
+
+        this.availableAudioTracks = tracks.map(track => ({
+            ...track,
+            index: Number(track.index)
+        }));
+        this.audioTrackMode = this.availableAudioTracks.length > 0 ? 'probe' : 'none';
+
+        if (!this.availableAudioTracks.some(track => track.index === this.selectedAudioTrackIndex)) {
+            const preferred = this.availableAudioTracks.find(track => track.default) || this.availableAudioTracks[0];
+            this.selectedAudioTrackIndex = preferred?.index ?? null;
+            this.audioSelectionExplicit = false;
+        }
+
+        this.availableSubtitleTracks = (Array.isArray(info?.subtitles) ? info.subtitles : [])
+            .filter(subtitle => Number.isInteger(Number(subtitle.index)))
+            .map(subtitle => ({ ...subtitle, index: Number(subtitle.index) }));
+        this.subtitleStreamUrl = streamUrl;
+        this.renderProbeSubtitleTracks();
+
+        this.updateAudioTracks();
+        setTimeout(() => this.updateCaptionsTracks(), 100);
+    }
+
+    renderProbeSubtitleTracks() {
+        if (!this.video) return;
+        this.video.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
+        if (!this.subtitleStreamUrl) {
+            this.updateCaptionsTracks();
+            return;
+        }
+
+        for (const subtitle of this.availableSubtitleTracks) {
+            if (!Number.isInteger(Number(subtitle.index))) continue;
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = subtitle.title || this.getLanguageName(subtitle.language) || `Subtitle ${subtitle.index}`;
+            track.srclang = subtitle.language || 'und';
+            track.dataset.nodecastProbeTrack = 'true';
+            track.dataset.nodecastSubtitleIndex = String(subtitle.index);
+            this.video.appendChild(track);
+            const subtitleUrl = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(this.subtitleStreamUrl)}&index=${Number(subtitle.index)}`);
+            void this.loadProbeSubtitleTrack(track, subtitleUrl);
+        }
+    }
+
+    parseWebVttTimestamp(value) {
+        const parts = String(value || '').trim().split(':').map(Number);
+        if (parts.some(part => !Number.isFinite(part)) || parts.length < 2 || parts.length > 3) return null;
+        const seconds = parts.pop();
+        const minutes = parts.pop();
+        const hours = parts.pop() || 0;
+        return (hours * 3600) + (minutes * 60) + seconds;
+    }
+
+    parseWebVtt(text) {
+        const cues = [];
+        const blocks = String(text || '').replace(/^\uFEFF/, '').replace(/\r/g, '').split(/\n{2,}/);
+        for (const block of blocks) {
+            const lines = block.split('\n').filter((line, index, all) => (
+                index > 0 || line.trim() !== 'WEBVTT'
+            ));
+            const timingIndex = lines.findIndex(line => line.includes('-->'));
+            if (timingIndex < 0) continue;
+            const match = lines[timingIndex].match(/^\s*([^\s]+)\s+-->\s+([^\s]+)(?:\s+.*)?$/);
+            if (!match) continue;
+            const startTime = this.parseWebVttTimestamp(match[1]);
+            const endTime = this.parseWebVttTimestamp(match[2]);
+            if (startTime === null || endTime === null || endTime <= startTime) continue;
+            const cueText = lines.slice(timingIndex + 1).join('\n').trim();
+            if (cueText) cues.push({ startTime, endTime, text: cueText });
+        }
+        return cues;
+    }
+
+    async loadProbeSubtitleTrack(trackElement, subtitleUrl) {
+        try {
+            const response = await fetch(subtitleUrl, { credentials: 'same-origin' });
+            if (!response.ok) throw new Error(`Subtitle request failed (${response.status})`);
+            const cues = this.parseWebVtt(await response.text());
+            if (!trackElement.isConnected || !trackElement.track) return;
+            this.probeSubtitleCues.set(trackElement, cues);
+            trackElement.track.mode = 'hidden';
+            if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
+                this.activateProbeSubtitleTrack(trackElement);
+            }
+            this.updateCaptionsTracks();
+        } catch (error) {
+            console.warn('[WatchPage] Subtitle track unavailable:', error.message);
+            trackElement.remove();
+            this.updateCaptionsTracks();
+        }
+    }
+
+    activateProbeSubtitleTrack(trackElement) {
+        const track = trackElement?.track;
+        const cues = this.probeSubtitleCues.get(trackElement) || [];
+        const Cue = window.VTTCue;
+        if (!track || typeof Cue !== 'function') return false;
+
+        track.mode = 'hidden';
+        for (const existingCue of Array.from(track.cues || [])) {
+            track.removeCue(existingCue);
+        }
+        for (const cue of cues) {
+            track.addCue(new Cue(cue.startTime, cue.endTime, cue.text));
+        }
+        track.mode = 'showing';
+        return cues.length > 0;
+    }
+
+    applyHlsAudioTracks(tracks) {
+        if (!Array.isArray(tracks) || tracks.length === 0) return;
+        this.availableAudioTracks = tracks.map((track, index) => ({
+            ...track,
+            index,
+            language: track.lang || track.language,
+            title: track.name || track.title,
+            codec: track.audioCodec || track.codec
+        }));
+        this.audioTrackMode = 'hls';
+        const activeIndex = Number(this.hls?.audioTrack);
+        this.selectedHlsAudioTrack = activeIndex >= 0 ? activeIndex : 0;
+        this.updateAudioTracks();
+    }
+
+    getSelectedAudioOptions(streamInfo = this.currentStreamInfo) {
+        if (this.audioTrackMode !== 'probe' || !this.audioSelectionExplicit) return {};
+        const track = (streamInfo?.audioTracks || this.availableAudioTracks || [])
+            .find(candidate => Number(candidate.index) === this.selectedAudioTrackIndex);
+        if (!track) return {};
+        return {
+            audioStreamIndex: Number(track.index),
+            audioCodec: track.codec || streamInfo?.audio,
+            audioChannels: Number(track.channels) || streamInfo?.audioChannels || 0
+        };
+    }
+
+    updateAudioTracks() {
+        if (!this.audioList) return;
+        this.audioList.replaceChildren();
+
+        if (this.availableAudioTracks.length === 0) {
+            const defaultOption = document.createElement('button');
+            defaultOption.type = 'button';
+            defaultOption.className = 'captions-option active';
+            defaultOption.textContent = 'Default';
+            defaultOption.disabled = true;
+            this.audioList.appendChild(defaultOption);
+            return;
+        }
+
+        this.availableAudioTracks.forEach((track, position) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'captions-option';
+            option.textContent = this.getAudioTrackLabel(track, position);
+            const isActive = this.audioTrackMode === 'hls'
+                ? position === this.selectedHlsAudioTrack
+                : Number(track.index) === this.selectedAudioTrackIndex;
+            option.classList.toggle('active', isActive);
+            option.disabled = this.audioTrackChanging;
+            option.addEventListener('click', event => {
+                event.stopPropagation();
+                void this.selectAudioTrack(this.audioTrackMode === 'hls' ? position : Number(track.index));
+            });
+            this.audioList.appendChild(option);
+        });
+    }
+
+    async selectAudioTrack(index) {
+        if (this.audioTrackChanging) return;
+
+        if (this.audioTrackMode === 'hls') {
+            if (!this.hls || index < 0 || index >= this.availableAudioTracks.length) return;
+            this.hls.audioTrack = index;
+            this.selectedHlsAudioTrack = index;
+            this.updateAudioTracks();
+            this.closeCaptionsMenu();
+            return;
+        }
+
+        const selectedTrack = this.availableAudioTracks.find(track => Number(track.index) === Number(index));
+        if (!selectedTrack || Number(index) === this.selectedAudioTrackIndex) {
+            this.closeCaptionsMenu();
+            return;
+        }
+
+        const previousIndex = this.selectedAudioTrackIndex;
+        const previousExplicit = this.audioSelectionExplicit;
+        const resumeAt = Number.isFinite(this.video?.currentTime) ? this.video.currentTime : 0;
+        const streamInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : {};
+        this.audioTrackChanging = true;
+        this.selectedAudioTrackIndex = Number(index);
+        this.audioSelectionExplicit = true;
+        this.updateAudioTracks();
+        this.closeCaptionsMenu();
+
+        try {
+            this.stopHistoryTracking();
+            this.saveProgress();
+            await this.stopTranscodeSession();
+            if (this.hls) {
+                this.hls.destroy();
+                this.hls = null;
+            }
+            this.video.pause();
+            this.video.removeAttribute('src');
+            this.video.load();
+            this.resumeTime = resumeAt;
+            await new Promise(resolve => setTimeout(resolve, 250));
+            await this.startSelectedAudioPlayback(streamInfo);
+        } catch (error) {
+            console.warn('[WatchPage] Audio track switch failed; restoring previous playback:', error.message);
+            this.selectedAudioTrackIndex = previousIndex;
+            this.audioSelectionExplicit = previousExplicit;
+            this.resumeTime = resumeAt;
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await this.loadVideo(this.sourceUrl, { skipStop: true });
+            this.updateTranscodeStatus('warning', 'Audio track unavailable · Restored previous audio');
+        } finally {
+            this.audioTrackChanging = false;
+            this.updateAudioTracks();
+            this.startHistoryTracking();
+        }
+    }
+
+    async startSelectedAudioPlayback(streamInfo) {
+        const selected = this.getSelectedAudioOptions(streamInfo);
+        if (!Number.isInteger(selected.audioStreamIndex)) {
+            throw new Error('Selected audio stream is no longer available');
+        }
+
+        const configuredResolution = this.playbackQuality !== 'auto'
+            ? this.playbackQuality
+            : this.settings.maxResolution;
+        const configuredHeight = PlaybackQuality.getHeight(configuredResolution);
+        const sourceHeight = Number(streamInfo?.height) || 0;
+        const needsResolutionEncode = configuredHeight > 0 && sourceHeight > configuredHeight;
+        const canCopyVideo = String(streamInfo?.video || '').toLowerCase().includes('h264');
+        const mustEncodeVideo = this.settings.forceVideoTranscode || this.settings.upscaleEnabled ||
+            needsResolutionEncode || !canCopyVideo;
+        const selectedTrack = this.availableAudioTracks.find(track => track.index === selected.audioStreamIndex);
+        const trackLabel = this.getAudioTrackLabel(selectedTrack, this.availableAudioTracks.indexOf(selectedTrack));
+
+        this.updateTranscodeStatus('transcoding', `Switching audio · ${trackLabel}`);
+        const playlistUrl = await this.startTranscodeSession(this.sourceUrl, {
+            videoMode: mustEncodeVideo ? 'encode' : 'copy',
+            videoCodec: streamInfo?.video,
+            videoHeight: sourceHeight || undefined,
+            maxResolution: needsResolutionEncode || this.playbackQuality !== 'auto'
+                ? configuredResolution
+                : undefined,
+            ...selected
+        });
+        this.currentStreamInfo = streamInfo;
+        this.playHls(playlistUrl);
+        this.setVolumeFromStorage();
+        this.updateTranscodeStatus('transcoding', `Audio · ${trackLabel}`);
+    }
 
     toggleCaptionsMenu() {
         if (this.captionsMenuOpen) {
             this.closeCaptionsMenu();
         } else {
+            this.updateAudioTracks();
             this.updateCaptionsTracks();
             this.captionsMenu?.classList.remove('hidden');
             this.captionsMenuOpen = true;
@@ -1213,34 +1573,35 @@ class WatchPage {
     updateCaptionsTracks() {
         if (!this.captionsList || !this.video) return;
 
-        // Build list of available text tracks
         const tracks = this.video.textTracks;
-        let html = '<button class="captions-option" data-index="-1">Off</button>';
+        this.captionsList.replaceChildren();
+
+        const offOption = document.createElement('button');
+        offOption.type = 'button';
+        offOption.className = 'captions-option';
+        offOption.textContent = 'Off';
+        offOption.addEventListener('click', () => this.selectCaptionTrack(-1));
+        this.captionsList.appendChild(offOption);
+
+        let anyActive = false;
 
         for (let i = 0; i < tracks.length; i++) {
             const track = tracks[i];
             if (track.kind === 'subtitles' || track.kind === 'captions') {
                 const label = track.label || track.language || `Track ${i + 1}`;
                 const isActive = track.mode === 'showing';
-                html += `<button class="captions-option ${isActive ? 'active' : ''}" data-index="${i}">${label}</button>`;
+                const option = document.createElement('button');
+                option.type = 'button';
+                option.className = 'captions-option';
+                option.classList.toggle('active', isActive);
+                option.textContent = label;
+                option.addEventListener('click', () => this.selectCaptionTrack(i));
+                this.captionsList.appendChild(option);
+                if (isActive) anyActive = true;
             }
         }
 
-        // Check if any track is active, if not mark "Off" as active
-        let anyActive = false;
-        for (let i = 0; i < tracks.length; i++) {
-            if (tracks[i].mode === 'showing') anyActive = true;
-        }
-        if (!anyActive) {
-            html = html.replace('class="captions-option"', 'class="captions-option active"');
-        }
-
-        this.captionsList.innerHTML = html;
-
-        // Add click handlers
-        this.captionsList.querySelectorAll('.captions-option').forEach(btn => {
-            btn.addEventListener('click', () => this.selectCaptionTrack(parseInt(btn.dataset.index)));
-        });
+        offOption.classList.toggle('active', !anyActive);
     }
 
     selectCaptionTrack(index) {
@@ -1253,9 +1614,20 @@ class WatchPage {
             tracks[i].mode = 'hidden';
         }
 
-        // Enable selected track
+        // Enable selected track. Embedded subtitles are populated after the
+        // active HLS session settles so the media engine cannot clear them.
         if (index >= 0 && index < tracks.length) {
-            tracks[index].mode = 'showing';
+            const probeTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+                .find(element => element.track === tracks[index]);
+            if (probeTrack) {
+                this.selectedSubtitleStreamIndex = Number(probeTrack.dataset.nodecastSubtitleIndex);
+                this.activateProbeSubtitleTrack(probeTrack);
+            } else {
+                this.selectedSubtitleStreamIndex = null;
+                tracks[index].mode = 'showing';
+            }
+        } else {
+            this.selectedSubtitleStreamIndex = null;
         }
 
         // Update UI
