@@ -711,6 +711,64 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBeNull();
 
+    // Embedded movie tracks are discovered from the original container. Audio
+    // switches restart only the playback session at the current position, while
+    // subtitle choices use authenticated WebVTT extraction.
+    await page.evaluate(async () => {
+        await window.API.settings.update({ autoTranscode: true, maxResolution: '1080p' });
+    });
+    await page.evaluate(async ({ url, sourceId }) => {
+        await window.app.pages.watch.play({
+            id: 'controlled-multi-track-movie',
+            type: 'movie',
+            title: 'Controlled Multi-track Movie',
+            sourceId,
+            categoryId: 'controlled'
+        }, url);
+    }, { url: `${fixtureBaseUrl}/multi-track.mkv`, sourceId: m3uSource.id });
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.pages?.watch?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await expect(page.locator('#watch-audio-list .captions-option')).toHaveCount(2);
+    await expect(page.locator('#watch-audio-list')).toContainText('English 440 Hz');
+    await expect(page.locator('#watch-audio-list')).toContainText('Norwegian 880 Hz');
+    await expect(page.locator('#watch-captions-list')).toContainText('English');
+    await expect(page.locator('#watch-captions-list')).toContainText('Norwegian');
+
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    const defaultAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
+    await page.locator('#watch-audio-list .captions-option', { hasText: 'Norwegian 880 Hz' }).click();
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
+        timeout: 30_000
+    }).not.toBe(defaultAudioSession);
+    await expect.poll(() => page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const selected = watch.availableAudioTracks.find(track => track.index === watch.selectedAudioTrackIndex);
+        return selected?.title || '';
+    }), { timeout: 30_000 }).toBe('Norwegian 880 Hz');
+    await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(1.5);
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
+    ))), { timeout: 30_000 }).toBe(true);
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
+    ))), { timeout: 30_000 }).toBe(true);
+
     // The movie/series player uses the same transactional fallback when a
     // provider permits browser playback but rejects FFmpeg.
     await page.evaluate(async () => {
@@ -791,6 +849,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(recoverableStats.failedRequests).toBe(4);
     expect(recoverableStats.segmentRequests).toBeGreaterThan(4);
     expect(await page.evaluate(() => window.app.pages.watch.hlsRecoveryCount)).toBe(0);
+    // Chromium may coalesce identical failed-resource console messages. The
+    // fixture counters above are the authoritative outage assertion.
+    expectedRejectedResourceErrors = 0;
 
     const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
     expect(reset.status).toBe(204);

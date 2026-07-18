@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=10">
+  <link rel="stylesheet" href="css/main.css?v=11">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -1079,13 +1079,17 @@
                 <input type="range" class="watch-volume" id="watch-volume" min="0" max="100" value="80">
                 <!-- Captions Button -->
                 <div class="watch-captions-wrapper">
-                  <button class="watch-btn" id="watch-captions-btn" title="Captions">
+                  <button class="watch-btn" id="watch-captions-btn" title="Audio and subtitles" aria-label="Audio and subtitles">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
                       <path
                         d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z" />
                     </svg>
                   </button>
                   <div class="watch-captions-menu hidden" id="watch-captions-menu">
+                    <div class="captions-menu-title">Audio</div>
+                    <div class="captions-menu-list" id="watch-audio-list">
+                      <button class="captions-option active" type="button" disabled>Default</button>
+                    </div>
                     <div class="captions-menu-title">Subtitles</div>
                     <div class="captions-menu-list" id="watch-captions-list">
                       <button class="captions-option active" data-index="-1">Off</button>
@@ -1310,7 +1314,7 @@
   <script src="js/pages/Settings.js?v=4"></script>
   <script src="js/pages/Account.js?v=2"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
-  <script src="js/pages/WatchPage.js?v=6"></script>
+  <script src="js/pages/WatchPage.js?v=7"></script>
   <script src="js/app.js?v=6"></script>
 </body>
 
