@@ -377,6 +377,17 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect(page.locator('#theme-settings-status')).toContainText('Light is active. Saved in this browser.');
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(247, 247, 251)');
+    const lightLogoStyle = await page.evaluate(() => {
+        const logo = document.createElement('img');
+        logo.className = 'channel-logo';
+        document.body.appendChild(logo);
+        const style = getComputedStyle(logo);
+        const result = { backgroundColor: style.backgroundColor, filter: style.filter };
+        logo.remove();
+        return result;
+    });
+    expect(lightLogoStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    expect(lightLogoStyle.filter).not.toBe('none');
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.goto('/login.html');
@@ -390,6 +401,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    expect(await page.evaluate(() => {
+        const logo = document.createElement('img');
+        logo.className = 'channel-logo';
+        document.body.appendChild(logo);
+        const filter = getComputedStyle(logo).filter;
+        logo.remove();
+        return filter;
+    })).toBe('none');
     await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
     await expect(page.locator('#theme-settings-status')).toContainText('System is active and currently using dark.');
     await page.locator('input[name="theme-preference"][value="dark"]').check();
