@@ -157,6 +157,25 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await expectInsideScroller(page, '.shortcuts-grid', '.settings-container');
 
     await page.locator('.tab[data-tab="interface"]').click();
+    const themeCards = page.locator('.theme-option-content');
+    await expect(themeCards).toHaveCount(3);
+    const themeLayout = await page.evaluate(() => ({
+        viewportWidth: window.innerWidth,
+        cards: [...document.querySelectorAll('.theme-option-content')].map(card => ({
+            left: card.getBoundingClientRect().left,
+            right: card.getBoundingClientRect().right,
+            width: card.getBoundingClientRect().width
+        }))
+    }));
+    expect(themeLayout.cards.every(card => (
+        card.left >= 0 && card.right <= themeLayout.viewportWidth + 1 && card.width > 0
+    ))).toBe(true);
+    await page.locator('input[name="theme-preference"][value="light"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.locator('input[name="theme-preference"][value="system"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.locator('input[name="theme-preference"][value="dark"]').check();
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '.interface-settings-actions', '.settings-container');
 

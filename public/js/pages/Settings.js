@@ -20,6 +20,9 @@ class SettingsPage {
         // Player settings
         this.initPlayerSettings();
 
+        // Browser appearance preference
+        this.initAppearanceSettings();
+
         // Interface and navigation settings
         this.initInterfaceSettings();
 
@@ -28,6 +31,43 @@ class SettingsPage {
 
         // User management (admin only)
         this.initUserManagement();
+    }
+
+    initAppearanceSettings() {
+        const options = [...document.querySelectorAll('input[name="theme-preference"]')];
+        const status = document.getElementById('theme-settings-status');
+        if (!options.length || !status || !window.NodeCastTheme) return;
+
+        const describe = (preference, resolvedTheme, changed = false) => {
+            const label = preference === 'system'
+                ? `System is active and currently using ${resolvedTheme}.`
+                : `${preference[0].toUpperCase()}${preference.slice(1)} is active.`;
+            status.textContent = changed ? `${label} Saved in this browser.` : label;
+        };
+
+        const render = (changed = false) => {
+            const preference = NodeCastTheme.getPreference();
+            const resolvedTheme = NodeCastTheme.getResolvedTheme();
+            options.forEach(option => {
+                option.checked = option.value === preference;
+            });
+            describe(preference, resolvedTheme, changed);
+        };
+
+        options.forEach(option => option.addEventListener('change', () => {
+            if (!option.checked) return;
+            NodeCastTheme.apply(option.value);
+            render(true);
+        }));
+
+        document.addEventListener('nodecast:themechange', event => {
+            options.forEach(option => {
+                option.checked = option.value === event.detail.preference;
+            });
+            describe(event.detail.preference, event.detail.resolvedTheme);
+        });
+
+        render();
     }
 
     initInterfaceSettings() {
