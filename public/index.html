@@ -7,10 +7,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0a0f">
   <title>NodeCast TV Plus | IPTV Player</title>
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="css/main.css?v=8">
+  <script src="js/theme.js?v=1"></script>
+  <link rel="stylesheet" href="css/main.css?v=9">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -482,6 +484,36 @@
 
           <!-- Interface Tab -->
           <div id="tab-interface" class="tab-content">
+            <div class="settings-section">
+              <h3>Appearance</h3>
+              <p class="hint interface-settings-hint">Choose how NodeCast looks in this browser. System follows your device's light or dark appearance.</p>
+              <fieldset class="theme-options" aria-describedby="theme-settings-status">
+                <legend class="sr-only">Color theme</legend>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="system">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-system" aria-hidden="true"></span>
+                    <span><strong>System</strong><small>Follow this device</small></span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="dark">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-dark" aria-hidden="true"></span>
+                    <span><strong>Dark</strong><small>Current appearance</small></span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="theme-preference" value="light">
+                  <span class="theme-option-content">
+                    <span class="theme-option-icon theme-option-light" aria-hidden="true"></span>
+                    <span><strong>Light</strong><small>Bright appearance</small></span>
+                  </span>
+                </label>
+              </fieldset>
+              <p id="theme-settings-status" class="hint theme-settings-status" role="status"></p>
+            </div>
+
             <form id="interface-settings-form">
               <div class="settings-section">
                 <h3>Starting Page</h3>

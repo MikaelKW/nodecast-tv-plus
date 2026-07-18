@@ -14,6 +14,7 @@ async function waitForSync(page, sourceId) {
 }
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
+    test.setTimeout(120_000);
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
@@ -46,6 +47,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     const password = crypto.randomBytes(24).toString('base64url');
     await page.goto('/login.html');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
     await expect(page.locator('#sso-login-section')).toBeHidden();
     await expect(page.locator('#confirm-password-group')).toBeVisible();
@@ -366,6 +369,30 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('.tab[data-tab="interface"]').click();
     await expect(page.locator('#tab-interface')).toHaveClass(/active/);
+
+    // Appearance is browser-scoped, applies immediately, and is initialized
+    // before the stylesheet on both the app and sign-in pages.
+    await expect(page.locator('input[name="theme-preference"][value="dark"]')).toBeChecked();
+    await page.locator('input[name="theme-preference"][value="light"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('#theme-settings-status')).toContainText('Light is active. Saved in this browser.');
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(247, 247, 251)');
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.goto('/login.html');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.goto('/#settings');
+    await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('.tab[data-tab="interface"]').click();
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.locator('input[name="theme-preference"][value="system"]').check();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'system');
+    await expect(page.locator('#theme-settings-status')).toContainText('System is active and currently using dark.');
+    await page.locator('input[name="theme-preference"][value="dark"]').check();
 
     // The server repairs an invalid request so viewers can never be left with
     // no accessible primary page.
