@@ -364,6 +364,73 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // Invert the choices to prove Series can be hidden independently while
     // the same source remains available in Live TV and Movies.
     await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="interface"]').click();
+    await expect(page.locator('#tab-interface')).toHaveClass(/active/);
+
+    // The server repairs an invalid request so viewers can never be left with
+    // no accessible primary page.
+    const repairedNavigation = await page.evaluate(async () => {
+        const settings = await window.API.settings.update({
+            navigation: {
+                landingPage: 'series',
+                visibleTabs: {
+                    home: false,
+                    live: false,
+                    guide: false,
+                    movies: false,
+                    series: false
+                }
+            }
+        });
+        await window.API.settings.update({
+            navigation: {
+                landingPage: 'home',
+                visibleTabs: {
+                    home: true,
+                    live: true,
+                    guide: true,
+                    movies: true,
+                    series: true
+                }
+            }
+        });
+        return settings.navigation;
+    });
+    expect(repairedNavigation.landingPage).toBe('home');
+    expect(repairedNavigation.visibleTabs.home).toBe(true);
+
+    await page.locator('[data-navigation-page="home"]').uncheck();
+    await page.locator('[data-navigation-page="guide"]').uncheck();
+    await page.locator('[data-navigation-page="movies"]').uncheck();
+    await page.locator('[data-navigation-page="series"]').uncheck();
+    await page.locator('[data-navigation-page="live"]').click();
+    await expect(page.locator('[data-navigation-page="live"]')).toBeChecked();
+    await expect(page.locator('#interface-settings-status')).toHaveText('Keep at least one main navigation page visible.');
+    await page.locator('#setting-landing-page').selectOption('live');
+    await page.getByRole('button', { name: 'Save interface settings' }).click();
+    await expect(page.locator('#interface-settings-status')).toHaveText('Interface settings saved.');
+    await expect(page.locator('.nav-link[data-page="home"]')).toBeHidden();
+    await expect(page.locator('.nav-link[data-page="movies"]')).toBeHidden();
+    await expect(page.locator('.nav-link[data-page="settings"]')).toBeVisible();
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page).toHaveURL(/#live$/);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/#live$/);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+
+    // Restore the default navigation so the remainder of this broad workflow
+    // continues to exercise every destination.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="interface"]').click();
+    for (const pageName of ['home', 'guide', 'movies', 'series']) {
+        await page.locator(`[data-navigation-page="${pageName}"]`).check();
+    }
+    await page.locator('#setting-landing-page').selectOption('home');
+    await page.getByRole('button', { name: 'Save interface settings' }).click();
+    await expect(page.locator('.nav-link[data-page="home"]')).toBeVisible();
+
     await page.locator('.tab[data-tab="sources"]').click();
     await seriesSourceRow.locator('[data-action="edit"]').click();
     await page.locator('#source-visible-live').check();

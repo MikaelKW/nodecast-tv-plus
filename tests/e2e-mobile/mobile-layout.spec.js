@@ -156,6 +156,10 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await expect(page.locator('.shortcuts-grid')).toBeVisible();
     await expectInsideScroller(page, '.shortcuts-grid', '.settings-container');
 
+    await page.locator('.tab[data-tab="interface"]').click();
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.interface-settings-actions', '.settings-container');
+
     await page.locator('.tab[data-tab="content"]').click();
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#content-tree', '.settings-container');

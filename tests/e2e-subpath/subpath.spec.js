@@ -64,6 +64,17 @@ test('the application remains inside its configured reverse-proxy path', async (
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('.tab[data-tab="interface"]').click();
+    await page.locator('[data-navigation-page="home"]').uncheck();
+    await page.locator('#setting-landing-page').selectOption('series');
+    await page.getByRole('button', { name: 'Save interface settings' }).click();
+    await expect(page.locator('#interface-settings-status')).toHaveText('Interface settings saved.');
+    await page.goto('/nodecast/');
+    await expect(page).toHaveURL(/\/nodecast\/#series$/);
+    await expect(page.locator('#page-series')).toHaveClass(/active/);
+    expect(localRequestsOutsideBasePath).toEqual([]);
+
+    await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('#account-menu-trigger').click();
     await expect(page.locator('#account-menu-popover')).toBeVisible();
     await page.locator('#logout-btn').click();

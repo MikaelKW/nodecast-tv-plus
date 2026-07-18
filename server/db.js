@@ -96,8 +96,44 @@ function getDefaultSettings() {
     // Upscaling settings
     upscaleEnabled: false,
     upscaleMethod: 'hardware',    // hardware | software
-    upscaleTarget: '1080p'        // 1080p | 4k | 720p
+    upscaleTarget: '1080p',       // 1080p | 4k | 720p
+    navigation: getDefaultNavigationSettings()
   };
+}
+
+const NAVIGATION_PAGES = Object.freeze(['home', 'live', 'guide', 'movies', 'series']);
+
+function getDefaultNavigationSettings() {
+  return {
+    landingPage: 'home',
+    visibleTabs: Object.fromEntries(NAVIGATION_PAGES.map(page => [page, true]))
+  };
+}
+
+function normalizeNavigationSettings(navigation = {}) {
+  const defaults = getDefaultNavigationSettings();
+  const requestedVisibility = navigation?.visibleTabs || {};
+  const visibleTabs = Object.fromEntries(NAVIGATION_PAGES.map(page => [
+    page,
+    requestedVisibility[page] === undefined
+      ? defaults.visibleTabs[page]
+      : requestedVisibility[page] !== false
+  ]));
+
+  // Keep at least one primary destination available, including for viewers
+  // who do not have access to the Settings page.
+  if (!NAVIGATION_PAGES.some(page => visibleTabs[page])) {
+    visibleTabs.home = true;
+  }
+
+  const requestedLandingPage = NAVIGATION_PAGES.includes(navigation?.landingPage)
+    ? navigation.landingPage
+    : defaults.landingPage;
+  const landingPage = visibleTabs[requestedLandingPage]
+    ? requestedLandingPage
+    : NAVIGATION_PAGES.find(page => visibleTabs[page]);
+
+  return { landingPage, visibleTabs };
 }
 
 // User-Agent presets
@@ -378,14 +414,27 @@ const favorites = {
 const settings = {
   async get() {
     const db = await loadDb();
-    return { ...getDefaultSettings(), ...db.settings };
+    const currentSettings = { ...getDefaultSettings(), ...db.settings };
+    currentSettings.navigation = normalizeNavigationSettings(db.settings?.navigation);
+    return currentSettings;
   },
 
   async update(newSettings) {
     const db = await loadDb();
-    db.settings = { ...db.settings, ...newSettings };
+    const updates = { ...newSettings };
+    if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
+      updates.navigation = normalizeNavigationSettings({
+        ...normalizeNavigationSettings(db.settings?.navigation),
+        ...updates.navigation,
+        visibleTabs: {
+          ...normalizeNavigationSettings(db.settings?.navigation).visibleTabs,
+          ...(updates.navigation?.visibleTabs || {})
+        }
+      });
+    }
+    db.settings = { ...db.settings, ...updates };
     await saveDb(db);
-    return db.settings;
+    return this.get();
   },
 
   async reset() {

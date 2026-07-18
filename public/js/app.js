@@ -7,6 +7,7 @@ class App {
         this.currentPage = 'home';
         this.pages = {};
         this.currentUser = null;
+        this.navigationSettings = this.getDefaultNavigationSettings();
 
         // Initialize components
         this.player = new VideoPlayer();
@@ -31,6 +32,8 @@ class App {
     async init() {
         // Check authentication first
         await this.checkAuth();
+        await this.loadNavigationSettings();
+        this.applyNavigationVisibility();
 
         // Mobile menu toggle
         const mobileMenuToggle = document.getElementById('mobile-menu-toggle');
@@ -145,8 +148,8 @@ class App {
 
         // Handle browser back/forward buttons
         window.addEventListener('popstate', (e) => {
-            const page = e.state?.page || 'home';
-            this.navigateTo(page, false); // false = don't add to history
+            const page = e.state?.page || this.navigationSettings.landingPage;
+            this.navigateTo(page, true);
         });
 
         // Initialize home page first (it's needed for channel list)
@@ -158,13 +161,13 @@ class App {
             console.warn('Background EPG load failed:', err.message);
         });
 
-        // Navigate to the page from URL hash, or default to home
+        // Navigate to an explicit page hash or the configured starting page.
         const hash = window.location.hash.slice(1); // Remove #
         const mfaOnboardingPending = NodeCastOnboarding.isMfaPending();
-        const requestedPage = hash && this.pages[hash] ? hash : 'home';
+        const requestedPage = hash && this.pages[hash] ? hash : this.navigationSettings.landingPage;
         const initialPage = mfaOnboardingPending
             ? 'mfa-onboarding'
-            : (requestedPage === 'mfa-onboarding' ? 'home' : requestedPage);
+            : (requestedPage === 'mfa-onboarding' ? this.navigationSettings.landingPage : requestedPage);
         this.navigateTo(initialPage, true); // true = replace history (don't add)
 
         console.log('NodeCast TV Plus initialized');
@@ -255,6 +258,76 @@ class App {
         document.getElementById('navbar-menu')?.classList.remove('active');
     }
 
+    getDefaultNavigationSettings() {
+        return {
+            landingPage: 'home',
+            visibleTabs: {
+                home: true,
+                live: true,
+                guide: true,
+                movies: true,
+                series: true
+            }
+        };
+    }
+
+    normalizeNavigationSettings(navigation = {}) {
+        navigation ||= {};
+        const defaults = this.getDefaultNavigationSettings();
+        const pages = Object.keys(defaults.visibleTabs);
+        const requestedVisibility = navigation.visibleTabs || {};
+        const visibleTabs = Object.fromEntries(pages.map(page => [
+            page,
+            requestedVisibility[page] === undefined
+                ? defaults.visibleTabs[page]
+                : requestedVisibility[page] !== false
+        ]));
+
+        if (!pages.some(page => visibleTabs[page])) visibleTabs.home = true;
+
+        const requestedLanding = pages.includes(navigation.landingPage)
+            ? navigation.landingPage
+            : defaults.landingPage;
+        const landingPage = visibleTabs[requestedLanding]
+            ? requestedLanding
+            : pages.find(page => visibleTabs[page]);
+
+        return { landingPage, visibleTabs };
+    }
+
+    async loadNavigationSettings() {
+        try {
+            const settings = await API.settings.get();
+            this.navigationSettings = this.normalizeNavigationSettings(settings.navigation);
+        } catch (err) {
+            console.warn('[App] Failed to load navigation settings, using defaults:', err.message);
+        }
+    }
+
+    setNavigationSettings(navigation) {
+        this.navigationSettings = this.normalizeNavigationSettings(navigation);
+        this.applyNavigationVisibility();
+
+        if (this.navigationSettings.visibleTabs[this.currentPage] === false) {
+            this.navigateTo(this.navigationSettings.landingPage, true);
+        }
+    }
+
+    applyNavigationVisibility() {
+        document.querySelectorAll('.nav-link[data-page]').forEach(link => {
+            const page = link.dataset.page;
+            if (!(page in this.navigationSettings.visibleTabs)) return;
+            link.classList.toggle('hidden', !this.navigationSettings.visibleTabs[page]);
+        });
+    }
+
+    resolveNavigationTarget(pageName) {
+        if (this.navigationSettings.visibleTabs[pageName] === false) {
+            return this.navigationSettings.landingPage;
+        }
+        return pageName;
+    }
+
     async logout() {
         const token = localStorage.getItem('authToken');
         const headers = {};
@@ -266,6 +339,8 @@ class App {
     }
 
     navigateTo(pageName, replaceHistory = false) {
+        pageName = this.resolveNavigationTarget(pageName);
+
         // Don't navigate if already on this page
         if (this.currentPage === pageName && !replaceHistory) {
             return;
