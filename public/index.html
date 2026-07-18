@@ -422,6 +422,7 @@
           <!-- Tabs -->
           <div class="tabs">
             <button class="tab active" data-tab="sources">Sources</button>
+            <button class="tab" data-tab="interface">Interface</button>
             <button class="tab" data-tab="player">Player</button>
             <button class="tab" data-tab="transcode">Transcoding</button>
             <button class="tab" data-tab="content">Manage Content</button>
@@ -477,6 +478,60 @@
                     d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                 </svg> button next to EPG sources for manual refresh</p>
             </div>
+          </div>
+
+          <!-- Interface Tab -->
+          <div id="tab-interface" class="tab-content">
+            <form id="interface-settings-form">
+              <div class="settings-section">
+                <h3>Starting Page</h3>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-label">Open NodeCast on</span>
+                    <span class="setting-hint">Choose the first page shown after sign-in or when opening the app without a direct page link.</span>
+                  </div>
+                  <select id="setting-landing-page" class="form-input interface-page-select">
+                    <option value="home">Home</option>
+                    <option value="live">Live TV</option>
+                    <option value="guide">TV Guide</option>
+                    <option value="movies">Movies</option>
+                    <option value="series">Series</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h3>Main Navigation</h3>
+                <p class="hint interface-settings-hint">Choose which main pages appear in the navigation bar. Settings and the account menu always remain available to authorized users.</p>
+                <div class="interface-navigation-options">
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="home" checked>
+                    <span class="setting-info"><span class="setting-label">Home</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="live" checked>
+                    <span class="setting-info"><span class="setting-label">Live TV</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="guide" checked>
+                    <span class="setting-info"><span class="setting-label">TV Guide</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="movies" checked>
+                    <span class="setting-info"><span class="setting-label">Movies</span></span>
+                  </label>
+                  <label class="setting-item interface-navigation-option">
+                    <input type="checkbox" data-navigation-page="series" checked>
+                    <span class="setting-info"><span class="setting-label">Series</span></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="interface-settings-actions">
+                <button type="submit" class="btn btn-primary">Save interface settings</button>
+                <span id="interface-settings-status" class="hint hidden" role="status"></span>
+              </div>
+            </form>
           </div>
 
           <!-- Player Tab -->

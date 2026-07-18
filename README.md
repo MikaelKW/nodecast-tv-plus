@@ -30,6 +30,7 @@ Release history and upgrade details are available in the [changelog](CHANGELOG.m
   - Support for Xtream Codes and M3U playlists.
   - Manage hidden content categories.
   - Playback preferences (volume memory, auto-play).
+  - Choose the starting page and which main navigation tabs are shown.
 - **🎛️ Hardware Transcoding**: GPU-accelerated transcoding with NVIDIA NVENC, AMD AMF, Intel QuickSync, and VAAPI support.
 - **🔊 Smart Audio**: Configurable 5.1→Stereo downmix presets (ITU, Night Mode, Cinematic) with automatic passthrough for compatible sources.
 - **📦 Stream Processing**: Auto-detection of stream codecs with smart remux/transcode decisions.

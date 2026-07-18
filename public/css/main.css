@@ -1314,6 +1314,45 @@ video::cue {
   display: block;
 }
 
+.interface-page-select {
+  width: auto;
+  min-width: 180px;
+}
+
+.interface-settings-hint {
+  margin-bottom: var(--space-md);
+}
+
+.interface-navigation-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.interface-navigation-option {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.interface-navigation-option input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-accent);
+}
+
+.interface-settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+@media (max-width: 600px) {
+  .interface-page-select {
+    width: 100%;
+  }
+}
+
 /* Source Sections */
 .source-section {
   margin-bottom: var(--space-xl);

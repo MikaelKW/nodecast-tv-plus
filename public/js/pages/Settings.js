@@ -20,11 +20,92 @@ class SettingsPage {
         // Player settings
         this.initPlayerSettings();
 
+        // Interface and navigation settings
+        this.initInterfaceSettings();
+
         // Transcoding settings
         this.initTranscodingSettings();
 
         // User management (admin only)
         this.initUserManagement();
+    }
+
+    initInterfaceSettings() {
+        const form = document.getElementById('interface-settings-form');
+        const landingSelect = document.getElementById('setting-landing-page');
+        const status = document.getElementById('interface-settings-status');
+        if (!form || !landingSelect || !status) return;
+
+        const toggles = [...form.querySelectorAll('[data-navigation-page]')];
+        const pageOrder = toggles.map(toggle => toggle.dataset.navigationPage);
+
+        const showStatus = (message, isError = false) => {
+            status.textContent = message;
+            status.classList.toggle('field-error', isError);
+            status.classList.remove('hidden');
+        };
+
+        const refreshLandingOptions = () => {
+            const visibility = Object.fromEntries(toggles.map(toggle => [
+                toggle.dataset.navigationPage,
+                toggle.checked
+            ]));
+            landingSelect.querySelectorAll('option').forEach(option => {
+                option.disabled = !visibility[option.value];
+            });
+            if (!visibility[landingSelect.value]) {
+                landingSelect.value = pageOrder.find(page => visibility[page]);
+            }
+        };
+
+        toggles.forEach(toggle => toggle.addEventListener('change', () => {
+            if (!toggles.some(candidate => candidate.checked)) {
+                toggle.checked = true;
+                showStatus('Keep at least one main navigation page visible.', true);
+            } else {
+                status.classList.add('hidden');
+            }
+            refreshLandingOptions();
+        }));
+
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            const submit = form.querySelector('[type="submit"]');
+            const navigation = {
+                landingPage: landingSelect.value,
+                visibleTabs: Object.fromEntries(toggles.map(toggle => [
+                    toggle.dataset.navigationPage,
+                    toggle.checked
+                ]))
+            };
+
+            submit.disabled = true;
+            status.classList.add('hidden');
+            try {
+                const updatedSettings = await API.settings.update({ navigation });
+                this.app.player.settings.navigation = updatedSettings.navigation;
+                this.app.setNavigationSettings(updatedSettings.navigation);
+                this.renderInterfaceSettings(updatedSettings.navigation);
+                showStatus('Interface settings saved.');
+            } catch (err) {
+                showStatus(`Unable to save interface settings: ${err.message}`, true);
+            } finally {
+                submit.disabled = false;
+            }
+        });
+
+        this.refreshLandingOptions = refreshLandingOptions;
+        this.renderInterfaceSettings(this.app.navigationSettings);
+    }
+
+    renderInterfaceSettings(navigation) {
+        const normalized = this.app.normalizeNavigationSettings(navigation);
+        const landingSelect = document.getElementById('setting-landing-page');
+        document.querySelectorAll('[data-navigation-page]').forEach(toggle => {
+            toggle.checked = normalized.visibleTabs[toggle.dataset.navigationPage];
+        });
+        if (landingSelect) landingSelect.value = normalized.landingPage;
+        this.refreshLandingOptions?.();
     }
 
     initPlayerSettings() {
@@ -668,6 +749,7 @@ class SettingsPage {
 
         // Load sources when page is shown
         await this.app.sourceManager.loadSources();
+        this.renderInterfaceSettings(this.app.navigationSettings);
 
         // Refresh ALL player settings from server
         if (this.app.player?.settings) {
