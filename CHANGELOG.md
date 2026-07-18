@@ -4,8 +4,6 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
-## [Unreleased]
-
 ## [2.4.0] - 2026-07-18
 
 This feature release adds deployment-level sign-in controls, guided first-run account protection, configurable content and navigation visibility, and browser theme selection.
