@@ -67,22 +67,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page).toHaveURL(/\/login\.html$/);
     await page.locator('#confirm-password').fill(password);
     await page.getByRole('button', { name: 'Create Account', exact: true }).click();
-    await expect(page).toHaveURL(/\/(?:#home)?$/);
+    await expect(page).toHaveURL(/\/#mfa-onboarding$/);
     await expect(page.getByText('NodeCast TV Plus', { exact: true }).first()).toBeVisible();
     await expect.poll(() => page.evaluate(() => Boolean(
         window.app?.currentUser && window.app?.sourceManager && window.app?.channelList
     ))).toBe(true);
+    await expect(page.locator('#page-mfa-onboarding')).toHaveClass(/active/);
+    await expect(page.getByRole('heading', { name: 'Protect your account with MFA' })).toBeVisible();
+    await expect(page.getByText('MFA is recommended but optional.')).toBeVisible();
+
+    // An unfinished prompt survives refresh, but Continue replaces it in
+    // history and opens the existing protected enrollment flow.
+    await page.reload();
+    await expect(page).toHaveURL(/\/#mfa-onboarding$/);
+    await expect(page.locator('#page-mfa-onboarding')).toHaveClass(/active/);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page).toHaveURL(/\/#account$/);
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+    await expect(page.locator('#account-enroll-start-form')).toBeVisible();
+    expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
 
     // Enroll through the same guided flow presented to local accounts, then
     // prove password sign-in stops at the server-side challenge until a fresh
     // authenticator code is supplied.
     await expect(page.locator('#account-menu-initial')).toHaveText('E');
-    await page.locator('#account-menu-trigger').click();
-    await expect(page.locator('#account-menu-popover')).toBeVisible();
-    await page.locator('#account-security-link').click();
-    await expect(page.locator('#page-account')).toHaveClass(/active/);
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
-    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
     await page.locator('#account-password').fill(password);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('#totp-qr-image')).toBeVisible();
@@ -126,6 +135,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.getByRole('button', { name: 'Verify', exact: true }).click();
     await expect(page).toHaveURL(/\/(?:#home)?$/);
     await expect.poll(() => page.evaluate(() => window.app?.currentUser?.twoFactorEnabled)).toBe(true);
+    await expect(page.locator('#page-mfa-onboarding')).not.toHaveClass(/active/);
+    expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
+
+    // An existing installation cannot reopen first-run onboarding by using
+    // its internal hash directly.
+    await page.goto('/?existing-installation-check=1#mfa-onboarding');
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#home');
+    await expect(page.locator('#page-mfa-onboarding')).not.toHaveClass(/active/);
 
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
