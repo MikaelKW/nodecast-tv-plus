@@ -9,6 +9,7 @@ const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { parseOptionalStreamIndex } = require('../services/mediaSelection');
 const { TRANSCODE_START_TIMEOUT_MS } = require('../config/transcode');
 
 router.use(auth.requireAuth);
@@ -36,7 +37,17 @@ transcodeSession.startCleanupInterval();
  * Body: { url: string, seekOffset?: number }
  */
 router.post('/session', async (req, res) => {
-    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels, videoHeight, maxResolution } = req.body;
+    const {
+        url,
+        seekOffset,
+        videoMode,
+        videoCodec,
+        audioCodec,
+        audioChannels,
+        audioStreamIndex,
+        videoHeight,
+        maxResolution
+    } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
@@ -44,9 +55,11 @@ router.post('/session', async (req, res) => {
 
     let validatedUrl;
     let resolutionOverride;
+    let selectedAudioStreamIndex;
     try {
         validatedUrl = validateHttpUrl(url);
         resolutionOverride = parseMaxResolutionOverride(maxResolution);
+        selectedAudioStreamIndex = parseOptionalStreamIndex(audioStreamIndex, 'audioStreamIndex');
     } catch (err) {
         return res.status(400).json({ error: err.message });
     }
@@ -85,6 +98,7 @@ router.post('/session', async (req, res) => {
             videoCodec: videoCodec, // 'h264', 'hevc', etc.
             audioCodec: audioCodec, // 'aac', 'ac3', etc.
             audioChannels: audioChannels, // number of channels (2=stereo)
+            audioStreamIndex: selectedAudioStreamIndex,
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight
                 : 0

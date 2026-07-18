@@ -11,6 +11,7 @@ const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const { TranscodeSession } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
+const { parseOptionalStreamIndex } = require('../server/services/mediaSelection');
 const {
     DEFAULT_TRANSCODE_START_TIMEOUT_SECONDS,
     MAX_TRANSCODE_START_TIMEOUT_SECONDS,
@@ -111,6 +112,24 @@ async function main() {
     assert.equal(parseMaxResolutionOverride('720p'), '720p');
     assert.throws(() => parseMaxResolutionOverride('1440p'), /maxResolution/);
     assert.throws(() => parseMaxResolutionOverride({}), /maxResolution/);
+    assert.equal(parseOptionalStreamIndex(undefined, 'audioStreamIndex'), null);
+    assert.equal(parseOptionalStreamIndex(' 2 ', 'audioStreamIndex'), 2);
+    assert.throws(() => parseOptionalStreamIndex('-1', 'audioStreamIndex'), /audioStreamIndex/);
+    assert.throws(() => parseOptionalStreamIndex('2.5', 'audioStreamIndex'), /audioStreamIndex/);
+    assert.throws(() => parseOptionalStreamIndex('not-a-track', 'audioStreamIndex'), /audioStreamIndex/);
+
+    const selectedAudioSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        audioStreamIndex: 3,
+        audioCodec: 'aac',
+        audioChannels: 2
+    });
+    const selectedAudioArgs = selectedAudioSession.buildFFmpegArgs();
+    const selectedAudioMap = selectedAudioArgs.findIndex((value, index) => (
+        value === '-map' && selectedAudioArgs[index + 1] === '0:3?'
+    ));
+    assert.ok(selectedAudioMap >= 0, 'The selected absolute audio stream index must be mapped into FFmpeg.');
 
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
