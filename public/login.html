@@ -287,6 +287,7 @@
 
     <script src="js/basePath.js?v=1"></script>
     <script src="js/passwordVisibility.js?v=1"></script>
+    <script src="js/onboarding.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
@@ -464,6 +465,10 @@
                     document.getElementById('password').value = '';
                     showTwoFactorChallenge();
                     return;
+                }
+
+                if (isSetupMode && data.onboarding?.mfaEnrollmentRecommended) {
+                    NodeCastOnboarding.markMfaPending();
                 }
 
                 // Redirect to main app (replace history to prevent back button issues)
