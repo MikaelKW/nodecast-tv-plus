@@ -520,16 +520,25 @@ class TranscodeSession extends EventEmitter {
     /**
      * Stop the transcoding process
      */
-    stop() {
-        if (this.process) {
+    async stop() {
+        const activeProcess = this.process;
+        if (activeProcess) {
             console.log(`[TranscodeSession ${this.id}] Stopping FFmpeg process`);
-            this.process.kill('SIGTERM');
-            // Force kill after 2 seconds if still running
-            setTimeout(() => {
-                if (this.process) {
-                    this.process.kill('SIGKILL');
+            const waitForExit = () => new Promise(resolve => {
+                if (activeProcess.exitCode !== null || activeProcess.signalCode !== null) {
+                    resolve(true);
+                    return;
                 }
-            }, 2000);
+                activeProcess.once('exit', () => resolve(true));
+            });
+            const wait = ms => new Promise(resolve => setTimeout(() => resolve(false), ms));
+
+            activeProcess.kill('SIGTERM');
+            const exited = await Promise.race([waitForExit(), wait(2000)]);
+            if (!exited && this.process === activeProcess) {
+                activeProcess.kill('SIGKILL');
+                await Promise.race([waitForExit(), wait(1000)]);
+            }
         }
         this.status = 'stopped';
     }
@@ -618,7 +627,7 @@ class TranscodeSession extends EventEmitter {
      * Delete session directory and all segments
      */
     async cleanup() {
-        this.stop();
+        await this.stop();
         try {
             await fs.rm(this.dir, { recursive: true, force: true });
             console.log(`[TranscodeSession ${this.id}] Cleaned up session directory`);

@@ -95,6 +95,8 @@ class WatchPage {
         this.availableSubtitleTracks = [];
         this.subtitleStreamUrl = null;
         this.probeSubtitleCues = new WeakMap();
+        this.probeSubtitleLoads = new WeakMap();
+        this.subtitleLoadControllers = new Set();
         this.selectedSubtitleStreamIndex = null;
         this.subtitleRestoreTimers = [];
         this.audioTrackMode = 'none';
@@ -1007,7 +1009,11 @@ class WatchPage {
             this.hideLoading();
             this.updateTranscodeStatus('warning', 'Playback stopped · Try again');
             activeHls.destroy();
-            if (activeHls === this.hls) this.hls = null;
+            if (activeHls === this.hls) {
+                this.hls = null;
+                this.cancelProbeSubtitleLoads();
+                void this.stopTranscodeSession();
+            }
         });
     }
 
@@ -1030,6 +1036,7 @@ class WatchPage {
 
         // Cleanup transcode session if exists
         this.stopTranscodeSession();
+        this.cancelProbeSubtitleLoads();
         this.updateTranscodeStatus('hidden');
 
         // Hide quality badge
@@ -1393,11 +1400,13 @@ class WatchPage {
 
     resetMediaTracks() {
         this.clearSubtitleRestoreTimers();
+        this.cancelProbeSubtitleLoads();
         this.video?.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
         this.availableAudioTracks = [];
         this.availableSubtitleTracks = [];
         this.subtitleStreamUrl = null;
         this.probeSubtitleCues = new WeakMap();
+        this.probeSubtitleLoads = new WeakMap();
         this.selectedSubtitleStreamIndex = null;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
@@ -1410,6 +1419,12 @@ class WatchPage {
     clearSubtitleRestoreTimers() {
         for (const timer of this.subtitleRestoreTimers || []) clearTimeout(timer);
         this.subtitleRestoreTimers = [];
+    }
+
+    cancelProbeSubtitleLoads() {
+        for (const controller of this.subtitleLoadControllers || []) controller.abort();
+        this.subtitleLoadControllers?.clear();
+        this.probeSubtitleLoads = new WeakMap();
     }
 
     restoreSelectedSubtitleTrack() {
@@ -1491,6 +1506,9 @@ class WatchPage {
 
     renderProbeSubtitleTracks() {
         if (!this.video) return;
+        // Reattaching HLS can recreate the media timeline. Cancel extraction
+        // tied to the old track elements before replacing them.
+        this.cancelProbeSubtitleLoads();
         this.video.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
         if (!this.subtitleStreamUrl) {
             this.updateCaptionsTracks();
@@ -1506,9 +1524,19 @@ class WatchPage {
             track.dataset.nodecastProbeTrack = 'true';
             track.dataset.nodecastSubtitleIndex = String(subtitle.index);
             this.video.appendChild(track);
-            const subtitleUrl = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(this.subtitleStreamUrl)}&index=${Number(subtitle.index)}`);
-            void this.loadProbeSubtitleTrack(track, subtitleUrl);
         }
+
+        // Embedded subtitle extraction scans the source. Do not start that
+        // potentially expensive work until a language is selected. A selected
+        // language is reloaded after an HLS session replacement so subtitles
+        // survive seeks and audio changes.
+        if (Number.isInteger(this.selectedSubtitleStreamIndex)) {
+            const selectedTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+                .find(track => Number(track.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
+            if (selectedTrack) void this.loadProbeSubtitleTrack(selectedTrack);
+        }
+
+        this.updateCaptionsTracks();
     }
 
     parseWebVttTimestamp(value) {
@@ -1540,12 +1568,33 @@ class WatchPage {
         return cues;
     }
 
-    async loadProbeSubtitleTrack(trackElement, subtitleUrl) {
+    async loadProbeSubtitleTrack(trackElement) {
+        if (!trackElement?.isConnected || !this.subtitleStreamUrl) return false;
+        if (this.probeSubtitleCues.has(trackElement)) {
+            if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
+                this.activateProbeSubtitleTrack(trackElement);
+                this.scheduleSelectedSubtitleRestore();
+            }
+            return true;
+        }
+
+        const existingLoad = this.probeSubtitleLoads.get(trackElement);
+        if (existingLoad) return existingLoad;
+
+        const streamIndex = Number(trackElement.dataset.nodecastSubtitleIndex);
+        const subtitleUrl = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(this.subtitleStreamUrl)}&index=${streamIndex}`);
+        const controller = new AbortController();
+        this.subtitleLoadControllers.add(controller);
+
+        const load = (async () => {
         try {
-            const response = await fetch(subtitleUrl, { credentials: 'same-origin' });
+            const response = await fetch(subtitleUrl, {
+                credentials: 'same-origin',
+                signal: controller.signal
+            });
             if (!response.ok) throw new Error(`Subtitle request failed (${response.status})`);
             const cues = this.parseWebVtt(await response.text());
-            if (!trackElement.isConnected || !trackElement.track) return;
+            if (!trackElement.isConnected || !trackElement.track) return false;
             this.probeSubtitleCues.set(trackElement, cues);
             trackElement.track.mode = 'hidden';
             if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
@@ -1553,10 +1602,25 @@ class WatchPage {
                 this.scheduleSelectedSubtitleRestore();
             }
             this.updateCaptionsTracks();
+            return true;
         } catch (error) {
+            if (error.name === 'AbortError') return false;
             console.warn('[WatchPage] Subtitle track unavailable:', error.message);
             trackElement.remove();
             this.updateCaptionsTracks();
+            return false;
+        } finally {
+            this.subtitleLoadControllers.delete(controller);
+        }
+        })();
+
+        this.probeSubtitleLoads.set(trackElement, load);
+        try {
+            return await load;
+        } finally {
+            if (this.probeSubtitleLoads.get(trackElement) === load) {
+                this.probeSubtitleLoads.delete(trackElement);
+            }
         }
     }
 
@@ -1765,7 +1829,11 @@ class WatchPage {
             const track = tracks[i];
             if (track.kind === 'subtitles' || track.kind === 'captions') {
                 const label = track.label || track.language || `Track ${i + 1}`;
-                const isActive = track.mode === 'showing';
+                const probeTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+                    .find(element => element.track === track);
+                const isActive = track.mode === 'showing' || (
+                    probeTrack && Number(probeTrack.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex
+                );
                 const option = document.createElement('button');
                 option.type = 'button';
                 option.className = 'captions-option';
@@ -1785,6 +1853,10 @@ class WatchPage {
 
         const tracks = this.video.textTracks;
 
+        // A language change or Off selection supersedes any extraction that
+        // has not finished yet. Keep at most one subtitle scan active.
+        this.cancelProbeSubtitleLoads();
+
         // Disable all tracks
         for (let i = 0; i < tracks.length; i++) {
             tracks[i].mode = 'hidden';
@@ -1797,8 +1869,12 @@ class WatchPage {
                 .find(element => element.track === tracks[index]);
             if (probeTrack) {
                 this.selectedSubtitleStreamIndex = Number(probeTrack.dataset.nodecastSubtitleIndex);
-                this.activateProbeSubtitleTrack(probeTrack);
-                this.scheduleSelectedSubtitleRestore();
+                if (this.probeSubtitleCues.has(probeTrack)) {
+                    this.activateProbeSubtitleTrack(probeTrack);
+                    this.scheduleSelectedSubtitleRestore();
+                } else {
+                    void this.loadProbeSubtitleTrack(probeTrack);
+                }
             } else {
                 this.clearSubtitleRestoreTimers();
                 this.selectedSubtitleStreamIndex = null;
