@@ -101,6 +101,10 @@ class WatchPage {
         this.selectedHlsAudioTrack = -1;
         this.audioSelectionExplicit = false;
         this.audioTrackChanging = false;
+        // Server-side seeked transcode sessions start their media timeline at
+        // zero. Keep the original content position separately so the controls
+        // and watch history continue to show the real movie/episode time.
+        this.playbackTimeOffset = 0;
 
         // Overlay timer
         this.overlayTimeout = null;
@@ -289,6 +293,7 @@ class WatchPage {
      */
     async play(content, streamUrl) {
         this.resetMediaTracks();
+        this.playbackTimeOffset = 0;
         this.content = content;
         this.contentType = content.type;
         this.seriesInfo = content.seriesInfo || null;
@@ -375,18 +380,23 @@ class WatchPage {
     async startTranscodeSession(url, options = {}) {
         try {
             console.log('[WatchPage] Starting HLS transcode session...', options);
+            const seekOffset = Math.max(0, Number(options.seekOffset ?? this.resumeTime) || 0);
             const res = await fetch(NodeCastUrl.resolve('/api/transcode/session'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     url,
-                    seekOffset: this.resumeTime, // Pass resume point to backend
-                    ...options
+                    ...options,
+                    seekOffset
                 })
             });
             if (!res.ok) throw new Error('Failed to start session');
             const session = await res.json();
             this.currentSessionId = session.sessionId;
+            this.playbackTimeOffset = seekOffset;
+            // The backend already applied the resume point. Avoid seeking the
+            // shortened HLS timeline a second time in loadedmetadata.
+            this.resumeTime = 0;
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
             if (options.maxResolution || Number.isInteger(options.audioStreamIndex)) {
@@ -557,7 +567,7 @@ class WatchPage {
         }
 
         this.qualityChanging = true;
-        const resumeAt = Number.isFinite(this.video?.currentTime) ? this.video.currentTime : 0;
+        const resumeAt = this.getCurrentPlaybackTime();
         try {
             this.stopHistoryTracking();
             this.saveProgress();
@@ -609,6 +619,9 @@ class WatchPage {
     } = {}) {
         // Store the URL for copy functionality
         this.currentUrl = url;
+        // Direct playback uses the media element's native content timeline.
+        // A successful transcode session will replace this with its seek offset.
+        this.playbackTimeOffset = 0;
 
         // Stop any existing playback
         if (!skipStop) this.stop();
@@ -998,6 +1011,7 @@ class WatchPage {
             this.video.removeAttribute('src');
             this.video.load();
         }
+        this.playbackTimeOffset = 0;
 
         this.hideNowPlaying();
     }
@@ -1018,9 +1032,23 @@ class WatchPage {
         }
     }
 
+    getCurrentPlaybackTime() {
+        const mediaTime = Number(this.video?.currentTime) || 0;
+        return Math.max(0, this.playbackTimeOffset + mediaTime);
+    }
+
+    getPlaybackDuration() {
+        const mediaDuration = Number(this.video?.duration);
+        if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaDuration;
+        return Math.max(0, this.playbackTimeOffset + mediaDuration);
+    }
+
     seek(percent) {
-        if (this.video && this.video.duration) {
-            this.video.currentTime = (percent / 100) * this.video.duration;
+        const duration = this.getPlaybackDuration();
+        if (this.video && Number.isFinite(duration) && duration > 0) {
+            const requestedContentTime = (percent / 100) * duration;
+            const mediaTime = requestedContentTime - this.playbackTimeOffset;
+            this.video.currentTime = Math.max(0, Math.min(mediaTime, this.video.duration || 0));
         }
     }
 
@@ -1128,17 +1156,18 @@ class WatchPage {
     updateProgress() {
         if (!this.video || !this.video.duration) return;
 
-        const percent = (this.video.currentTime / this.video.duration) * 100;
+        const currentTime = this.getCurrentPlaybackTime();
+        const duration = this.getPlaybackDuration();
+        const percent = Number.isFinite(duration) && duration > 0
+            ? (currentTime / duration) * 100
+            : 0;
         this.progressSlider.value = percent;
-        this.timeCurrent.textContent = this.formatTime(this.video.currentTime);
+        this.timeCurrent.textContent = this.formatTime(currentTime);
 
         // Show "Up Next" panel early for series (like streaming services do during credits)
         // Only show if auto-play next episode is enabled
         const autoPlayEnabled = this.app?.player?.settings?.autoPlayNextEpisode;
         if (autoPlayEnabled && this.contentType === 'series' && this.seriesInfo && !this.nextEpisodeShowing && !this.nextEpisodeDismissed) {
-            const duration = this.video.duration;
-            const currentTime = this.video.currentTime;
-
             // Only proceed if we have reliable duration data
             if (isFinite(duration) && duration >= 180 && currentTime >= 120) {
                 const timeRemaining = duration - currentTime;
@@ -1483,7 +1512,7 @@ class WatchPage {
 
         const previousIndex = this.selectedAudioTrackIndex;
         const previousExplicit = this.audioSelectionExplicit;
-        const resumeAt = Number.isFinite(this.video?.currentTime) ? this.video.currentTime : 0;
+        const resumeAt = this.getCurrentPlaybackTime();
         const streamInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : {};
         this.audioTrackChanging = true;
         this.selectedAudioTrackIndex = Number(index);
@@ -2087,8 +2116,8 @@ class WatchPage {
     async saveProgress() {
         if (!this.content || !this.video || this.video.paused) return;
 
-        const progress = Math.floor(this.video.currentTime);
-        const duration = Math.floor(this.video.duration);
+        const progress = Math.floor(this.getCurrentPlaybackTime());
+        const duration = Math.floor(this.getPlaybackDuration());
 
         if (isNaN(progress) || isNaN(duration) || duration <= 0) return;
 

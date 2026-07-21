@@ -328,11 +328,13 @@ h4 {
 
 .nav-link {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   color: var(--color-text-secondary);
   text-decoration: none;
+  white-space: nowrap;
   border-radius: var(--radius-md);
   transition: all var(--transition-fast);
 }
@@ -5356,6 +5358,8 @@ body.mfa-onboarding-active .mobile-menu-toggle {
 
 .now-playing-indicator {
   display: flex;
+  flex: 1 1 200px;
+  min-width: 40px;
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
@@ -5389,8 +5393,21 @@ body.mfa-onboarding-active .mobile-menu-toggle {
 }
 
 .now-playing-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Preserve the fixed-height header on laptop-sized viewports while media is
+   playing. Labels return automatically when the Now Playing chip is hidden. */
+@media (min-width: 769px) and (max-width: 1280px) {
+  .navbar-menu:has(.now-playing-indicator:not(.hidden)) .nav-link span:not(.nav-icon) {
+    display: none;
+  }
+
+  .navbar-menu:has(.now-playing-indicator:not(.hidden)) .nav-link {
+    padding-inline: var(--space-sm);
+  }
 }
 
 @keyframes now-playing-pulse {

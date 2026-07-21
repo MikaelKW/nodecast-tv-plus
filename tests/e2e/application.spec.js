@@ -732,6 +732,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await page.setViewportSize({ width: 1180, height: 720 });
+    const playbackNavbarLayout = await page.locator('.navbar').evaluate(element => ({
+        height: element.getBoundingClientRect().height,
+        scrollHeight: element.scrollHeight,
+        nowPlayingWidth: document.getElementById('now-playing-indicator')?.getBoundingClientRect().width || 0,
+        labelsHidden: Array.from(document.querySelectorAll('.navbar-menu .nav-link span:not(.nav-icon)'))
+            .every(label => getComputedStyle(label).display === 'none')
+    }));
+    expect(playbackNavbarLayout.height).toBeLessThanOrEqual(60);
+    expect(playbackNavbarLayout.scrollHeight).toBeLessThanOrEqual(60);
+    expect(playbackNavbarLayout.nowPlayingWidth).toBeGreaterThan(0);
+    expect(playbackNavbarLayout.labelsHidden).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await expect(page.locator('#watch-audio-list .captions-option')).toHaveCount(2);
@@ -740,7 +753,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#watch-captions-list')).toContainText('English');
     await expect(page.locator('#watch-captions-list')).toContainText('Norwegian');
 
-    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    await watchVideo.evaluate(element => { element.currentTime = 5; });
+    const contentPositionBeforeAudioSwitch = await page.evaluate(() => (
+        window.app.pages.watch.getCurrentPlaybackTime()
+    ));
     const defaultAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
     await page.locator('#watch-audio-list .captions-option', { hasText: 'Norwegian 880 Hz' }).click();
     await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
@@ -754,6 +770,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(1.5);
+    const resumedAudioClock = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        return {
+            offset: watch.playbackTimeOffset,
+            contentTime: watch.getCurrentPlaybackTime(),
+            displayedTime: document.getElementById('watch-time-current')?.textContent,
+            expectedTime: watch.formatTime(watch.getCurrentPlaybackTime())
+        };
+    });
+    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(contentPositionBeforeAudioSwitch - 0.5);
+    expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
+    expect(resumedAudioClock.displayedTime).toBe(resumedAudioClock.expectedTime);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
 
     await page.locator('.watch-video-section').hover();
