@@ -786,6 +786,32 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(contentPositionBeforeAudioSwitch - 0.5);
     expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
+
+    // A growing transcode playlist must not redefine the full VOD duration.
+    // Seeking behind a session offset starts a replacement session at the
+    // requested source position instead of clamping to the current window.
+    const durationState = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        return {
+            sourceDuration: watch.sourceDuration,
+            playbackDuration: watch.getPlaybackDuration(),
+            generatedDuration: watch.video.duration
+        };
+    });
+    expect(durationState.sourceDuration).toBeGreaterThan(19);
+    expect(durationState.sourceDuration).toBeLessThan(21);
+    expect(durationState.playbackDuration).toBeCloseTo(durationState.sourceDuration, 3);
+    const offsetAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
+    await page.evaluate(() => window.app.pages.watch.seek(0));
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
+        timeout: 30_000
+    }).not.toBe(offsetAudioSession);
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.playbackTimeOffset), {
+        timeout: 30_000
+    }).toBe(0);
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
 
     await page.locator('.watch-video-section').hover();

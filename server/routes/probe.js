@@ -115,6 +115,10 @@ function analyzeProbeResult(probeResult, url) {
     const videoCodec = videoStream?.codec_name?.toLowerCase() || 'unknown';
     const audioCodec = audioStream?.codec_name?.toLowerCase() || 'unknown';
     const container = format.format_name?.toLowerCase() || 'unknown';
+    const durationCandidates = [format.duration, ...streams.map(stream => stream.duration)]
+        .map(Number)
+        .filter(duration => Number.isFinite(duration) && duration > 0);
+    const duration = durationCandidates.length > 0 ? Math.max(...durationCandidates) : 0;
 
     // Check codec compatibility
     const videoOk = BROWSER_VIDEO_CODECS.some(c => videoCodec.includes(c));
@@ -169,6 +173,7 @@ function analyzeProbeResult(probeResult, url) {
         audio: audioCodec,
         width: videoStream?.width || 0,
         height: videoStream?.height || 0,
+        duration,
         audioChannels: audioStream?.channels || 0, // For Smart Audio Copy
         container: container,
         compatible: compatible,
@@ -205,6 +210,7 @@ router.get('/', async (req, res) => {
             compatible: false,
             needsRemux: false,
             needsTranscode: true,
+            duration: 0,
             audioTracks: [],
             subtitles: []
         });
@@ -250,6 +256,7 @@ router.get('/', async (req, res) => {
             compatible: false,
             needsRemux: false,
             needsTranscode: true,
+            duration: 0,
             audioTracks: [],
             subtitles: [],
             error: err.message
