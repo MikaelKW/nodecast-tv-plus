@@ -105,6 +105,13 @@ class WatchPage {
         // zero. Keep the original content position separately so the controls
         // and watch history continue to show the real movie/episode time.
         this.playbackTimeOffset = 0;
+        // A transcode playlist grows as FFmpeg generates segments. Keep the
+        // original VOD duration separately so the scrubber never treats that
+        // temporary playlist length as the full movie or episode.
+        this.sourceDuration = 0;
+        this.currentTranscodeOptions = null;
+        this.seekChanging = false;
+        this.progressScrubbing = false;
 
         // Overlay timer
         this.overlayTimeout = null;
@@ -166,8 +173,8 @@ class WatchPage {
         this.video?.addEventListener('click', () => this.togglePlay());
 
         // Skip buttons
-        this.skipBackBtn?.addEventListener('click', () => this.skip(-10));
-        this.skipFwdBtn?.addEventListener('click', () => this.skip(10));
+        this.skipBackBtn?.addEventListener('click', () => void this.skip(-10));
+        this.skipFwdBtn?.addEventListener('click', () => void this.skip(10));
 
         // Volume
         this.muteBtn?.addEventListener('click', () => this.toggleMute());
@@ -206,7 +213,10 @@ class WatchPage {
         });
 
         // Progress bar
-        this.progressSlider?.addEventListener('input', (e) => this.seek(e.target.value));
+        this.progressSlider?.addEventListener('input', (e) => this.previewSeek(e.target.value));
+        this.progressSlider?.addEventListener('change', (e) => {
+            void this.seek(e.target.value);
+        });
 
         // Video events
         this.video?.addEventListener('timeupdate', () => this.updateProgress());
@@ -294,6 +304,8 @@ class WatchPage {
     async play(content, streamUrl) {
         this.resetMediaTracks();
         this.playbackTimeOffset = 0;
+        this.sourceDuration = 0;
+        this.currentTranscodeOptions = null;
         this.content = content;
         this.contentType = content.type;
         this.seriesInfo = content.seriesInfo || null;
@@ -394,6 +406,9 @@ class WatchPage {
             const session = await res.json();
             this.currentSessionId = session.sessionId;
             this.playbackTimeOffset = seekOffset;
+            const sessionOptions = { ...options };
+            delete sessionOptions.seekOffset;
+            this.currentTranscodeOptions = sessionOptions;
             // The backend already applied the resume point. Avoid seeking the
             // shortened HLS timeline a second time in loadedmetadata.
             this.resumeTime = 0;
@@ -624,7 +639,17 @@ class WatchPage {
         this.playbackTimeOffset = 0;
 
         // Stop any existing playback
-        if (!skipStop) this.stop();
+        if (!skipStop) {
+            this.stop();
+        } else {
+            this.currentTranscodeOptions = null;
+            this.seekChanging = false;
+            this.progressScrubbing = false;
+        }
+        const knownDuration = Number(qualitySourceInfo?.duration);
+        if (Number.isFinite(knownDuration) && knownDuration > 0) {
+            this.sourceDuration = knownDuration;
+        }
         this.qualityCapWarning = null;
         this.qualityCapPending = false;
 
@@ -837,7 +862,7 @@ class WatchPage {
     /**
      * Play HLS stream using Hls.js
      */
-    playHls(url) {
+    playHls(url, { autoPlay = true } = {}) {
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
@@ -898,9 +923,14 @@ class WatchPage {
             if (!this.currentSessionId && this.playbackQuality !== 'auto') {
                 this.applyAdaptiveQuality(this.playbackQuality);
             }
-            this.video.play().catch(e => {
-                if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
-            });
+            if (autoPlay) {
+                this.video.play().catch(e => {
+                    if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
+                });
+            } else {
+                this.hideLoading();
+                this.showOverlay();
+            }
             this.renderProbeSubtitleTracks();
         });
 
@@ -1012,6 +1042,10 @@ class WatchPage {
             this.video.load();
         }
         this.playbackTimeOffset = 0;
+        this.sourceDuration = 0;
+        this.currentTranscodeOptions = null;
+        this.seekChanging = false;
+        this.progressScrubbing = false;
 
         this.hideNowPlaying();
     }
@@ -1026,10 +1060,10 @@ class WatchPage {
         }
     }
 
-    skip(seconds) {
-        if (this.video) {
-            this.video.currentTime = Math.max(0, Math.min(this.video.currentTime + seconds, this.video.duration || 0));
-        }
+    async skip(seconds) {
+        const duration = this.getPlaybackDuration();
+        if (!Number.isFinite(duration) || duration <= 0) return;
+        await this.seekToContentTime(Math.max(0, Math.min(this.getCurrentPlaybackTime() + seconds, duration)));
     }
 
     getCurrentPlaybackTime() {
@@ -1038,17 +1072,85 @@ class WatchPage {
     }
 
     getPlaybackDuration() {
+        if (Number.isFinite(this.sourceDuration) && this.sourceDuration > 0) {
+            return this.sourceDuration;
+        }
         const mediaDuration = Number(this.video?.duration);
         if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaDuration;
         return Math.max(0, this.playbackTimeOffset + mediaDuration);
     }
 
-    seek(percent) {
+    previewSeek(percent) {
         const duration = this.getPlaybackDuration();
-        if (this.video && Number.isFinite(duration) && duration > 0) {
-            const requestedContentTime = (percent / 100) * duration;
-            const mediaTime = requestedContentTime - this.playbackTimeOffset;
-            this.video.currentTime = Math.max(0, Math.min(mediaTime, this.video.duration || 0));
+        if (!Number.isFinite(duration) || duration <= 0) return;
+        this.progressScrubbing = true;
+        this.timeCurrent.textContent = this.formatTime((Number(percent) / 100) * duration);
+    }
+
+    async seek(percent) {
+        const duration = this.getPlaybackDuration();
+        try {
+            if (Number.isFinite(duration) && duration > 0) {
+                await this.seekToContentTime((Number(percent) / 100) * duration);
+            }
+        } finally {
+            this.progressScrubbing = false;
+            this.updateProgress();
+        }
+    }
+
+    async seekToContentTime(requestedTime) {
+        if (!this.video || this.seekChanging) return;
+
+        const duration = this.getPlaybackDuration();
+        const target = Math.max(0, Math.min(Number(requestedTime) || 0, duration || 0));
+        const mediaDuration = Number(this.video.duration);
+        const sessionStart = this.playbackTimeOffset;
+        const sessionEnd = sessionStart + (Number.isFinite(mediaDuration) ? mediaDuration : 0);
+        const targetIsGenerated = !this.currentSessionId || (
+            target >= sessionStart && target <= sessionEnd
+        );
+
+        if (targetIsGenerated) {
+            this.video.currentTime = Math.max(0, Math.min(target - sessionStart, mediaDuration || 0));
+            return;
+        }
+
+        const sessionOptions = this.currentTranscodeOptions ? { ...this.currentTranscodeOptions } : null;
+        if (!sessionOptions || !this.sourceUrl) return;
+
+        const shouldResume = !this.video.paused;
+        this.seekChanging = true;
+        this.showLoading();
+        this.stopHistoryTracking();
+        this.saveProgress();
+
+        try {
+            await this.stopTranscodeSession();
+            if (this.hls) {
+                this.hls.destroy();
+                this.hls = null;
+            }
+            this.video.pause();
+            this.video.removeAttribute('src');
+            this.video.load();
+
+            // Starting FFmpeg exactly at end-of-file cannot produce a segment.
+            const sessionTarget = duration > 0 && target >= duration
+                ? Math.max(0, duration - 0.25)
+                : target;
+            const playlistUrl = await this.startTranscodeSession(this.sourceUrl, {
+                ...sessionOptions,
+                seekOffset: sessionTarget
+            });
+            this.playHls(playlistUrl, { autoPlay: shouldResume });
+            this.setVolumeFromStorage();
+        } catch (error) {
+            console.warn('[WatchPage] Seek session failed:', error.message);
+            this.updateTranscodeStatus('warning', 'Seek unavailable · Playback stopped');
+        } finally {
+            this.seekChanging = false;
+            this.startHistoryTracking();
         }
     }
 
@@ -1161,8 +1263,10 @@ class WatchPage {
         const percent = Number.isFinite(duration) && duration > 0
             ? (currentTime / duration) * 100
             : 0;
-        this.progressSlider.value = percent;
-        this.timeCurrent.textContent = this.formatTime(currentTime);
+        if (!this.progressScrubbing) {
+            this.progressSlider.value = percent;
+            this.timeCurrent.textContent = this.formatTime(currentTime);
+        }
 
         // Show "Up Next" panel early for series (like streaming services do during credits)
         // Only show if auto-play next episode is enabled
@@ -1188,9 +1292,13 @@ class WatchPage {
         // Detect resolution
         if (this.video && this.video.videoHeight > 0) {
             this.currentStreamInfo = {
+                ...this.currentStreamInfo,
                 width: this.video.videoWidth,
                 height: this.video.videoHeight
             };
+            if (!this.currentSessionId && Number.isFinite(this.video.duration) && this.video.duration > 0) {
+                this.sourceDuration = this.video.duration;
+            }
             this.updateQualityBadge();
             this.updatePendingQualityCapWarning(this.video.videoHeight);
         }
@@ -1320,6 +1428,10 @@ class WatchPage {
     }
 
     applyProbeTracks(info, streamUrl) {
+        const probedDuration = Number(info?.duration);
+        if (Number.isFinite(probedDuration) && probedDuration > 0) {
+            this.sourceDuration = probedDuration;
+        }
         const tracks = Array.isArray(info?.audioTracks)
             ? info.audioTracks.filter(track => Number.isInteger(Number(track.index)))
             : [];
@@ -1427,7 +1539,10 @@ class WatchPage {
             track.removeCue(existingCue);
         }
         for (const cue of cues) {
-            track.addCue(new Cue(cue.startTime, cue.endTime, cue.text));
+            const startTime = Math.max(0, cue.startTime - this.playbackTimeOffset);
+            const endTime = cue.endTime - this.playbackTimeOffset;
+            if (endTime <= 0) continue;
+            track.addCue(new Cue(startTime, endTime, cue.text));
         }
         track.mode = 'showing';
         return cues.length > 0;
