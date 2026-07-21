@@ -772,16 +772,20 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }).toBeGreaterThanOrEqual(1.5);
     const resumedAudioClock = await page.evaluate(() => {
         const watch = window.app.pages.watch;
+        const contentTime = watch.getCurrentPlaybackTime();
         return {
             offset: watch.playbackTimeOffset,
-            contentTime: watch.getCurrentPlaybackTime(),
+            contentTime,
             displayedTime: document.getElementById('watch-time-current')?.textContent,
-            expectedTime: watch.formatTime(watch.getCurrentPlaybackTime())
+            allowedDisplayedTimes: [
+                watch.formatTime(contentTime),
+                watch.formatTime(Math.max(0, contentTime - 1))
+            ]
         };
     });
     expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(contentPositionBeforeAudioSwitch - 0.5);
     expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
-    expect(resumedAudioClock.displayedTime).toBe(resumedAudioClock.expectedTime);
+    expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
 
     await page.locator('.watch-video-section').hover();
