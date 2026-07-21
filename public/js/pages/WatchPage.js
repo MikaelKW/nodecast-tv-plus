@@ -95,10 +95,15 @@ class WatchPage {
         this.availableSubtitleTracks = [];
         this.subtitleStreamUrl = null;
         this.probeSubtitleCues = new WeakMap();
+        this.probeSubtitleWindows = new WeakMap();
         this.probeSubtitleLoads = new WeakMap();
         this.subtitleLoadControllers = new Set();
         this.selectedSubtitleStreamIndex = null;
         this.subtitleRestoreTimers = [];
+        this.subtitleWindowDuration = 60;
+        this.subtitleWindowStep = 50;
+        this.subtitleWindowLookBehind = 10;
+        this.subtitleLoadingEnabled = false;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -222,7 +227,11 @@ class WatchPage {
         });
 
         // Video events
-        this.video?.addEventListener('timeupdate', () => this.updateProgress());
+        this.video?.addEventListener('timeupdate', () => {
+            this.updateProgress();
+            this.ensureSelectedSubtitleWindow();
+        });
+        this.video?.addEventListener('seeking', () => this.ensureSelectedSubtitleWindow({ prioritize: true }));
         this.video?.addEventListener('loadedmetadata', () => {
             this.onMetadataLoaded();
             this.scheduleSelectedSubtitleRestore();
@@ -344,6 +353,7 @@ class WatchPage {
 
         // Load video
         await this.loadVideo(streamUrl);
+        this.subtitleLoadingEnabled = true;
 
         // Show Now Playing indicator in navbar
         this.showNowPlaying(content.title);
@@ -1034,7 +1044,10 @@ class WatchPage {
         this.stopHistoryTracking();
         this.saveProgress();
 
-        // Cleanup transcode session if exists
+        // Cleanup transcode session if exists. Disable window loading before
+        // resetting the media element so its final seeking event cannot start
+        // a new subtitle extraction after the player has been closed.
+        this.subtitleLoadingEnabled = false;
         this.stopTranscodeSession();
         this.cancelProbeSubtitleLoads();
         this.updateTranscodeStatus('hidden');
@@ -1406,6 +1419,7 @@ class WatchPage {
         this.availableSubtitleTracks = [];
         this.subtitleStreamUrl = null;
         this.probeSubtitleCues = new WeakMap();
+        this.probeSubtitleWindows = new WeakMap();
         this.probeSubtitleLoads = new WeakMap();
         this.selectedSubtitleStreamIndex = null;
         this.audioTrackMode = 'none';
@@ -1533,7 +1547,9 @@ class WatchPage {
         if (Number.isInteger(this.selectedSubtitleStreamIndex)) {
             const selectedTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
                 .find(track => Number(track.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
-            if (selectedTrack) void this.loadProbeSubtitleTrack(selectedTrack);
+            if (selectedTrack) void this.loadProbeSubtitleTrack(selectedTrack, {
+                windowStart: this.getSubtitleWindowStart(this.getCurrentPlaybackTime())
+            });
         }
 
         this.updateCaptionsTracks();
@@ -1568,21 +1584,83 @@ class WatchPage {
         return cues;
     }
 
-    async loadProbeSubtitleTrack(trackElement) {
-        if (!trackElement?.isConnected || !this.subtitleStreamUrl) return false;
-        if (this.probeSubtitleCues.has(trackElement)) {
-            if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
-                this.activateProbeSubtitleTrack(trackElement);
-                this.scheduleSelectedSubtitleRestore();
-            }
+    getSubtitleWindowStart(contentTime) {
+        const position = Math.max(0, Number(contentTime) || 0);
+        const steppedStart = Math.floor(position / this.subtitleWindowStep) * this.subtitleWindowStep;
+        return Math.max(0, steppedStart - this.subtitleWindowLookBehind);
+    }
+
+    subtitleWindowCovers(trackElement, contentTime) {
+        const position = Math.max(0, Number(contentTime) || 0);
+        return (this.probeSubtitleWindows.get(trackElement) || [])
+            .some(window => position >= window.start && position < window.end - 5);
+    }
+
+    subtitleWindowLoaded(trackElement, windowStart) {
+        const normalizedStart = Math.max(0, Number(windowStart) || 0);
+        return (this.probeSubtitleWindows.get(trackElement) || [])
+            .some(window => Math.abs(window.start - normalizedStart) < 0.001);
+    }
+
+    mergeProbeSubtitleCues(trackElement, cues, windowStart) {
+        if (!trackElement?.isConnected || !Array.isArray(cues) || cues.length === 0) return false;
+        const existing = this.probeSubtitleCues.get(trackElement) || [];
+        const merged = new Map(existing.map(cue => [
+            `${cue.startTime.toFixed(3)}|${cue.endTime.toFixed(3)}|${cue.text}`,
+            cue
+        ]));
+        for (const cue of cues) {
+            const shiftedCue = {
+                ...cue,
+                startTime: cue.startTime + windowStart,
+                endTime: cue.endTime + windowStart
+            };
+            merged.set(
+                `${shiftedCue.startTime.toFixed(3)}|${shiftedCue.endTime.toFixed(3)}|${shiftedCue.text}`,
+                shiftedCue
+            );
+        }
+        this.probeSubtitleCues.set(
+            trackElement,
+            Array.from(merged.values()).sort((a, b) => a.startTime - b.startTime)
+        );
+        return true;
+    }
+
+    ensureSelectedSubtitleWindow({ prioritize = false } = {}) {
+        if (!this.subtitleLoadingEnabled || !Number.isInteger(this.selectedSubtitleStreamIndex) || !this.video) return;
+        const trackElement = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
+        if (!trackElement) return;
+
+        const contentTime = this.getCurrentPlaybackTime();
+        if (this.subtitleWindowCovers(trackElement, contentTime)) return;
+
+        const requestedStart = this.getSubtitleWindowStart(contentTime);
+        const currentLoad = this.probeSubtitleLoads.get(trackElement);
+        if (currentLoad?.windowStart === requestedStart) return;
+        if (currentLoad && !prioritize) return;
+        if (currentLoad && prioritize) this.cancelProbeSubtitleLoads();
+
+        void this.loadProbeSubtitleTrack(trackElement, { windowStart: requestedStart });
+    }
+
+    async loadProbeSubtitleTrack(trackElement, { windowStart = 0 } = {}) {
+        if (!this.subtitleLoadingEnabled || !trackElement?.isConnected || !this.subtitleStreamUrl) return false;
+        const normalizedStart = Math.max(0, Number(windowStart) || 0);
+        if (this.subtitleWindowLoaded(trackElement, normalizedStart)) {
+            this.activateProbeSubtitleTrack(trackElement);
             return true;
         }
 
         const existingLoad = this.probeSubtitleLoads.get(trackElement);
-        if (existingLoad) return existingLoad;
+        if (existingLoad) return existingLoad.promise;
 
         const streamIndex = Number(trackElement.dataset.nodecastSubtitleIndex);
-        const subtitleUrl = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(this.subtitleStreamUrl)}&index=${streamIndex}`);
+        const subtitleUrl = NodeCastUrl.resolve(
+            `/api/subtitle?url=${encodeURIComponent(this.subtitleStreamUrl)}&index=${streamIndex}`
+            + `&start=${encodeURIComponent(normalizedStart)}&duration=${encodeURIComponent(this.subtitleWindowDuration)}`
+        );
         const controller = new AbortController();
         this.subtitleLoadControllers.add(controller);
 
@@ -1593,16 +1671,52 @@ class WatchPage {
                 signal: controller.signal
             });
             if (!response.ok) throw new Error(`Subtitle request failed (${response.status})`);
-            const cues = this.parseWebVtt(await response.text());
+
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let receivedCues = false;
+
+            if (reader) {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r/g, '');
+                    const completeBoundary = buffer.lastIndexOf('\n\n');
+                    if (completeBoundary >= 0) {
+                        const completeText = buffer.slice(0, completeBoundary + 2);
+                        buffer = buffer.slice(completeBoundary + 2);
+                        const cues = this.parseWebVtt(completeText);
+                        if (this.mergeProbeSubtitleCues(trackElement, cues, normalizedStart)) {
+                            receivedCues = true;
+                            if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
+                                this.activateProbeSubtitleTrack(trackElement);
+                            }
+                        }
+                    }
+                    if (done) break;
+                }
+            } else {
+                buffer = await response.text();
+            }
+
+            const finalCues = this.parseWebVtt(buffer);
+            if (this.mergeProbeSubtitleCues(trackElement, finalCues, normalizedStart)) {
+                receivedCues = true;
+            }
             if (!trackElement.isConnected || !trackElement.track) return false;
-            this.probeSubtitleCues.set(trackElement, cues);
+            const windows = this.probeSubtitleWindows.get(trackElement) || [];
+            windows.push({
+                start: normalizedStart,
+                end: normalizedStart + this.subtitleWindowDuration
+            });
+            this.probeSubtitleWindows.set(trackElement, windows);
             trackElement.track.mode = 'hidden';
             if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
                 this.activateProbeSubtitleTrack(trackElement);
                 this.scheduleSelectedSubtitleRestore();
             }
             this.updateCaptionsTracks();
-            return true;
+            return receivedCues;
         } catch (error) {
             if (error.name === 'AbortError') return false;
             console.warn('[WatchPage] Subtitle track unavailable:', error.message);
@@ -1614,11 +1728,12 @@ class WatchPage {
         }
         })();
 
-        this.probeSubtitleLoads.set(trackElement, load);
+        const loadState = { promise: load, windowStart: normalizedStart };
+        this.probeSubtitleLoads.set(trackElement, loadState);
         try {
             return await load;
         } finally {
-            if (this.probeSubtitleLoads.get(trackElement) === load) {
+            if (this.probeSubtitleLoads.get(trackElement) === loadState) {
                 this.probeSubtitleLoads.delete(trackElement);
             }
         }
@@ -1869,11 +1984,13 @@ class WatchPage {
                 .find(element => element.track === tracks[index]);
             if (probeTrack) {
                 this.selectedSubtitleStreamIndex = Number(probeTrack.dataset.nodecastSubtitleIndex);
-                if (this.probeSubtitleCues.has(probeTrack)) {
+                if (this.subtitleWindowCovers(probeTrack, this.getCurrentPlaybackTime())) {
                     this.activateProbeSubtitleTrack(probeTrack);
                     this.scheduleSelectedSubtitleRestore();
                 } else {
-                    void this.loadProbeSubtitleTrack(probeTrack);
+                    void this.loadProbeSubtitleTrack(probeTrack, {
+                        windowStart: this.getSubtitleWindowStart(this.getCurrentPlaybackTime())
+                    });
                 }
             } else {
                 this.clearSubtitleRestoreTimers();

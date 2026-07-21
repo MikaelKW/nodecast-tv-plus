@@ -196,16 +196,22 @@ class TranscodeSession extends EventEmitter {
             '-analyzeduration', '3000000',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
-            ...appendHttpReconnectArgs([]),
-            '-seekable', '0'
+            ...appendHttpReconnectArgs([])
         );
 
-        args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST, '-i', this.url);
+        args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST);
 
-        // Add seek offset if specified (as output option to avoid Range requests)
+        // VOD seeks must happen before opening the input so FFmpeg can use HTTP
+        // byte ranges instead of reading and discarding everything from the
+        // beginning. The non-seek path retains the provider-compatible setting
+        // that avoids speculative Range/HEAD requests during ordinary startup.
         if (this.options.seekOffset > 0) {
             args.push('-ss', String(this.options.seekOffset));
+        } else {
+            args.push('-seekable', '0');
         }
+
+        args.push('-i', this.url);
 
         // Map streams
         args.push('-map', '0:v:0');

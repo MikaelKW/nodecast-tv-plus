@@ -16,7 +16,7 @@ router.use(auth.requireAuth);
  * Extracts a specific subtitle track and converts it to WebVTT on the fly.
  */
 router.get('/', async (req, res) => {
-    const { url, index } = req.query;
+    const { url, index, start, duration } = req.query;
 
     if (!url || index === undefined) {
         return res.status(400).json({ error: 'URL and index parameters are required' });
@@ -24,9 +24,23 @@ router.get('/', async (req, res) => {
 
     let validatedUrl;
     let streamIndex;
+    let windowStart = 0;
+    let windowDuration = null;
     try {
         validatedUrl = validateHttpUrl(url);
         streamIndex = parseOptionalStreamIndex(index, 'index');
+
+        const hasWindow = start !== undefined || duration !== undefined;
+        if (hasWindow) {
+            windowStart = Number(start ?? 0);
+            windowDuration = Number(duration);
+            if (!Number.isFinite(windowStart) || windowStart < 0 || windowStart > 86400) {
+                throw new Error('start must be between 0 and 86400 seconds');
+            }
+            if (!Number.isFinite(windowDuration) || windowDuration <= 0 || windowDuration > 120) {
+                throw new Error('duration must be between 0 and 120 seconds');
+            }
+        }
     } catch (err) {
         return res.status(400).json({ error: err.message });
     }
@@ -42,10 +56,12 @@ router.get('/', async (req, res) => {
         '-probesize', '5000000',
         '-analyzeduration', '5000000',
         ...appendHttpReconnectArgs([]),
-        '-seekable', '0',
         '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
+        ...(windowDuration !== null && windowStart > 0 ? ['-ss', String(windowStart)] : []),
+        ...(windowDuration === null ? ['-seekable', '0'] : []),
         '-i', validatedUrl,
         '-map', `0:${streamIndex}`,
+        ...(windowDuration !== null ? ['-t', String(windowDuration)] : []),
         '-c:s', 'webvtt',
         '-f', 'webvtt',
         '-'
@@ -55,6 +71,7 @@ router.get('/', async (req, res) => {
 
     res.setHeader('Content-Type', 'text/vtt');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
 
     // FFmpeg's WebVTT muxer can finish the last cue with only one trailing
     // newline. Append an empty line so browser text-track parsers reliably

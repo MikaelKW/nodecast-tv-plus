@@ -131,6 +131,26 @@ async function main() {
     ));
     assert.ok(selectedAudioMap >= 0, 'The selected absolute audio stream index must be mapped into FFmpeg.');
 
+    const seekSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        seekOffset: 1920
+    });
+    const seekArgs = seekSession.buildFFmpegArgs();
+    const seekIndex = seekArgs.indexOf('-ss');
+    const inputIndex = seekArgs.indexOf('-i');
+    assert.ok(seekIndex >= 0 && seekIndex < inputIndex, 'VOD seeking must happen before the input is opened.');
+    assert.equal(seekArgs[seekIndex + 1], '1920');
+    assert.equal(seekArgs.includes('-seekable'), false, 'Seeked VOD input must permit HTTP byte-range seeking.');
+
+    const ordinarySession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264'
+    });
+    const ordinaryArgs = ordinarySession.buildFFmpegArgs();
+    assert.ok(ordinaryArgs.indexOf('-seekable') < ordinaryArgs.indexOf('-i'));
+    assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-seekable') + 1], '0');
+
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
         { height: 480, bitrate: 1_000_000 },

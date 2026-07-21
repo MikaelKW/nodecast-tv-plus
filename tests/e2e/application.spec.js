@@ -801,6 +801,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
     await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(1);
+    expect(new URL(subtitleRequests[0]).searchParams.get('start')).toBe('0');
+    expect(new URL(subtitleRequests[0]).searchParams.get('duration')).toBe('60');
     await expect.poll(() => page.evaluate(() => window.app.pages.watch.selectedSubtitleStreamIndex), {
         timeout: 10_000
     }).not.toBeNull();
@@ -834,6 +836,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 30_000 }).toBe(true);
     expect(subtitleRequests).toHaveLength(2);
+    expect(subtitleRequests.every(requestUrl => (
+        new URL(requestUrl).searchParams.get('duration') === '60'
+    ))).toBe(true);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
@@ -843,6 +848,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
     await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(3);
+    expect(new URL(subtitleRequests[2]).searchParams.get('start')).toBe('0');
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
     ))), { timeout: 30_000 }).toBe(true);
