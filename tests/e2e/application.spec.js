@@ -787,6 +787,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
 
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.selectedSubtitleStreamIndex), {
+        timeout: 10_000
+    }).not.toBeNull();
+
     // A growing transcode playlist must not redefine the full VOD duration.
     // Seeking behind a session offset starts a replacement session at the
     // requested source position instead of clamping to the current window.
@@ -812,14 +819,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
-    await watchVideo.evaluate(element => { element.currentTime = 2; });
-
-    await page.locator('.watch-video-section').hover();
-    await page.locator('#watch-captions-btn').click();
-    await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
-    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+    await expect.poll(async () => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 30_000 }).toBe(true);
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
+    ))), { timeout: 10_000 }).toBe(true);
+
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();

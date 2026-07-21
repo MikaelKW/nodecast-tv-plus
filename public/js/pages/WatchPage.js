@@ -96,6 +96,7 @@ class WatchPage {
         this.subtitleStreamUrl = null;
         this.probeSubtitleCues = new WeakMap();
         this.selectedSubtitleStreamIndex = null;
+        this.subtitleRestoreTimers = [];
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -220,7 +221,10 @@ class WatchPage {
 
         // Video events
         this.video?.addEventListener('timeupdate', () => this.updateProgress());
-        this.video?.addEventListener('loadedmetadata', () => this.onMetadataLoaded());
+        this.video?.addEventListener('loadedmetadata', () => {
+            this.onMetadataLoaded();
+            this.scheduleSelectedSubtitleRestore();
+        });
         this.video?.addEventListener('play', () => this.onPlay());
         this.video?.addEventListener('pause', () => this.onPause());
         this.video?.addEventListener('ended', () => this.onEnded());
@@ -229,6 +233,7 @@ class WatchPage {
         this.video?.addEventListener('canplay', () => {
             this.hlsMediaRecoveryCount = 0;
             this.hideLoading();
+            this.scheduleSelectedSubtitleRestore();
         });
 
         // Overlay auto-hide + click to toggle play
@@ -932,6 +937,7 @@ class WatchPage {
                 this.showOverlay();
             }
             this.renderProbeSubtitleTracks();
+            this.scheduleSelectedSubtitleRestore();
         });
 
         this.hls.on(Hls.Events.FRAG_LOADED, () => {
@@ -1386,6 +1392,7 @@ class WatchPage {
     // === Audio and subtitles ===
 
     resetMediaTracks() {
+        this.clearSubtitleRestoreTimers();
         this.video?.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
         this.availableAudioTracks = [];
         this.availableSubtitleTracks = [];
@@ -1398,6 +1405,30 @@ class WatchPage {
         this.audioSelectionExplicit = false;
         this.updateAudioTracks();
         this.updateCaptionsTracks();
+    }
+
+    clearSubtitleRestoreTimers() {
+        for (const timer of this.subtitleRestoreTimers || []) clearTimeout(timer);
+        this.subtitleRestoreTimers = [];
+    }
+
+    restoreSelectedSubtitleTrack() {
+        if (!Number.isInteger(this.selectedSubtitleStreamIndex) || !this.video) return false;
+        const trackElement = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
+        if (!trackElement || !this.probeSubtitleCues.has(trackElement)) return false;
+        return this.activateProbeSubtitleTrack(trackElement);
+    }
+
+    scheduleSelectedSubtitleRestore() {
+        this.clearSubtitleRestoreTimers();
+        if (!Number.isInteger(this.selectedSubtitleStreamIndex)) return;
+        for (const delay of [0, 150, 500, 1000]) {
+            this.subtitleRestoreTimers.push(setTimeout(() => {
+                this.restoreSelectedSubtitleTrack();
+                this.updateCaptionsTracks();
+            }, delay));
+        }
     }
 
     getLanguageName(language) {
@@ -1519,6 +1550,7 @@ class WatchPage {
             trackElement.track.mode = 'hidden';
             if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
                 this.activateProbeSubtitleTrack(trackElement);
+                this.scheduleSelectedSubtitleRestore();
             }
             this.updateCaptionsTracks();
         } catch (error) {
@@ -1766,11 +1798,14 @@ class WatchPage {
             if (probeTrack) {
                 this.selectedSubtitleStreamIndex = Number(probeTrack.dataset.nodecastSubtitleIndex);
                 this.activateProbeSubtitleTrack(probeTrack);
+                this.scheduleSelectedSubtitleRestore();
             } else {
+                this.clearSubtitleRestoreTimers();
                 this.selectedSubtitleStreamIndex = null;
                 tracks[index].mode = 'showing';
             }
         } else {
+            this.clearSubtitleRestoreTimers();
             this.selectedSubtitleStreamIndex = null;
         }
 
