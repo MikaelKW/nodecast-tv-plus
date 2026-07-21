@@ -766,9 +766,12 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     ));
     const defaultAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
     await page.locator('#watch-audio-list .captions-option', { hasText: 'Norwegian 880 Hz' }).click();
-    await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
-        timeout: 30_000
-    }).not.toBe(defaultAudioSession);
+    await expect.poll(() => page.evaluate(previousSessionId => {
+        const currentSessionId = window.app.pages.watch.currentSessionId;
+        return currentSessionId && currentSessionId !== previousSessionId
+            ? currentSessionId
+            : null;
+    }, defaultAudioSession), { timeout: 30_000 }).not.toBeNull();
     await expect.poll(() => page.evaluate(() => {
         const watch = window.app.pages.watch;
         const selected = watch.availableAudioTracks.find(track => track.index === watch.selectedAudioTrackIndex);
