@@ -18,6 +18,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
+    const subtitleRequests = [];
     let expectedRejectedResourceErrors = 0;
     let expectedAuthenticationErrors = 0;
     page.on('pageerror', error => browserErrors.push(`pageerror: ${error.message}`));
@@ -37,6 +38,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         browserErrors.push(`console: ${message.text()}`);
     });
     page.on('request', request => {
+        if (request.method() === 'GET' && request.url().includes('/api/subtitle?')) {
+            subtitleRequests.push(request.url());
+            return;
+        }
         if (request.method() !== 'POST' || !request.url().endsWith('/api/transcode/session')) return;
         const sourceUrl = request.postDataJSON()?.url;
         if (!sourceUrl) return;
@@ -690,6 +695,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    expect(subtitleRequests).toHaveLength(0);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-quality-btn').click();
@@ -752,6 +758,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#watch-audio-list')).toContainText('Norwegian 880 Hz');
     await expect(page.locator('#watch-captions-list')).toContainText('English');
     await expect(page.locator('#watch-captions-list')).toContainText('Norwegian');
+    expect(subtitleRequests).toHaveLength(0);
 
     await watchVideo.evaluate(element => { element.currentTime = 5; });
     const contentPositionBeforeAudioSwitch = await page.evaluate(() => (
@@ -790,6 +797,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
+    await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(1);
     await expect.poll(() => page.evaluate(() => window.app.pages.watch.selectedSubtitleStreamIndex), {
         timeout: 10_000
     }).not.toBeNull();
@@ -822,6 +830,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 30_000 }).toBe(true);
+    expect(subtitleRequests).toHaveLength(2);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
@@ -830,6 +839,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
+    await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(3);
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
     ))), { timeout: 30_000 }).toBe(true);
