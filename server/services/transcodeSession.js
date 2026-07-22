@@ -206,7 +206,13 @@ class TranscodeSession extends EventEmitter {
         // beginning. The non-seek path retains the provider-compatible setting
         // that avoids speculative Range/HEAD requests during ordinary startup.
         if (this.options.seekOffset > 0) {
-            args.push('-ss', String(this.options.seekOffset));
+            // Video is frequently stream-copied while incompatible audio is
+            // transcoded. Accurate input seeking discards the audio preroll but
+            // cannot discard copied video packets, leaving the first HLS segment
+            // with a multi-second A/V timestamp gap in some containers. Keep the
+            // same seek preroll for every mapped stream so browser decoders begin
+            // from one coherent clock.
+            args.push('-ss', String(this.options.seekOffset), '-noaccurate_seek');
         } else {
             args.push('-seekable', '0');
         }

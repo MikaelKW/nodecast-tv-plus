@@ -750,6 +750,21 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(playbackNavbarLayout.scrollHeight).toBeLessThanOrEqual(60);
     expect(playbackNavbarLayout.nowPlayingWidth).toBeGreaterThan(0);
     expect(playbackNavbarLayout.labelsHidden).toBe(true);
+    const playbackOverlayLayout = await page.evaluate(() => {
+        const overlay = document.querySelector('.watch-overlay');
+        const topBar = document.querySelector('.watch-top-bar');
+        const bottomBar = document.querySelector('.watch-bottom-bar');
+        return {
+            overlayBackground: getComputedStyle(overlay).backgroundImage,
+            overlayContain: getComputedStyle(overlay).contain,
+            topBackground: getComputedStyle(topBar).backgroundImage,
+            bottomBackground: getComputedStyle(bottomBar).backgroundImage
+        };
+    });
+    expect(playbackOverlayLayout.overlayBackground).toBe('none');
+    expect(playbackOverlayLayout.overlayContain).toContain('paint');
+    expect(playbackOverlayLayout.topBackground).not.toBe('none');
+    expect(playbackOverlayLayout.bottomBackground).not.toBe('none');
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
