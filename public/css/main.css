@@ -3883,19 +3883,20 @@ kbd {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background: linear-gradient(to bottom,
-      rgba(0, 0, 0, 0.7) 0%,
-      transparent 20%,
-      transparent 75%,
-      rgba(0, 0, 0, 0.8) 100%);
+  background: none;
   opacity: 1;
-  transition: opacity 0.3s ease;
+  visibility: visible;
+  transition: opacity 0.2s ease, visibility 0s linear 0s;
   pointer-events: auto;
   z-index: 10;
+  contain: paint;
+  will-change: opacity;
 }
 
 .watch-overlay.hidden {
   opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   pointer-events: none;
 }
 
@@ -3918,6 +3919,7 @@ kbd {
   z-index: 20;
   width: 100%;
   box-sizing: border-box;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.72), transparent);
 }
 
 .watch-top-bar>* {
@@ -4049,6 +4051,7 @@ kbd {
 .watch-bottom-bar {
   padding: var(--space-md) var(--space-lg);
   padding-bottom: calc(var(--space-lg) + var(--safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.82), transparent);
 }
 
 /* Progress Container */
