@@ -141,6 +141,11 @@ async function main() {
     const inputIndex = seekArgs.indexOf('-i');
     assert.ok(seekIndex >= 0 && seekIndex < inputIndex, 'VOD seeking must happen before the input is opened.');
     assert.equal(seekArgs[seekIndex + 1], '1920');
+    const nonAccurateSeekIndex = seekArgs.indexOf('-noaccurate_seek');
+    assert.ok(
+        nonAccurateSeekIndex > seekIndex && nonAccurateSeekIndex < inputIndex,
+        'Stream-copy VOD seeks must preserve matching audio and video preroll.'
+    );
     assert.equal(seekArgs.includes('-seekable'), false, 'Seeked VOD input must permit HTTP byte-range seeking.');
 
     const ordinarySession = new TranscodeSession('https://example.com/source', {
@@ -150,6 +155,7 @@ async function main() {
     const ordinaryArgs = ordinarySession.buildFFmpegArgs();
     assert.ok(ordinaryArgs.indexOf('-seekable') < ordinaryArgs.indexOf('-i'));
     assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-seekable') + 1], '0');
+    assert.equal(ordinaryArgs.includes('-noaccurate_seek'), false);
 
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
