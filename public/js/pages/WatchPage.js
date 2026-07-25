@@ -97,6 +97,8 @@ class WatchPage {
         this.probeSubtitleCues = new WeakMap();
         this.probeSubtitleWindows = new WeakMap();
         this.probeSubtitleLoads = new WeakMap();
+        this.probeSubtitleRenderedCues = new WeakMap();
+        this.probeSubtitleRenderedOffsets = new WeakMap();
         this.subtitleLoadControllers = new Set();
         this.selectedSubtitleStreamIndex = null;
         this.subtitleRestoreTimers = [];
@@ -1421,6 +1423,8 @@ class WatchPage {
         this.probeSubtitleCues = new WeakMap();
         this.probeSubtitleWindows = new WeakMap();
         this.probeSubtitleLoads = new WeakMap();
+        this.probeSubtitleRenderedCues = new WeakMap();
+        this.probeSubtitleRenderedOffsets = new WeakMap();
         this.selectedSubtitleStreamIndex = null;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
@@ -1602,7 +1606,7 @@ class WatchPage {
             .some(window => Math.abs(window.start - normalizedStart) < 0.001);
     }
 
-    mergeProbeSubtitleCues(trackElement, cues, windowStart) {
+    mergeProbeSubtitleCues(trackElement, cues) {
         if (!trackElement?.isConnected || !Array.isArray(cues) || cues.length === 0) return false;
         const existing = this.probeSubtitleCues.get(trackElement) || [];
         const merged = new Map(existing.map(cue => [
@@ -1610,14 +1614,9 @@ class WatchPage {
             cue
         ]));
         for (const cue of cues) {
-            const shiftedCue = {
-                ...cue,
-                startTime: cue.startTime + windowStart,
-                endTime: cue.endTime + windowStart
-            };
             merged.set(
-                `${shiftedCue.startTime.toFixed(3)}|${shiftedCue.endTime.toFixed(3)}|${shiftedCue.text}`,
-                shiftedCue
+                `${cue.startTime.toFixed(3)}|${cue.endTime.toFixed(3)}|${cue.text}`,
+                cue
             );
         }
         this.probeSubtitleCues.set(
@@ -1686,7 +1685,7 @@ class WatchPage {
                         const completeText = buffer.slice(0, completeBoundary + 2);
                         buffer = buffer.slice(completeBoundary + 2);
                         const cues = this.parseWebVtt(completeText);
-                        if (this.mergeProbeSubtitleCues(trackElement, cues, normalizedStart)) {
+                        if (this.mergeProbeSubtitleCues(trackElement, cues)) {
                             receivedCues = true;
                             if (Number(trackElement.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex) {
                                 this.activateProbeSubtitleTrack(trackElement);
@@ -1700,7 +1699,7 @@ class WatchPage {
             }
 
             const finalCues = this.parseWebVtt(buffer);
-            if (this.mergeProbeSubtitleCues(trackElement, finalCues, normalizedStart)) {
+            if (this.mergeProbeSubtitleCues(trackElement, finalCues)) {
                 receivedCues = true;
             }
             if (!trackElement.isConnected || !trackElement.track) return false;
@@ -1745,17 +1744,32 @@ class WatchPage {
         const Cue = window.VTTCue;
         if (!track || typeof Cue !== 'function') return false;
 
-        track.mode = 'hidden';
-        for (const existingCue of Array.from(track.cues || [])) {
-            track.removeCue(existingCue);
+        const playbackOffset = Math.max(0, Number(this.playbackTimeOffset) || 0);
+        let renderedCues = this.probeSubtitleRenderedCues.get(trackElement);
+        const renderedOffset = this.probeSubtitleRenderedOffsets.get(trackElement);
+
+        if (!renderedCues || renderedOffset !== playbackOffset) {
+            track.mode = 'hidden';
+            for (const existingCue of Array.from(track.cues || [])) {
+                track.removeCue(existingCue);
+            }
+            renderedCues = new Set();
+            this.probeSubtitleRenderedCues.set(trackElement, renderedCues);
+            this.probeSubtitleRenderedOffsets.set(trackElement, playbackOffset);
         }
+
         for (const cue of cues) {
-            const startTime = Math.max(0, cue.startTime - this.playbackTimeOffset);
-            const endTime = cue.endTime - this.playbackTimeOffset;
+            const cueKey = `${cue.startTime.toFixed(3)}|${cue.endTime.toFixed(3)}|${cue.text}`;
+            if (renderedCues.has(cueKey)) continue;
+
+            const startTime = Math.max(0, cue.startTime - playbackOffset);
+            const endTime = cue.endTime - playbackOffset;
             if (endTime <= 0) continue;
             track.addCue(new Cue(startTime, endTime, cue.text));
+            renderedCues.add(cueKey);
         }
-        track.mode = 'showing';
+
+        if (track.mode !== 'showing') track.mode = 'showing';
         return cues.length > 0;
     }
 
