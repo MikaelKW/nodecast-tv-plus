@@ -156,6 +156,8 @@ async function main() {
     assert.ok(ordinaryArgs.indexOf('-seekable') < ordinaryArgs.indexOf('-i'));
     assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-seekable') + 1], '0');
     assert.equal(ordinaryArgs.includes('-noaccurate_seek'), false);
+    assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-muxpreload') + 1], '0');
+    assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-muxdelay') + 1], '0');
 
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
@@ -221,6 +223,17 @@ async function main() {
                 'A transcode session should retry one initial HTTP 407 and produce HLS output.'
             );
             assert.equal(rejectedServer.requestCount(), 2, 'The application-level retry should reconnect exactly once.');
+            const firstSegmentProbe = spawnSync(ffprobePath, [
+                '-v', 'error',
+                '-show_entries', 'format=start_time',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                path.join(session.dir, 'seg0000.ts')
+            ], { windowsHide: true, encoding: 'utf8' });
+            assert.equal(firstSegmentProbe.status, 0, firstSegmentProbe.stderr);
+            assert.ok(
+                Number(firstSegmentProbe.stdout.trim()) < 0.2,
+                'HLS output must not add the MPEG-TS timestamp lead that makes source-clock subtitles appear early.'
+            );
         } finally {
             if (session) await session.cleanup();
             await rejectedServer.close();

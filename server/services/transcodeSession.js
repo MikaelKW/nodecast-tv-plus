@@ -288,6 +288,11 @@ class TranscodeSession extends EventEmitter {
             '-hls_list_size', '0', // Keep all segments in playlist
             '-hls_flags', 'independent_segments+append_list',
             '-hls_segment_type', 'mpegts',
+            // The MPEG-TS muxer otherwise adds an approximately 1.4-second
+            // timestamp lead. Embedded WebVTT cues retain the source clock, so
+            // removing that artificial lead keeps dialogue and cues aligned.
+            '-muxpreload', '0',
+            '-muxdelay', '0',
             '-hls_segment_filename', path.join(this.dir, 'seg%04d.ts'),
             this.playlistPath
         );
