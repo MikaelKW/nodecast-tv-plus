@@ -426,13 +426,17 @@ class WatchPage {
             if (!res.ok) throw new Error('Failed to start session');
             const session = await res.json();
             this.currentSessionId = session.sessionId;
-            this.playbackTimeOffset = seekOffset;
+            const mediaStartTime = Number(session.mediaStartTime);
+            this.playbackTimeOffset = Number.isFinite(mediaStartTime) && mediaStartTime >= 0
+                ? mediaStartTime
+                : seekOffset;
+            // Stream-copy seeking may generate a short keyframe preroll before
+            // the requested source position. Skip that already-buffered portion
+            // after metadata loads while retaining its real source clock.
+            this.resumeTime = Math.max(0, seekOffset - this.playbackTimeOffset);
             const sessionOptions = { ...options };
             delete sessionOptions.seekOffset;
             this.currentTranscodeOptions = sessionOptions;
-            // The backend already applied the resume point. Avoid seeking the
-            // shortened HLS timeline a second time in loadedmetadata.
-            this.resumeTime = 0;
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
             if (options.maxResolution || Number.isInteger(options.audioStreamIndex)) {

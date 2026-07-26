@@ -808,7 +808,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             ]
         };
     });
-    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(contentPositionBeforeAudioSwitch - 0.5);
+    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(0);
+    expect(resumedAudioClock.offset).toBeLessThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
 
