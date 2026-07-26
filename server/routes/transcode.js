@@ -65,6 +65,7 @@ router.post('/session', async (req, res) => {
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
+    const ffprobePath = req.app.locals.ffprobePath || 'ffprobe';
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
@@ -83,6 +84,7 @@ router.post('/session', async (req, res) => {
     try {
         session = await transcodeSession.createSession(validatedUrl, {
             ffmpegPath,
+            ffprobePath,
             userAgent,
             seekOffset: seekOffset || 0,
             hwEncoder: settings.hwEncoder || 'software',
@@ -120,6 +122,7 @@ router.post('/session', async (req, res) => {
         res.json({
             sessionId: session.id,
             playlistUrl: `/api/transcode/${session.id}/stream.m3u8`,
+            mediaStartTime: session.mediaStartTime,
             status: session.status
         });
 

@@ -808,7 +808,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             ]
         };
     });
-    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(contentPositionBeforeAudioSwitch - 0.5);
+    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(0);
+    expect(resumedAudioClock.offset).toBeLessThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
     expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
 
@@ -858,6 +859,40 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
         track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 10_000 }).toBe(true);
+    await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
+    });
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => (
+            cue.text.includes('[Controlled background sound]')
+        ))
+    ))), { timeout: 10_000 }).toBe(true);
+    const stableSubtitleCues = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === watch.selectedSubtitleStreamIndex);
+        const track = trackElement.track;
+        const originalCues = Array.from(track.cues || []);
+        watch.activateProbeSubtitleTrack(trackElement);
+        const activeText = Array.from(track.activeCues || []).map(cue => cue.text);
+        return {
+            originalCount: originalCues.length,
+            repeatedCount: track.cues?.length || 0,
+            preservedObjects: originalCues.every((cue, index) => track.cues[index] === cue),
+            timelineOffset: watch.subtitleMediaTimeOffset,
+            timelineResolved: watch.subtitleMediaTimeOffsetResolved,
+            activeText
+        };
+    });
+    expect(stableSubtitleCues.originalCount).toBeGreaterThanOrEqual(3);
+    expect(stableSubtitleCues.repeatedCount).toBe(stableSubtitleCues.originalCount);
+    expect(stableSubtitleCues.preservedObjects).toBe(true);
+    expect(stableSubtitleCues.timelineResolved).toBe(true);
+    expect(stableSubtitleCues.timelineOffset).toBeGreaterThan(0);
+    expect(stableSubtitleCues.timelineOffset).toBeLessThan(3);
+    expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
+    expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
 
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
