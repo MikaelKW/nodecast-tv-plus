@@ -67,9 +67,11 @@ class TranscodeSession extends EventEmitter {
         this.status = 'pending'; // pending | starting | running | stopped | error
         this.error = null;
         this.startTime = Date.now();
+        this.mediaStartTime = Math.max(0, Number(options.seekOffset) || 0);
         this.lastAccess = Date.now();
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
+            ffprobePath: options.ffprobePath || 'ffprobe',
             userAgent: options.userAgent || 'Mozilla/5.0',
             seekOffset: options.seekOffset || 0,
             hwEncoder: options.hwEncoder || 'software',
@@ -212,7 +214,9 @@ class TranscodeSession extends EventEmitter {
             // with a multi-second A/V timestamp gap in some containers. Keep the
             // same seek preroll for every mapped stream so browser decoders begin
             // from one coherent clock.
-            args.push('-ss', String(this.options.seekOffset), '-noaccurate_seek');
+            // Retain the source clock so the first generated segment can report
+            // the actual keyframe/audio preroll used for stream-copy seeking.
+            args.push('-copyts', '-ss', String(this.options.seekOffset), '-noaccurate_seek');
         } else {
             args.push('-seekable', '0');
         }
@@ -282,6 +286,11 @@ class TranscodeSession extends EventEmitter {
         }
 
         // HLS output options
+        if (this.options.seekOffset > 0) {
+            // With -copyts, remove the MPEG-TS muxer's artificial timestamp
+            // lead so ffprobe reports the real source time of the first packet.
+            args.push('-muxpreload', '0', '-muxdelay', '0');
+        }
         args.push(
             '-f', 'hls',
             '-hls_time', String(SEGMENT_DURATION),
@@ -593,6 +602,49 @@ class TranscodeSession extends EventEmitter {
         return false;
     }
 
+    async resolveMediaStartTime() {
+        if (!(this.options.seekOffset > 0)) {
+            this.mediaStartTime = 0;
+            return this.mediaStartTime;
+        }
+
+        const segmentPath = path.join(this.dir, 'seg0000.ts');
+        const value = await new Promise((resolve, reject) => {
+            const probe = spawn(this.options.ffprobePath, [
+                '-v', 'error',
+                '-show_entries', 'format=start_time',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                segmentPath
+            ], { windowsHide: true });
+            let stdout = '';
+            let stderr = '';
+            const timer = setTimeout(() => {
+                probe.kill('SIGKILL');
+                reject(new Error('First-segment timestamp probe timed out'));
+            }, 5000);
+            probe.stdout.on('data', chunk => { stdout += chunk; });
+            probe.stderr.on('data', chunk => { stderr += chunk; });
+            probe.on('error', error => {
+                clearTimeout(timer);
+                reject(error);
+            });
+            probe.on('close', code => {
+                clearTimeout(timer);
+                if (code !== 0) {
+                    reject(new Error(`First-segment timestamp probe failed: ${redactText(stderr)}`));
+                    return;
+                }
+                resolve(Number(stdout.trim()));
+            });
+        });
+
+        if (!Number.isFinite(value) || value < 0) {
+            throw new Error('First-segment timestamp probe returned an invalid value');
+        }
+        this.mediaStartTime = value;
+        return this.mediaStartTime;
+    }
+
     /**
      * Start FFmpeg and retry once when a provider rejects the initial
      * connection before any playlist data is produced.
@@ -600,7 +652,10 @@ class TranscodeSession extends EventEmitter {
     async startAndWaitForPlaylist(timeoutMs = 10000, maxAttempts = 2) {
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             await this.start();
-            if (await this.waitForPlaylist(timeoutMs)) return true;
+            if (await this.waitForPlaylist(timeoutMs)) {
+                await this.resolveMediaStartTime();
+                return true;
+            }
             if (this.status !== 'error' || attempt === maxAttempts) return false;
 
             console.warn(`[TranscodeSession ${this.id}] Initial connection failed; retrying once`);

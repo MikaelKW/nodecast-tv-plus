@@ -3,9 +3,9 @@ const router = express.Router();
 const { spawn } = require('child_process');
 const auth = require('../auth');
 const db = require('../db');
-const { FFMPEG_PROTOCOL_WHITELIST, validateHttpUrl } = require('../services/urlSecurity');
-const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { validateHttpUrl } = require('../services/urlSecurity');
 const { parseOptionalStreamIndex } = require('../services/mediaSelection');
+const { buildSubtitleExtractionArgs } = require('../services/subtitleExtraction');
 
 router.use(auth.requireAuth);
 
@@ -49,23 +49,13 @@ router.get('/', async (req, res) => {
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
-    const args = [
-        '-hide_banner',
-        '-loglevel', 'warning',
-        '-user_agent', userAgent,
-        '-probesize', '5000000',
-        '-analyzeduration', '5000000',
-        ...appendHttpReconnectArgs([]),
-        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
-        ...(windowDuration !== null && windowStart > 0 ? ['-ss', String(windowStart)] : []),
-        ...(windowDuration === null ? ['-seekable', '0'] : []),
-        '-i', validatedUrl,
-        '-map', `0:${streamIndex}`,
-        ...(windowDuration !== null ? ['-t', String(windowDuration)] : []),
-        '-c:s', 'webvtt',
-        '-f', 'webvtt',
-        '-'
-    ];
+    const args = buildSubtitleExtractionArgs({
+        url: validatedUrl,
+        streamIndex,
+        userAgent,
+        windowStart,
+        windowDuration
+    });
 
     const ffmpeg = spawn(ffmpegPath, args);
 

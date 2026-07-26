@@ -82,7 +82,21 @@ function generateMedia() {
 
     const englishSubtitles = path.join(testRoot, 'english.srt');
     const norwegianSubtitles = path.join(testRoot, 'norwegian.srt');
-    fs.writeFileSync(englishSubtitles, '1\n00:00:00,500 --> 00:00:18,000\nEnglish controlled subtitle\n');
+    fs.writeFileSync(englishSubtitles, [
+        '1',
+        '00:00:00,500 --> 00:00:18,000',
+        'English controlled subtitle',
+        '',
+        '2',
+        '00:00:02,000 --> 00:00:06,000',
+        '[Controlled background sound]',
+        '',
+        '3',
+        '00:00:02,000 --> 00:00:06,000',
+        'First controlled speaker',
+        'Second controlled speaker',
+        ''
+    ].join('\n'));
     fs.writeFileSync(norwegianSubtitles, '1\n00:00:00,500 --> 00:00:18,000\nNorsk kontrollert undertekst\n');
     const multiTrackResult = spawnSync(ffmpegPath, [
         '-hide_banner', '-loglevel', 'error', '-y',
