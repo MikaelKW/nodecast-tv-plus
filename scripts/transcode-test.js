@@ -7,7 +7,12 @@ const path = require('node:path');
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-transcode-test-'));
 process.env.NODECAST_CACHE_DIR = path.join(testRoot, 'cache');
 const ffmpegPath = require('ffmpeg-static');
-const ffprobePath = require('@ffprobe-installer/ffprobe').path;
+const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
+const systemFfprobe = spawnSync('ffprobe', ['-version'], {
+    stdio: 'ignore',
+    windowsHide: true
+});
+const ffprobePath = systemFfprobe.status === 0 ? 'ffprobe' : bundledFfprobePath;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const { TranscodeSession } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
