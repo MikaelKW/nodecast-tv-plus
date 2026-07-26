@@ -106,6 +106,8 @@ class WatchPage {
         this.subtitleWindowStep = 50;
         this.subtitleWindowLookBehind = 10;
         this.subtitleLoadingEnabled = false;
+        this.subtitleMediaTimeOffset = 0;
+        this.subtitleMediaTimeOffsetResolved = false;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -886,6 +888,8 @@ class WatchPage {
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
         this.hlsMediaRecoveryCount = 0;
+        this.subtitleMediaTimeOffset = 0;
+        this.subtitleMediaTimeOffsetResolved = false;
 
         if (this.hls) {
             this.hls.destroy();
@@ -958,6 +962,16 @@ class WatchPage {
             if (activeHls !== this.hls) return;
             this.hlsRecoveryCount = 0;
             this.hideLoading();
+        });
+
+        this.hls.on(Hls.Events.BUFFER_APPENDED, (event, data) => {
+            if (activeHls !== this.hls || this.subtitleMediaTimeOffsetResolved) return;
+            const fragment = data?.frag;
+            const playlistTime = Number(fragment?.start);
+            const mediaTime = Number(fragment?.elementaryStreams?.video?.startPTS);
+            if (!Number.isFinite(playlistTime) || !Number.isFinite(mediaTime)) return;
+            this.subtitleMediaTimeOffsetResolved = true;
+            this.setSubtitleMediaTimeOffset(mediaTime - playlistTime);
         });
 
         this.hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
@@ -1425,6 +1439,8 @@ class WatchPage {
         this.probeSubtitleLoads = new WeakMap();
         this.probeSubtitleRenderedCues = new WeakMap();
         this.probeSubtitleRenderedOffsets = new WeakMap();
+        this.subtitleMediaTimeOffset = 0;
+        this.subtitleMediaTimeOffsetResolved = false;
         this.selectedSubtitleStreamIndex = null;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
@@ -1462,6 +1478,14 @@ class WatchPage {
                 this.updateCaptionsTracks();
             }, delay));
         }
+    }
+
+    setSubtitleMediaTimeOffset(offset) {
+        const measuredOffset = Number(offset);
+        if (!Number.isFinite(measuredOffset) || Math.abs(measuredOffset) > 30) return false;
+        if (Math.abs(this.subtitleMediaTimeOffset - measuredOffset) < 0.001) return false;
+        this.subtitleMediaTimeOffset = measuredOffset;
+        return this.restoreSelectedSubtitleTrack();
     }
 
     getLanguageName(language) {
@@ -1745,25 +1769,27 @@ class WatchPage {
         if (!track || typeof Cue !== 'function') return false;
 
         const playbackOffset = Math.max(0, Number(this.playbackTimeOffset) || 0);
+        const mediaTimeOffset = Number(this.subtitleMediaTimeOffset) || 0;
+        const timelineKey = `${playbackOffset.toFixed(3)}|${mediaTimeOffset.toFixed(3)}`;
         let renderedCues = this.probeSubtitleRenderedCues.get(trackElement);
         const renderedOffset = this.probeSubtitleRenderedOffsets.get(trackElement);
 
-        if (!renderedCues || renderedOffset !== playbackOffset) {
+        if (!renderedCues || renderedOffset !== timelineKey) {
             track.mode = 'hidden';
             for (const existingCue of Array.from(track.cues || [])) {
                 track.removeCue(existingCue);
             }
             renderedCues = new Set();
             this.probeSubtitleRenderedCues.set(trackElement, renderedCues);
-            this.probeSubtitleRenderedOffsets.set(trackElement, playbackOffset);
+            this.probeSubtitleRenderedOffsets.set(trackElement, timelineKey);
         }
 
         for (const cue of cues) {
             const cueKey = `${cue.startTime.toFixed(3)}|${cue.endTime.toFixed(3)}|${cue.text}`;
             if (renderedCues.has(cueKey)) continue;
 
-            const startTime = Math.max(0, cue.startTime - playbackOffset);
-            const endTime = cue.endTime - playbackOffset;
+            const startTime = Math.max(0, cue.startTime - playbackOffset + mediaTimeOffset);
+            const endTime = cue.endTime - playbackOffset + mediaTimeOffset;
             if (endTime <= 0) continue;
             track.addCue(new Cue(startTime, endTime, cue.text));
             renderedCues.add(cueKey);

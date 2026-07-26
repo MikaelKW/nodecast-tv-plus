@@ -29,6 +29,8 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
         watch.activateProbeSubtitleTrack(trackElement);
 
         const initialCues = Array.from(trackElement.track.cues || []);
+        watch.setSubtitleMediaTimeOffset(1.4);
+        const offsetCues = Array.from(trackElement.track.cues || []);
         watch.mergeProbeSubtitleCues(trackElement, [
             { startTime: 2, endTime: 6, text: 'Second controlled speaker' },
             { startTime: 6, endTime: 9, text: 'Later controlled cue' }
@@ -41,13 +43,19 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
             texts: refreshedCues.map(cue => cue.text),
             initialCount: initialCues.length,
             refreshedCount: refreshedCues.length,
-            preservedExistingObjects: initialCues.every((cue, index) => refreshedCues[index] === cue)
+            initialStart: initialCues[0].startTime,
+            offsetStart: offsetCues[0].startTime,
+            rebuiltForOffset: initialCues[0] !== offsetCues[0],
+            preservedExistingObjects: offsetCues.every((cue, index) => refreshedCues[index] === cue)
         };
     });
 
     expect(result.mode).toBe('showing');
     expect(result.initialCount).toBe(3);
     expect(result.refreshedCount).toBe(4);
+    expect(result.initialStart).toBeCloseTo(0.5, 3);
+    expect(result.offsetStart).toBeCloseTo(1.9, 3);
+    expect(result.rebuiltForOffset).toBe(true);
     expect(result.preservedExistingObjects).toBe(true);
     expect(result.texts).toContain('First controlled speaker');
     expect(result.texts).toContain('Second controlled speaker');
