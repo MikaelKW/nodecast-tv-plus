@@ -1795,7 +1795,28 @@ class WatchPage {
             const startTime = Math.max(0, cue.startTime - playbackOffset + mediaTimeOffset);
             const endTime = cue.endTime - playbackOffset + mediaTimeOffset;
             if (endTime <= 0) continue;
-            track.addCue(new Cue(startTime, endTime, cue.text));
+            const renderedCue = new Cue(startTime, endTime, cue.text);
+            const overlappingCues = Array.from(track.cues || [])
+                .filter(existingCue => (
+                    existingCue.startTime < endTime
+                    && existingCue.endTime > startTime
+                ));
+
+            // Percentage positioning is consistent across native WebVTT
+            // engines. Reflow the overlapping group from bottom to top and
+            // reserve seven percent per occupied line so browser collision
+            // correction cannot reorder simultaneous speakers.
+            const cueGroup = [...overlappingCues, renderedCue];
+            let nextCueLine = 88;
+            for (let index = cueGroup.length - 1; index >= 0; index -= 1) {
+                const groupedCue = cueGroup[index];
+                groupedCue.snapToLines = false;
+                groupedCue.lineAlign = 'end';
+                groupedCue.line = Math.max(10, nextCueLine);
+                const groupedLineCount = Math.max(1, String(groupedCue.text || '').split('\n').length);
+                nextCueLine -= groupedLineCount * 7;
+            }
+            track.addCue(renderedCue);
             renderedCues.add(cueKey);
         }
 
