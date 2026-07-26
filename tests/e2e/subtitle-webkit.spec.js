@@ -1,5 +1,41 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const { test, expect } = require('@playwright/test');
+
+test('subtitle presentation uses responsive text and a transparent outlined cue', async ({ page }) => {
+    const stylesheet = fs.readFileSync(path.resolve(__dirname, '../../public/css/main.css'), 'utf8');
+    await page.setContent(`
+        <style>${stylesheet}</style>
+        <video id="watch-video"></video>
+    `);
+
+    const cueRule = await page.evaluate(() => {
+        for (const stylesheet of Array.from(document.styleSheets)) {
+            for (const rule of Array.from(stylesheet.cssRules || [])) {
+                if (rule.selectorText === 'video::cue') {
+                    return {
+                        backgroundColor: rule.style.backgroundColor,
+                        fontSize: rule.style.fontSize,
+                        fontFamily: rule.style.fontFamily,
+                        fontWeight: rule.style.fontWeight,
+                        lineHeight: rule.style.lineHeight,
+                        textShadow: rule.style.textShadow
+                    };
+                }
+            }
+        }
+        return null;
+    });
+
+    expect(cueRule).toEqual({
+        backgroundColor: 'transparent',
+        fontSize: 'clamp(20px, 2.1vw, 42px)',
+        fontFamily: 'Inter, \"Segoe UI\", Arial, sans-serif',
+        fontWeight: '500',
+        lineHeight: '1.3',
+        textShadow: expect.stringContaining('rgb(0, 0, 0)')
+    });
+});
 
 test('subtitle refresh preserves existing WebKit cues and overlapping dialogue', async ({ page }) => {
     await page.setContent(`
@@ -33,7 +69,7 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
         const offsetCues = Array.from(trackElement.track.cues || []);
         watch.mergeProbeSubtitleCues(trackElement, [
             { startTime: 2, endTime: 6, text: 'Second controlled speaker' },
-            { startTime: 6, endTime: 9, text: 'Later controlled cue' }
+            { startTime: 6, endTime: 9, text: 'Later controlled cue\ncontinued' }
         ]);
         watch.activateProbeSubtitleTrack(trackElement);
 
@@ -41,6 +77,9 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
         return {
             mode: trackElement.track.mode,
             texts: refreshedCues.map(cue => cue.text),
+            lines: refreshedCues.map(cue => cue.line),
+            lineAligns: refreshedCues.map(cue => cue.lineAlign),
+            snapToLines: refreshedCues.map(cue => cue.snapToLines),
             initialCount: initialCues.length,
             refreshedCount: refreshedCues.length,
             initialStart: initialCues[0].startTime,
@@ -53,6 +92,9 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
     expect(result.mode).toBe('showing');
     expect(result.initialCount).toBe(3);
     expect(result.refreshedCount).toBe(4);
+    expect(result.lines).toEqual([74, 81, 88, 88]);
+    expect(result.lineAligns).toEqual(['end', 'end', 'end', 'end']);
+    expect(result.snapToLines).toEqual([false, false, false, false]);
     expect(result.initialStart).toBeCloseTo(0.5, 3);
     expect(result.offsetStart).toBeCloseTo(1.9, 3);
     expect(result.rebuiltForOffset).toBe(true);
