@@ -43,6 +43,39 @@ async function expectInsideScroller(page, itemSelector, scrollerSelector) {
     expect(bounds.itemBottom).toBeLessThanOrEqual(bounds.scrollerBottom + 1);
 }
 
+async function expectFinalCardReachable(page, gridSelector, cardSelector) {
+    const layout = await page.evaluate(({ gridSelector, cardSelector }) => {
+        const grid = document.querySelector(gridSelector);
+        const sourceCard = grid?.querySelector(cardSelector);
+        if (!grid || !sourceCard) return null;
+
+        while (grid.querySelectorAll(cardSelector).length < 5) {
+            const clone = sourceCard.cloneNode(true);
+            const title = clone.querySelector('.movie-title, .series-title');
+            if (title) {
+                title.textContent = `Controlled catalogue item ${grid.querySelectorAll(cardSelector).length + 1}`;
+            }
+            grid.appendChild(clone);
+        }
+
+        grid.scrollTop = grid.scrollHeight;
+        const lastCard = grid.querySelector(`${cardSelector}:last-child`);
+        const gridRect = grid.getBoundingClientRect();
+        const cardRect = lastCard.getBoundingClientRect();
+        return {
+            scrollTop: grid.scrollTop,
+            gridBottom: gridRect.bottom,
+            cardBottom: cardRect.bottom,
+            viewportBottom: window.innerHeight
+        };
+    }, { gridSelector, cardSelector });
+
+    expect(layout).toBeTruthy();
+    expect(layout.scrollTop).toBeGreaterThan(0);
+    expect(layout.gridBottom).toBeLessThanOrEqual(layout.viewportBottom + 1);
+    expect(layout.cardBottom).toBeLessThanOrEqual(layout.viewportBottom + 1);
+}
+
 test('mobile Safari can reach page content in portrait and landscape', async ({ page }) => {
     const password = crypto.randomBytes(24).toString('base64url');
 
@@ -127,7 +160,13 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     });
     await waitForSync(page, seriesSource.id);
 
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expect(page.locator('.movie-card')).toHaveCount(1);
+    await expectFinalCardReachable(page, '#movies-grid', '.movie-card');
+
     await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('.series-card')).toHaveCount(2);
+    await expectFinalCardReachable(page, '#series-grid', '.series-card');
     const controlledSeries = page.locator('.series-card', { hasText: 'Controlled Mobile Long Series' });
     await expect(controlledSeries).toBeVisible();
     await controlledSeries.click();
@@ -137,6 +176,7 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(seriesScroll.scrollHeight).toBeGreaterThan(seriesScroll.clientHeight);
     expect(seriesScroll.scrollTop).toBeGreaterThan(0);
     await expectInsideScroller(page, '.episode-item:last-child', '#series-details');
+    await page.locator('.series-back-btn').click();
 
     await page.evaluate(() => window.app.navigateTo('home'));
     await expect(page.locator('#page-home .dashboard-section').last()).toBeVisible();
@@ -215,6 +255,11 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(navLayout.links.every(link => (
         link.visible && link.left >= 0 && link.right <= navLayout.viewportWidth + 1
     ))).toBe(true);
+
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await expectFinalCardReachable(page, '#movies-grid', '.movie-card');
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expectFinalCardReachable(page, '#series-grid', '.series-card');
 
     // iPhone Safari does not expose the standard element fullscreen API for
     // the Live TV container. The custom control must fall back to native
