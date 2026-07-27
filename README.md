@@ -89,7 +89,7 @@ Starting with version 2.5.0, the same stable images are mirrored to
      --env-file .env \
      -p 3000:3000 \
      -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
+     ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
    ```
 
 4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
@@ -114,17 +114,17 @@ For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEO
 
 ### Migrate from upstream NodeCast TV
 
-NodeCast TV Plus 2.4.0 has verified migration paths from these versions:
+NodeCast TV Plus 2.5.0 has verified migration paths from these versions:
 
 | Existing installation | Target | Status |
 | --- | --- | --- |
-| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
-| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
-| NodeCast TV Plus 2.3.1 (previous stable Plus release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate using the published image |
+| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
+| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
+| NodeCast TV Plus 2.4.0 (previous stable Plus release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate using the published image |
 
 The migration tests reuse each baseline's `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and authentication state. Upstream baselines additionally verify migration from a valid legacy bearer token to the Plus authentication cookie.
 
-Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.3.1 image to the 2.4.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.4.0 image to the 2.5.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
 
 Before migrating:
 
@@ -147,7 +147,7 @@ docker run -d \
   --env-file .env \
   -p 3000:3000 \
   -v EXISTING_UPSTREAM_VOLUME:/app/data \
-  ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
+  ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
 ```
 
 For an existing bind-mounted directory, mount its absolute path instead:
