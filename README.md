@@ -6,6 +6,7 @@
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/releases"><img src="https://img.shields.io/github/v/release/MikaelKW/nodecast-tv-plus?display_name=tag" alt="Latest release" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
+  <a href="https://hub.docker.com/r/mikaelkw/nodecast-tv-plus"><img src="https://img.shields.io/badge/Docker%20Hub-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="Docker Hub" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
 </p>
 
@@ -53,8 +54,12 @@ Release history and upgrade details are available in the [changelog](CHANGELOG.m
 
 ### Recommended: run the published container
 
-The official container supports `linux/amd64` and `linux/arm64` and is published at
-[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus).
+The official container supports `linux/amd64` and `linux/arm64`. GitHub Container Registry is the canonical registry:
+
+[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus)
+
+Starting with version 2.5.0, the same stable images are mirrored to
+[`mikaelkw/nodecast-tv-plus`](https://hub.docker.com/r/mikaelkw/nodecast-tv-plus) on Docker Hub. Exact-version, compatible-minor, and `latest` tags contain matching images in both registries. Development branch and commit tags remain available only from GitHub Container Registry.
 
 1. Create a directory for the deployment and download [`.env.example`](.env.example) as `.env`:
 
@@ -98,6 +103,12 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
    A ready container reports `healthy`. The lightweight `/api/health` endpoint returns only readiness status and the application version; it does not contact IPTV providers or expose configuration.
 
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
+
+For version 2.5.0 and later, Docker Hub can be used by substituting the image reference with the matching tag:
+
+```bash
+mikaelkw/nodecast-tv-plus:<version>
+```
 
 For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. It defaults to `15` and accepts a whole number from `1` to `300`. The value applies to each startup attempt; because one retry may occur after an initial provider rejection, the total wait can be approximately twice the configured value.
 
