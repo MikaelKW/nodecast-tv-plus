@@ -35,6 +35,7 @@ class WatchPage {
         this.timeTotal = document.getElementById('watch-time-total');
         this.scrollHint = document.getElementById('watch-scroll-hint');
         this.loadingSpinner = document.getElementById('watch-loading');
+        this.nativeVideoFullscreen = false;
 
         // Next episode
         this.nextEpisodePanel = document.getElementById('watch-next-episode');
@@ -194,6 +195,16 @@ class WatchPage {
 
         // Fullscreen
         this.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
+        document.addEventListener('fullscreenchange', () => this.updateScrollHintVisibility());
+        document.addEventListener('webkitfullscreenchange', () => this.updateScrollHintVisibility());
+        this.video?.addEventListener('webkitbeginfullscreen', () => {
+            this.nativeVideoFullscreen = true;
+            this.updateScrollHintVisibility();
+        });
+        this.video?.addEventListener('webkitendfullscreen', () => {
+            this.nativeVideoFullscreen = false;
+            this.updateScrollHintVisibility();
+        });
 
         // Picture-in-Picture
         const pipBtn = document.getElementById('watch-pip');
@@ -305,15 +316,28 @@ class WatchPage {
             }
         });
 
-        // Hide scroll hint after scrolling
+        // Hide the hint after scrolling or while either the web player
+        // container or iOS native video player is fullscreen.
         const watchPage = document.getElementById('page-watch');
-        watchPage?.addEventListener('scroll', () => {
-            if (watchPage.scrollTop > 50) {
-                this.scrollHint?.classList.add('hidden');
-            } else {
-                this.scrollHint?.classList.remove('hidden');
-            }
-        });
+        watchPage?.addEventListener('scroll', () => this.updateScrollHintVisibility());
+        this.updateScrollHintVisibility();
+    }
+
+    updateScrollHintVisibility() {
+        if (!this.scrollHint) return;
+
+        const watchPage = document.getElementById('page-watch');
+        const watchSection = document.querySelector('.watch-video-section');
+        const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+        const webPlayerFullscreen = Boolean(fullscreenElement && watchSection && (
+            fullscreenElement === watchSection || watchSection.contains(fullscreenElement)
+        ));
+        const pageScrolled = (watchPage?.scrollTop || 0) > 50;
+
+        this.scrollHint.classList.toggle(
+            'hidden',
+            pageScrolled || webPlayerFullscreen || this.nativeVideoFullscreen
+        );
     }
 
     /**
@@ -350,6 +374,7 @@ class WatchPage {
 
         // Scroll to top
         document.getElementById('page-watch')?.scrollTo(0, 0);
+        this.updateScrollHintVisibility();
 
         // Update title bar
         this.titleEl.textContent = content.title || '';

@@ -4384,6 +4384,11 @@ kbd {
   height: 20px;
 }
 
+.watch-video-section:fullscreen .watch-scroll-hint,
+.watch-video-section:-webkit-full-screen .watch-scroll-hint {
+  display: none;
+}
+
 @keyframes bounce {
 
   0%,
