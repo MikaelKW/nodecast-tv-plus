@@ -7,10 +7,16 @@ const path = require('node:path');
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-transcode-test-'));
 process.env.NODECAST_CACHE_DIR = path.join(testRoot, 'cache');
 const ffmpegPath = require('ffmpeg-static');
-const ffprobePath = require('@ffprobe-installer/ffprobe').path;
+const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
+const systemFfprobe = spawnSync('ffprobe', ['-version'], {
+    stdio: 'ignore',
+    windowsHide: true
+});
+const ffprobePath = systemFfprobe.status === 0 ? 'ffprobe' : bundledFfprobePath;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const { TranscodeSession } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
+const { parseOptionalStreamIndex } = require('../server/services/mediaSelection');
 const {
     DEFAULT_TRANSCODE_START_TIMEOUT_SECONDS,
     MAX_TRANSCODE_START_TIMEOUT_SECONDS,
@@ -45,12 +51,32 @@ async function createTransientServer(mediaPath, initialStatus) {
     let requests = 0;
     const server = http.createServer((req, res) => {
         requests += 1;
-        if (requests === 1) {
+        if (initialStatus && requests === 1) {
             res.writeHead(initialStatus, { Connection: 'close', 'Retry-After': '0' });
             return res.end('temporary provider rejection');
         }
         const stat = fs.statSync(mediaPath);
-        res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': stat.size });
+        const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+        if (range) {
+            const start = Number(range[1]);
+            const requestedEnd = range[2] ? Number(range[2]) : stat.size - 1;
+            const end = Math.min(requestedEnd, stat.size - 1);
+            res.writeHead(206, {
+                'Accept-Ranges': 'bytes',
+                'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+                'Content-Length': end - start + 1,
+                'Content-Type': 'video/mp4'
+            });
+            if (req.method === 'HEAD') return res.end();
+            fs.createReadStream(mediaPath, { start, end }).pipe(res);
+            return;
+        }
+        res.writeHead(200, {
+            'Accept-Ranges': 'bytes',
+            'Content-Type': 'video/mp4',
+            'Content-Length': stat.size
+        });
+        if (req.method === 'HEAD') return res.end();
         fs.createReadStream(mediaPath).pipe(res);
     });
 
@@ -111,6 +137,58 @@ async function main() {
     assert.equal(parseMaxResolutionOverride('720p'), '720p');
     assert.throws(() => parseMaxResolutionOverride('1440p'), /maxResolution/);
     assert.throws(() => parseMaxResolutionOverride({}), /maxResolution/);
+    assert.equal(parseOptionalStreamIndex(undefined, 'audioStreamIndex'), null);
+    assert.equal(parseOptionalStreamIndex(' 2 ', 'audioStreamIndex'), 2);
+    assert.throws(() => parseOptionalStreamIndex('-1', 'audioStreamIndex'), /audioStreamIndex/);
+    assert.throws(() => parseOptionalStreamIndex('2.5', 'audioStreamIndex'), /audioStreamIndex/);
+    assert.throws(() => parseOptionalStreamIndex('not-a-track', 'audioStreamIndex'), /audioStreamIndex/);
+
+    const selectedAudioSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        audioStreamIndex: 3,
+        audioCodec: 'aac',
+        audioChannels: 2
+    });
+    const selectedAudioArgs = selectedAudioSession.buildFFmpegArgs();
+    const selectedAudioMap = selectedAudioArgs.findIndex((value, index) => (
+        value === '-map' && selectedAudioArgs[index + 1] === '0:3?'
+    ));
+    assert.ok(selectedAudioMap >= 0, 'The selected absolute audio stream index must be mapped into FFmpeg.');
+
+    const seekSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        seekOffset: 1920
+    });
+    const seekArgs = seekSession.buildFFmpegArgs();
+    const seekIndex = seekArgs.indexOf('-ss');
+    const inputIndex = seekArgs.indexOf('-i');
+    assert.ok(seekIndex >= 0 && seekIndex < inputIndex, 'VOD seeking must happen before the input is opened.');
+    assert.equal(seekArgs[seekIndex + 1], '1920');
+    const nonAccurateSeekIndex = seekArgs.indexOf('-noaccurate_seek');
+    assert.ok(
+        nonAccurateSeekIndex > seekIndex && nonAccurateSeekIndex < inputIndex,
+        'Stream-copy VOD seeks must preserve matching audio and video preroll.'
+    );
+    assert.ok(
+        seekArgs.indexOf('-copyts') < seekIndex,
+        'Seeked sessions must retain source timestamps so their actual media start can be measured.'
+    );
+    assert.equal(seekArgs[seekArgs.indexOf('-muxpreload') + 1], '0');
+    assert.equal(seekArgs[seekArgs.indexOf('-muxdelay') + 1], '0');
+    assert.equal(seekArgs.includes('-seekable'), false, 'Seeked VOD input must permit HTTP byte-range seeking.');
+
+    const ordinarySession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264'
+    });
+    const ordinaryArgs = ordinarySession.buildFFmpegArgs();
+    assert.ok(ordinaryArgs.indexOf('-seekable') < ordinaryArgs.indexOf('-i'));
+    assert.equal(ordinaryArgs[ordinaryArgs.indexOf('-seekable') + 1], '0');
+    assert.equal(ordinaryArgs.includes('-noaccurate_seek'), false);
+    assert.equal(ordinaryArgs.includes('-copyts'), false);
+    assert.equal(ordinaryArgs.includes('-muxdelay'), false);
 
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
@@ -179,6 +257,49 @@ async function main() {
         } finally {
             if (session) await session.cleanup();
             await rejectedServer.close();
+        }
+
+        const seekMediaPath = path.join(testRoot, 'seek-sample.mp4');
+        const generatedSeekMedia = spawnSync(ffmpegPath, [
+            '-hide_banner', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=24:d=8',
+            '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8',
+            '-c:v', 'libx264',
+            '-g', '96',
+            '-keyint_min', '96',
+            '-sc_threshold', '0',
+            '-c:a', 'aac',
+            '-shortest',
+            '-y', seekMediaPath
+        ], { windowsHide: true, encoding: 'utf8' });
+        assert.equal(generatedSeekMedia.status, 0, generatedSeekMedia.stderr || 'Failed to generate seek test media.');
+
+        const seekServer = await createTransientServer(seekMediaPath);
+        let seekedSession;
+        try {
+            seekedSession = new TranscodeSession('https://example.com/seek-source.mp4', {
+                ffmpegPath,
+                ffprobePath,
+                seekOffset: 5,
+                videoMode: 'copy',
+                videoCodec: 'h264',
+                audioCodec: 'aac',
+                audioChannels: 1,
+                audioMixPreset: 'passthrough'
+            });
+            seekedSession.url = seekServer.url;
+            assert.equal(
+                await seekedSession.startAndWaitForPlaylist(10_000, 1),
+                true,
+                'A seeked test session should generate an HLS playlist.'
+            );
+            assert.ok(
+                seekedSession.mediaStartTime < 5 && seekedSession.mediaStartTime >= 3.5,
+                `The measured session start should expose keyframe preroll; received ${seekedSession.mediaStartTime}.`
+            );
+        } finally {
+            if (seekedSession) await seekedSession.cleanup();
+            await seekServer.close();
         }
     } finally {
         fs.rmSync(testRoot, { recursive: true, force: true });

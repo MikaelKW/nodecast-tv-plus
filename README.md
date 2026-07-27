@@ -6,6 +6,7 @@
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/releases"><img src="https://img.shields.io/github/v/release/MikaelKW/nodecast-tv-plus?display_name=tag" alt="Latest release" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
+  <a href="https://hub.docker.com/r/mikaelkw/nodecast-tv-plus"><img src="https://img.shields.io/badge/Docker%20Hub-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="Docker Hub" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
 </p>
 
@@ -53,8 +54,12 @@ Release history and upgrade details are available in the [changelog](CHANGELOG.m
 
 ### Recommended: run the published container
 
-The official container supports `linux/amd64` and `linux/arm64` and is published at
-[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus).
+The official container supports `linux/amd64` and `linux/arm64`. GitHub Container Registry is the canonical registry:
+
+[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus)
+
+Starting with version 2.5.0, the same stable images are mirrored to
+[`mikaelkw/nodecast-tv-plus`](https://hub.docker.com/r/mikaelkw/nodecast-tv-plus) on Docker Hub. Exact-version, compatible-minor, and `latest` tags contain matching images in both registries. Development branch and commit tags remain available only from GitHub Container Registry.
 
 1. Create a directory for the deployment and download [`.env.example`](.env.example) as `.env`:
 
@@ -84,7 +89,7 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
      --env-file .env \
      -p 3000:3000 \
      -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
+     ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
    ```
 
 4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
@@ -99,21 +104,27 @@ The official container supports `linux/amd64` and `linux/arm64` and is published
 
 The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
 
+For version 2.5.0 and later, Docker Hub can be used by substituting the image reference with the matching tag:
+
+```bash
+mikaelkw/nodecast-tv-plus:<version>
+```
+
 For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. It defaults to `15` and accepts a whole number from `1` to `300`. The value applies to each startup attempt; because one retry may occur after an initial provider rejection, the total wait can be approximately twice the configured value.
 
 ### Migrate from upstream NodeCast TV
 
-NodeCast TV Plus 2.4.0 has verified migration paths from these versions:
+NodeCast TV Plus 2.5.0 has verified migration paths from these versions:
 
 | Existing installation | Target | Status |
 | --- | --- | --- |
-| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
-| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.4.0 | Verified by automated release gate |
-| NodeCast TV Plus 2.3.1 (previous stable Plus release) | NodeCast TV Plus 2.4.0 | Verified by automated release gate using the published image |
+| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
+| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
+| NodeCast TV Plus 2.4.0 (previous stable Plus release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate using the published image |
 
 The migration tests reuse each baseline's `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and authentication state. Upstream baselines additionally verify migration from a valid legacy bearer token to the Plus authentication cookie.
 
-Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.3.1 image to the 2.4.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.4.0 image to the 2.5.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
 
 Before migrating:
 
@@ -136,7 +147,7 @@ docker run -d \
   --env-file .env \
   -p 3000:3000 \
   -v EXISTING_UPSTREAM_VOLUME:/app/data \
-  ghcr.io/mikaelkw/nodecast-tv-plus:2.4.0
+  ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
 ```
 
 For an existing bind-mounted directory, mount its absolute path instead:
@@ -230,6 +241,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
           TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
           NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
+          NODECAST_INSTANCE_ID: ${NODECAST_INSTANCE_ID:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
           OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
           OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -245,6 +257,13 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
     ```
 
 The application will be available at `http://localhost:3000`.
+
+Each installation automatically stores a stable instance identifier in
+`/app/data/.nodecast-instance-id`. Authentication cookies use this identifier so
+multiple NodeCast TV Plus containers on different ports of the same hostname can
+remain signed in within one browser profile. Preserve `/app/data` during
+upgrades. When cloning an existing data volume to create a separate installation,
+set a different stable `NODECAST_INSTANCE_ID` for each clone.
 
 ### Container platforms
 

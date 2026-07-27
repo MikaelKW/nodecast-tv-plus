@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
 const auth = require('../auth');
-const { FFMPEG_PROTOCOL_WHITELIST, validateHttpUrl } = require('../services/urlSecurity');
+const db = require('../db');
+const { validateHttpUrl } = require('../services/urlSecurity');
+const { parseOptionalStreamIndex } = require('../services/mediaSelection');
+const { buildSubtitleExtractionArgs } = require('../services/subtitleExtraction');
 
 router.use(auth.requireAuth);
 
@@ -12,57 +15,82 @@ router.use(auth.requireAuth);
  * 
  * Extracts a specific subtitle track and converts it to WebVTT on the fly.
  */
-router.get('/', (req, res) => {
-    const { url, index } = req.query;
+router.get('/', async (req, res) => {
+    const { url, index, start, duration } = req.query;
 
     if (!url || index === undefined) {
         return res.status(400).json({ error: 'URL and index parameters are required' });
     }
 
     let validatedUrl;
+    let streamIndex;
+    let windowStart = 0;
+    let windowDuration = null;
     try {
         validatedUrl = validateHttpUrl(url);
+        streamIndex = parseOptionalStreamIndex(index, 'index');
+
+        const hasWindow = start !== undefined || duration !== undefined;
+        if (hasWindow) {
+            windowStart = Number(start ?? 0);
+            windowDuration = Number(duration);
+            if (!Number.isFinite(windowStart) || windowStart < 0 || windowStart > 86400) {
+                throw new Error('start must be between 0 and 86400 seconds');
+            }
+            if (!Number.isFinite(windowDuration) || windowDuration <= 0 || windowDuration > 120) {
+                throw new Error('duration must be between 0 and 120 seconds');
+            }
+        }
     } catch (err) {
         return res.status(400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
-    // console.log(`[Subtitle] Extracting track ${index} from: ${url}`);
+    const settings = await db.settings.get();
+    const userAgent = db.getUserAgent(settings);
 
-    const args = [
-        '-hide_banner',
-        '-loglevel', 'warning',
-        '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        '-probesize', '5000000',
-        '-analyzeduration', '5000000',
-        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
-        '-i', validatedUrl,
-        '-map', `0:${index}`,
-        '-c:s', 'webvtt',
-        '-f', 'webvtt',
-        '-'
-    ];
+    const args = buildSubtitleExtractionArgs({
+        url: validatedUrl,
+        streamIndex,
+        userAgent,
+        windowStart,
+        windowDuration
+    });
 
     const ffmpeg = spawn(ffmpegPath, args);
 
     res.setHeader('Content-Type', 'text/vtt');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
 
-    // Pipe stdout to response
-    ffmpeg.stdout.pipe(res);
+    // FFmpeg's WebVTT muxer can finish the last cue with only one trailing
+    // newline. Append an empty line so browser text-track parsers reliably
+    // finalize that cue before the response ends.
+    ffmpeg.stdout.pipe(res, { end: false });
+    ffmpeg.stdout.on('end', () => {
+        if (!res.writableEnded) res.end('\n');
+    });
 
     ffmpeg.stderr.on('data', (data) => {
         // console.error(`[Subtitle FFmpeg] ${data}`);
     });
 
-    req.on('close', () => {
-        ffmpeg.kill('SIGKILL');
-    });
+    const stopExtraction = () => {
+        if (!res.writableEnded && !ffmpeg.killed) ffmpeg.kill('SIGKILL');
+    };
+    res.on('close', stopExtraction);
 
     ffmpeg.on('error', (err) => {
         console.error('[Subtitle] Failed to spawn FFmpeg:', err);
         if (!res.headersSent) {
             res.status(500).send('Subtitle extraction failed');
+        }
+    });
+
+    ffmpeg.on('close', code => {
+        res.off('close', stopExtraction);
+        if (code !== 0 && code !== null && !res.writableEnded) {
+            res.destroy(new Error('Subtitle extraction failed'));
         }
     });
 });

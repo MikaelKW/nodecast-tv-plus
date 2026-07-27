@@ -67,9 +67,11 @@ class TranscodeSession extends EventEmitter {
         this.status = 'pending'; // pending | starting | running | stopped | error
         this.error = null;
         this.startTime = Date.now();
+        this.mediaStartTime = Math.max(0, Number(options.seekOffset) || 0);
         this.lastAccess = Date.now();
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
+            ffprobePath: options.ffprobePath || 'ffprobe',
             userAgent: options.userAgent || 'Mozilla/5.0',
             seekOffset: options.seekOffset || 0,
             hwEncoder: options.hwEncoder || 'software',
@@ -196,20 +198,37 @@ class TranscodeSession extends EventEmitter {
             '-analyzeduration', '3000000',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
-            ...appendHttpReconnectArgs([]),
-            '-seekable', '0'
+            ...appendHttpReconnectArgs([])
         );
 
-        args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST, '-i', this.url);
+        args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST);
 
-        // Add seek offset if specified (as output option to avoid Range requests)
+        // VOD seeks must happen before opening the input so FFmpeg can use HTTP
+        // byte ranges instead of reading and discarding everything from the
+        // beginning. The non-seek path retains the provider-compatible setting
+        // that avoids speculative Range/HEAD requests during ordinary startup.
         if (this.options.seekOffset > 0) {
-            args.push('-ss', String(this.options.seekOffset));
+            // Video is frequently stream-copied while incompatible audio is
+            // transcoded. Accurate input seeking discards the audio preroll but
+            // cannot discard copied video packets, leaving the first HLS segment
+            // with a multi-second A/V timestamp gap in some containers. Keep the
+            // same seek preroll for every mapped stream so browser decoders begin
+            // from one coherent clock.
+            // Retain the source clock so the first generated segment can report
+            // the actual keyframe/audio preroll used for stream-copy seeking.
+            args.push('-copyts', '-ss', String(this.options.seekOffset), '-noaccurate_seek');
+        } else {
+            args.push('-seekable', '0');
         }
+
+        args.push('-i', this.url);
 
         // Map streams
         args.push('-map', '0:v:0');
-        args.push('-map', '0:a:0?');
+        const audioMap = Number.isInteger(this.options.audioStreamIndex)
+            ? `0:${this.options.audioStreamIndex}?`
+            : '0:a:0?';
+        args.push('-map', audioMap);
 
         // Add video encoder and filters based on selected encoder OR copy
         if (videoMode === 'copy') {
@@ -267,6 +286,11 @@ class TranscodeSession extends EventEmitter {
         }
 
         // HLS output options
+        if (this.options.seekOffset > 0) {
+            // With -copyts, remove the MPEG-TS muxer's artificial timestamp
+            // lead so ffprobe reports the real source time of the first packet.
+            args.push('-muxpreload', '0', '-muxdelay', '0');
+        }
         args.push(
             '-f', 'hls',
             '-hls_time', String(SEGMENT_DURATION),
@@ -517,16 +541,25 @@ class TranscodeSession extends EventEmitter {
     /**
      * Stop the transcoding process
      */
-    stop() {
-        if (this.process) {
+    async stop() {
+        const activeProcess = this.process;
+        if (activeProcess) {
             console.log(`[TranscodeSession ${this.id}] Stopping FFmpeg process`);
-            this.process.kill('SIGTERM');
-            // Force kill after 2 seconds if still running
-            setTimeout(() => {
-                if (this.process) {
-                    this.process.kill('SIGKILL');
+            const waitForExit = () => new Promise(resolve => {
+                if (activeProcess.exitCode !== null || activeProcess.signalCode !== null) {
+                    resolve(true);
+                    return;
                 }
-            }, 2000);
+                activeProcess.once('exit', () => resolve(true));
+            });
+            const wait = ms => new Promise(resolve => setTimeout(() => resolve(false), ms));
+
+            activeProcess.kill('SIGTERM');
+            const exited = await Promise.race([waitForExit(), wait(2000)]);
+            if (!exited && this.process === activeProcess) {
+                activeProcess.kill('SIGKILL');
+                await Promise.race([waitForExit(), wait(1000)]);
+            }
         }
         this.status = 'stopped';
     }
@@ -569,6 +602,49 @@ class TranscodeSession extends EventEmitter {
         return false;
     }
 
+    async resolveMediaStartTime() {
+        if (!(this.options.seekOffset > 0)) {
+            this.mediaStartTime = 0;
+            return this.mediaStartTime;
+        }
+
+        const segmentPath = path.join(this.dir, 'seg0000.ts');
+        const value = await new Promise((resolve, reject) => {
+            const probe = spawn(this.options.ffprobePath, [
+                '-v', 'error',
+                '-show_entries', 'format=start_time',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                segmentPath
+            ], { windowsHide: true });
+            let stdout = '';
+            let stderr = '';
+            const timer = setTimeout(() => {
+                probe.kill('SIGKILL');
+                reject(new Error('First-segment timestamp probe timed out'));
+            }, 5000);
+            probe.stdout.on('data', chunk => { stdout += chunk; });
+            probe.stderr.on('data', chunk => { stderr += chunk; });
+            probe.on('error', error => {
+                clearTimeout(timer);
+                reject(error);
+            });
+            probe.on('close', code => {
+                clearTimeout(timer);
+                if (code !== 0) {
+                    reject(new Error(`First-segment timestamp probe failed: ${redactText(stderr)}`));
+                    return;
+                }
+                resolve(Number(stdout.trim()));
+            });
+        });
+
+        if (!Number.isFinite(value) || value < 0) {
+            throw new Error('First-segment timestamp probe returned an invalid value');
+        }
+        this.mediaStartTime = value;
+        return this.mediaStartTime;
+    }
+
     /**
      * Start FFmpeg and retry once when a provider rejects the initial
      * connection before any playlist data is produced.
@@ -576,7 +652,10 @@ class TranscodeSession extends EventEmitter {
     async startAndWaitForPlaylist(timeoutMs = 10000, maxAttempts = 2) {
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             await this.start();
-            if (await this.waitForPlaylist(timeoutMs)) return true;
+            if (await this.waitForPlaylist(timeoutMs)) {
+                await this.resolveMediaStartTime();
+                return true;
+            }
             if (this.status !== 'error' || attempt === maxAttempts) return false;
 
             console.warn(`[TranscodeSession ${this.id}] Initial connection failed; retrying once`);
@@ -615,7 +694,7 @@ class TranscodeSession extends EventEmitter {
      * Delete session directory and all segments
      */
     async cleanup() {
-        this.stop();
+        await this.stop();
         try {
             await fs.rm(this.dir, { recursive: true, force: true });
             console.log(`[TranscodeSession ${this.id}] Cleaned up session directory`);

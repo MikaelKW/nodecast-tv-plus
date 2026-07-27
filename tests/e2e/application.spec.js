@@ -18,6 +18,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
+    const subtitleRequests = [];
     let expectedRejectedResourceErrors = 0;
     let expectedAuthenticationErrors = 0;
     page.on('pageerror', error => browserErrors.push(`pageerror: ${error.message}`));
@@ -37,6 +38,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         browserErrors.push(`console: ${message.text()}`);
     });
     page.on('request', request => {
+        if (request.method() === 'GET' && request.url().includes('/api/subtitle?')) {
+            subtitleRequests.push(request.url());
+            return;
+        }
         if (request.method() !== 'POST' || !request.url().endsWith('/api/transcode/session')) return;
         const sourceUrl = request.postDataJSON()?.url;
         if (!sourceUrl) return;
@@ -690,6 +695,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    expect(subtitleRequests).toHaveLength(0);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-quality-btn').click();
@@ -710,6 +716,192 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => window.app?.pages?.watch?.currentSessionId || null), {
         timeout: 30_000
     }).toBeNull();
+
+    // Embedded movie tracks are discovered from the original container. Audio
+    // switches restart only the playback session at the current position, while
+    // subtitle choices use authenticated WebVTT extraction.
+    await page.evaluate(async () => {
+        await window.API.settings.update({ autoTranscode: true, maxResolution: '1080p' });
+    });
+    await page.evaluate(async ({ url, sourceId }) => {
+        await window.app.pages.watch.play({
+            id: 'controlled-multi-track-movie',
+            type: 'movie',
+            title: 'Controlled Multi-track Movie',
+            sourceId,
+            categoryId: 'controlled'
+        }, url);
+    }, { url: `${fixtureBaseUrl}/multi-track.mkv`, sourceId: m3uSource.id });
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.pages?.watch?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await page.setViewportSize({ width: 1180, height: 720 });
+    const playbackNavbarLayout = await page.locator('.navbar').evaluate(element => ({
+        height: element.getBoundingClientRect().height,
+        scrollHeight: element.scrollHeight,
+        nowPlayingWidth: document.getElementById('now-playing-indicator')?.getBoundingClientRect().width || 0,
+        labelsHidden: Array.from(document.querySelectorAll('.navbar-menu .nav-link span:not(.nav-icon)'))
+            .every(label => getComputedStyle(label).display === 'none')
+    }));
+    expect(playbackNavbarLayout.height).toBeLessThanOrEqual(60);
+    expect(playbackNavbarLayout.scrollHeight).toBeLessThanOrEqual(60);
+    expect(playbackNavbarLayout.nowPlayingWidth).toBeGreaterThan(0);
+    expect(playbackNavbarLayout.labelsHidden).toBe(true);
+    const playbackOverlayLayout = await page.evaluate(() => {
+        const overlay = document.querySelector('.watch-overlay');
+        const topBar = document.querySelector('.watch-top-bar');
+        const bottomBar = document.querySelector('.watch-bottom-bar');
+        return {
+            overlayBackground: getComputedStyle(overlay).backgroundImage,
+            overlayContain: getComputedStyle(overlay).contain,
+            topBackground: getComputedStyle(topBar).backgroundImage,
+            bottomBackground: getComputedStyle(bottomBar).backgroundImage
+        };
+    });
+    expect(playbackOverlayLayout.overlayBackground).toBe('none');
+    expect(playbackOverlayLayout.overlayContain).toContain('paint');
+    expect(playbackOverlayLayout.topBackground).not.toBe('none');
+    expect(playbackOverlayLayout.bottomBackground).not.toBe('none');
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await expect(page.locator('#watch-audio-list .captions-option')).toHaveCount(2);
+    await expect(page.locator('#watch-audio-list')).toContainText('English 440 Hz');
+    await expect(page.locator('#watch-audio-list')).toContainText('Norwegian 880 Hz');
+    await expect(page.locator('#watch-captions-list')).toContainText('English');
+    await expect(page.locator('#watch-captions-list')).toContainText('Norwegian');
+    expect(subtitleRequests).toHaveLength(0);
+
+    await watchVideo.evaluate(element => { element.currentTime = 5; });
+    const contentPositionBeforeAudioSwitch = await page.evaluate(() => (
+        window.app.pages.watch.getCurrentPlaybackTime()
+    ));
+    const defaultAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
+    await page.locator('#watch-audio-list .captions-option', { hasText: 'Norwegian 880 Hz' }).click();
+    await expect.poll(() => page.evaluate(previousSessionId => {
+        const currentSessionId = window.app.pages.watch.currentSessionId;
+        return currentSessionId && currentSessionId !== previousSessionId
+            ? currentSessionId
+            : null;
+    }, defaultAudioSession), { timeout: 30_000 }).not.toBeNull();
+    await expect.poll(() => page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const selected = watch.availableAudioTracks.find(track => track.index === watch.selectedAudioTrackIndex);
+        return selected?.title || '';
+    }), { timeout: 30_000 }).toBe('Norwegian 880 Hz');
+    await expect.poll(async () => watchVideo.evaluate(element => element.currentTime), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(1.5);
+    const resumedAudioClock = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const contentTime = watch.getCurrentPlaybackTime();
+        return {
+            offset: watch.playbackTimeOffset,
+            contentTime,
+            displayedTime: document.getElementById('watch-time-current')?.textContent,
+            allowedDisplayedTimes: [
+                watch.formatTime(contentTime),
+                watch.formatTime(Math.max(0, contentTime - 1))
+            ]
+        };
+    });
+    expect(resumedAudioClock.offset).toBeGreaterThanOrEqual(0);
+    expect(resumedAudioClock.offset).toBeLessThan(contentPositionBeforeAudioSwitch);
+    expect(resumedAudioClock.contentTime).toBeGreaterThan(contentPositionBeforeAudioSwitch);
+    expect(resumedAudioClock.allowedDisplayedTimes).toContain(resumedAudioClock.displayedTime);
+
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await page.locator('#watch-captions-list .captions-option', { hasText: 'English' }).click();
+    await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(1);
+    expect(new URL(subtitleRequests[0]).searchParams.get('start')).toBe('0');
+    expect(new URL(subtitleRequests[0]).searchParams.get('duration')).toBe('60');
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.selectedSubtitleStreamIndex), {
+        timeout: 10_000
+    }).not.toBeNull();
+
+    // A growing transcode playlist must not redefine the full VOD duration.
+    // Seeking behind a session offset starts a replacement session at the
+    // requested source position instead of clamping to the current window.
+    const durationState = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        return {
+            sourceDuration: watch.sourceDuration,
+            playbackDuration: watch.getPlaybackDuration(),
+            generatedDuration: watch.video.duration
+        };
+    });
+    expect(durationState.sourceDuration).toBeGreaterThan(19);
+    expect(durationState.sourceDuration).toBeLessThan(21);
+    expect(durationState.playbackDuration).toBeCloseTo(durationState.sourceDuration, 3);
+    const offsetAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
+    await page.evaluate(() => window.app.pages.watch.seek(0));
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
+        timeout: 30_000
+    }).not.toBe(offsetAudioSession);
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.playbackTimeOffset), {
+        timeout: 30_000
+    }).toBe(0);
+    await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
+        timeout: 30_000
+    }).toBeGreaterThanOrEqual(2);
+    await expect.poll(async () => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
+    ))), { timeout: 30_000 }).toBe(true);
+    expect(subtitleRequests).toHaveLength(2);
+    expect(subtitleRequests.every(requestUrl => (
+        new URL(requestUrl).searchParams.get('duration') === '60'
+    ))).toBe(true);
+    await watchVideo.evaluate(element => { element.currentTime = 2; });
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
+    ))), { timeout: 10_000 }).toBe(true);
+    await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
+    });
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => (
+            cue.text.includes('[Controlled background sound]')
+        ))
+    ))), { timeout: 10_000 }).toBe(true);
+    const stableSubtitleCues = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === watch.selectedSubtitleStreamIndex);
+        const track = trackElement.track;
+        const originalCues = Array.from(track.cues || []);
+        watch.activateProbeSubtitleTrack(trackElement);
+        const activeText = Array.from(track.activeCues || []).map(cue => cue.text);
+        return {
+            originalCount: originalCues.length,
+            repeatedCount: track.cues?.length || 0,
+            preservedObjects: originalCues.every((cue, index) => track.cues[index] === cue),
+            timelineOffset: watch.subtitleMediaTimeOffset,
+            timelineResolved: watch.subtitleMediaTimeOffsetResolved,
+            activeText
+        };
+    });
+    expect(stableSubtitleCues.originalCount).toBeGreaterThanOrEqual(3);
+    expect(stableSubtitleCues.repeatedCount).toBe(stableSubtitleCues.originalCount);
+    expect(stableSubtitleCues.preservedObjects).toBe(true);
+    expect(stableSubtitleCues.timelineResolved).toBe(true);
+    expect(stableSubtitleCues.timelineOffset).toBeGreaterThan(0);
+    expect(stableSubtitleCues.timelineOffset).toBeLessThan(3);
+    expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
+    expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
+
+    await page.locator('.watch-video-section').hover();
+    await page.locator('#watch-captions-btn').click();
+    await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
+    await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(3);
+    expect(new URL(subtitleRequests[2]).searchParams.get('start')).toBe('0');
+    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
+        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
+    ))), { timeout: 30_000 }).toBe(true);
 
     // The movie/series player uses the same transactional fallback when a
     // provider permits browser playback but rejects FFmpeg.
@@ -791,6 +983,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(recoverableStats.failedRequests).toBe(4);
     expect(recoverableStats.segmentRequests).toBeGreaterThan(4);
     expect(await page.evaluate(() => window.app.pages.watch.hlsRecoveryCount)).toBe(0);
+    // Chromium may coalesce identical failed-resource console messages. The
+    // fixture counters above are the authoritative outage assertion.
+    expectedRejectedResourceErrors = 0;
 
     const reset = await fetch(`${fixtureBaseUrl}/connection-stats/reset`, { method: 'POST' });
     expect(reset.status).toBe(204);

@@ -9,6 +9,7 @@ const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { parseOptionalStreamIndex } = require('../services/mediaSelection');
 const { TRANSCODE_START_TIMEOUT_MS } = require('../config/transcode');
 
 router.use(auth.requireAuth);
@@ -36,7 +37,17 @@ transcodeSession.startCleanupInterval();
  * Body: { url: string, seekOffset?: number }
  */
 router.post('/session', async (req, res) => {
-    const { url, seekOffset, videoMode, videoCodec, audioCodec, audioChannels, videoHeight, maxResolution } = req.body;
+    const {
+        url,
+        seekOffset,
+        videoMode,
+        videoCodec,
+        audioCodec,
+        audioChannels,
+        audioStreamIndex,
+        videoHeight,
+        maxResolution
+    } = req.body;
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
@@ -44,14 +55,17 @@ router.post('/session', async (req, res) => {
 
     let validatedUrl;
     let resolutionOverride;
+    let selectedAudioStreamIndex;
     try {
         validatedUrl = validateHttpUrl(url);
         resolutionOverride = parseMaxResolutionOverride(maxResolution);
+        selectedAudioStreamIndex = parseOptionalStreamIndex(audioStreamIndex, 'audioStreamIndex');
     } catch (err) {
         return res.status(400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
+    const ffprobePath = req.app.locals.ffprobePath || 'ffprobe';
     const settings = await db.settings.get();
     const userAgent = db.getUserAgent(settings);
 
@@ -70,6 +84,7 @@ router.post('/session', async (req, res) => {
     try {
         session = await transcodeSession.createSession(validatedUrl, {
             ffmpegPath,
+            ffprobePath,
             userAgent,
             seekOffset: seekOffset || 0,
             hwEncoder: settings.hwEncoder || 'software',
@@ -85,6 +100,7 @@ router.post('/session', async (req, res) => {
             videoCodec: videoCodec, // 'h264', 'hevc', etc.
             audioCodec: audioCodec, // 'aac', 'ac3', etc.
             audioChannels: audioChannels, // number of channels (2=stereo)
+            audioStreamIndex: selectedAudioStreamIndex,
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight
                 : 0
@@ -106,6 +122,7 @@ router.post('/session', async (req, res) => {
         res.json({
             sessionId: session.id,
             playlistUrl: `/api/transcode/${session.id}/stream.m3u8`,
+            mediaStartTime: session.mediaStartTime,
             status: session.status
         });
 

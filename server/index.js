@@ -31,8 +31,24 @@ app.use(express.json({ limit: '50mb' }));
 
 // Initialize Passport
 const session = require('express-session');
+app.use((req, _res, next) => {
+    const cookieHeader = req.headers.cookie;
+    if (
+        cookieHeader
+        && !cookieHeader.split(';').some(cookie => cookie.trim().startsWith(`${securityConfig.sessionCookieName}=`))
+    ) {
+        const legacyCookie = cookieHeader
+            .split(';')
+            .map(cookie => cookie.trim())
+            .find(cookie => cookie.startsWith(`${securityConfig.legacySessionCookieName}=`));
+        if (legacyCookie) {
+            req.headers.cookie = `${securityConfig.sessionCookieName}=${legacyCookie.slice(legacyCookie.indexOf('=') + 1)}; ${cookieHeader}`;
+        }
+    }
+    next();
+});
 app.use(session({
-    name: 'nodecast.sid',
+    name: securityConfig.sessionCookieName,
     secret: securityConfig.sessionSecret,
     proxy: true,
     resave: false,
@@ -44,6 +60,7 @@ app.use(session({
         maxAge: 10 * 60 * 1000
     }
 }));
+app.use(auth.migrateLegacyAuthCookie);
 app.use(passport.initialize());
 app.use(passport.session());
 

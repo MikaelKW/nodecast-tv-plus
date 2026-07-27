@@ -109,11 +109,16 @@ function analyzeProbeResult(probeResult, url) {
     const format = probeResult.format || {};
 
     const videoStream = streams.find(s => s.codec_type === 'video');
-    const audioStream = streams.find(s => s.codec_type === 'audio');
+    const audioStreams = streams.filter(s => s.codec_type === 'audio');
+    const audioStream = audioStreams[0];
 
     const videoCodec = videoStream?.codec_name?.toLowerCase() || 'unknown';
     const audioCodec = audioStream?.codec_name?.toLowerCase() || 'unknown';
     const container = format.format_name?.toLowerCase() || 'unknown';
+    const durationCandidates = [format.duration, ...streams.map(stream => stream.duration)]
+        .map(Number)
+        .filter(duration => Number.isFinite(duration) && duration > 0);
+    const duration = durationCandidates.length > 0 ? Math.max(...durationCandidates) : 0;
 
     // Check codec compatibility
     const videoOk = BROWSER_VIDEO_CODECS.some(c => videoCodec.includes(c));
@@ -127,6 +132,17 @@ function analyzeProbeResult(probeResult, url) {
 
     // Check if it's a raw TS stream (not HLS)
     const isRawTs = (container.includes('mpegts') || url.endsWith('.ts')) && !url.includes('.m3u8');
+
+    // Preserve absolute FFmpeg stream indexes so a later playback request can
+    // select the exact embedded audio or subtitle stream.
+    const audioTracks = audioStreams.map((stream, position) => ({
+        index: stream.index,
+        language: stream.tags?.language || 'und',
+        title: stream.tags?.title || stream.tags?.language || `Audio ${position + 1}`,
+        codec: stream.codec_name || 'unknown',
+        channels: stream.channels || 0,
+        default: Boolean(stream.disposition?.default)
+    }));
 
     // Extract subtitle tracks
     const subtitles = streams
@@ -157,11 +173,13 @@ function analyzeProbeResult(probeResult, url) {
         audio: audioCodec,
         width: videoStream?.width || 0,
         height: videoStream?.height || 0,
+        duration,
         audioChannels: audioStream?.channels || 0, // For Smart Audio Copy
         container: container,
         compatible: compatible,
         needsRemux: needsRemux,
         needsTranscode: needsTranscode,
+        audioTracks: audioTracks,
         subtitles: subtitles
     };
 }
@@ -191,7 +209,10 @@ router.get('/', async (req, res) => {
             container: 'unknown',
             compatible: false,
             needsRemux: false,
-            needsTranscode: true
+            needsTranscode: true,
+            duration: 0,
+            audioTracks: [],
+            subtitles: []
         });
     }
 
@@ -235,6 +256,9 @@ router.get('/', async (req, res) => {
             compatible: false,
             needsRemux: false,
             needsTranscode: true,
+            duration: 0,
+            audioTracks: [],
+            subtitles: [],
             error: err.message
         };
         probeCache.set(cacheKey, { result: fallback, expiresAt: Date.now() + FAILURE_CACHE_TTL });
