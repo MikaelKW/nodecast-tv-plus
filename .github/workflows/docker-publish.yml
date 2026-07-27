@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      verify_release_tag:
+        description: Verify an existing stable release tag without rebuilding it
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: container-publish-${{ github.ref }}
@@ -23,6 +28,7 @@ env:
 
 jobs:
   build-and-push:
+    if: github.event_name != 'workflow_dispatch' || inputs.verify_release_tag == ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -169,48 +175,64 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: scripts/verify-container-release.sh
+
+  verify-existing-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_release_tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Validate release verification configuration
+        shell: bash
+        env:
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.verify_release_tag }}
         run: |
-          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::verify_release_tag must be a stable semantic version such as v2.5.0."
+            exit 1
+          fi
 
-          version="${RELEASE_TAG#v}"
-          minor="${version%.*}"
-          work_dir="$(mktemp -d)"
-          trap 'rm -rf "$work_dir"' EXIT
+          if [[ ! "$DOCKERHUB_NAMESPACE" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+            echo "::error::DOCKERHUB_NAMESPACE must contain a valid lowercase Docker Hub namespace."
+            exit 1
+          fi
 
-          platform_map() {
-            docker buildx imagetools inspect "$1" --raw \
-              | jq -r '.manifests[]
-                | select(.platform.os == "linux")
-                | select(.platform.architecture == "amd64" or .platform.architecture == "arm64")
-                | "\(.platform.os)/\(.platform.architecture)=\(.digest)"' \
-              | sort
-          }
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Docker Hub release credentials are not configured."
+            exit 1
+          fi
 
-          verify_registry() {
-            local image="$1"
-            local registry_name="$2"
-            local baseline="$work_dir/${registry_name}-${version}.txt"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            platform_map "${image}:${version}" > "$baseline"
-            printf 'linux/amd64\nlinux/arm64\n' \
-              | diff -u - <(cut -d= -f1 "$baseline")
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-            for tag in "$minor" latest; do
-              platform_map "${image}:${tag}" > "$work_dir/${registry_name}-${tag}.txt"
-              diff -u "$baseline" "$work_dir/${registry_name}-${tag}.txt"
-            done
-          }
-
-          verify_registry "$GHCR_IMAGE" ghcr
-          verify_registry "$DOCKERHUB_IMAGE" dockerhub
-          diff -u "$work_dir/ghcr-${version}.txt" "$work_dir/dockerhub-${version}.txt"
-
-          for image in "$GHCR_IMAGE" "$DOCKERHUB_IMAGE"; do
-            while IFS='=' read -r _ digest; do
-              docker buildx imagetools inspect "${image}@${digest}" --format '{{json .Image}}' \
-                | jq -e --arg version "$version" --arg revision "$GITHUB_SHA" '
-                    .config.Labels["org.opencontainers.image.version"] == $version
-                    and .config.Labels["org.opencontainers.image.revision"] == $revision
-                  ' > /dev/null
-            done < "$work_dir/ghcr-${version}.txt"
-          done
+      - name: Verify mirrored release tags
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.verify_release_tag }}
+        run: scripts/verify-container-release.sh
