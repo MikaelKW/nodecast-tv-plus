@@ -6,10 +6,25 @@ on:
   release:
     types: [ published ]
   workflow_dispatch:
+    inputs:
+      publish_dockerhub_validation:
+        description: Publish and smoke-test an explicitly tagged Docker Hub validation image
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: container-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/nodecast-tv-plus
+  DOCKERHUB_IMAGE: docker.io/${{ vars.DOCKERHUB_NAMESPACE }}/nodecast-tv-plus
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -32,6 +47,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Validate Docker Hub release configuration
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation)
+        shell: bash
+        env:
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ ! "$DOCKERHUB_NAMESPACE" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+            echo "::error::DOCKERHUB_NAMESPACE must contain a valid lowercase Docker Hub namespace."
+            exit 1
+          fi
+
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Docker Hub release credentials are not configured."
+            exit 1
+          fi
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -39,11 +72,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Container image
-        id: meta
+      - name: Log in to Docker Hub
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation)
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract GHCR metadata
+        id: ghcr_meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/nodecast-tv-plus
+          images: ${{ env.GHCR_IMAGE }}
           flavor: |
             latest=false
           tags: |
@@ -53,13 +94,123 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
 
+      - name: Extract Docker Hub release metadata
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation)
+        id: dockerhub_meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+            type=raw,value=validation-${{ github.sha }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation }}
+
       - name: Build and push Container image
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ steps.ghcr_meta.outputs.tags }}
+            ${{ steps.dockerhub_meta.outputs.tags }}
+          labels: ${{ steps.ghcr_meta.outputs.labels }}
+          annotations: ${{ steps.ghcr_meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify Docker Hub validation image
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          image="${DOCKERHUB_IMAGE}:validation-${GITHUB_SHA}"
+          platforms="$(docker buildx imagetools inspect "$image" --raw \
+            | jq -r '.manifests[]
+              | select(.platform.os == "linux")
+              | select(.platform.architecture == "amd64" or .platform.architecture == "arm64")
+              | "\(.platform.os)/\(.platform.architecture)"' \
+            | sort)"
+          diff -u <(printf 'linux/amd64\nlinux/arm64\n') <(printf '%s\n' "$platforms")
+
+          docker pull --platform linux/amd64 "$image"
+          jwt_secret="$(openssl rand -hex 48)"
+          session_secret="$(openssl rand -hex 48)"
+          container_id="$(docker run -d --name nodecast-dockerhub-validation \
+            -e NODE_ENV=production \
+            -e JWT_SECRET="$jwt_secret" \
+            -e SESSION_SECRET="$session_secret" \
+            -p 127.0.0.1::3000 \
+            "$image")"
+          trap 'docker rm -f nodecast-dockerhub-validation >/dev/null 2>&1 || true' EXIT
+
+          for attempt in {1..40}; do
+            status="$(docker inspect --format '{{.State.Health.Status}}' "$container_id")"
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
+          host_port="$(docker port "$container_id" 3000/tcp | awk -F: '{print $NF}')"
+          curl -fsS "http://127.0.0.1:${host_port}/api/health" | grep -q '"status":"ok"'
+
+      - name: Verify mirrored release tags
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          minor="${version%.*}"
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf "$work_dir"' EXIT
+
+          platform_map() {
+            docker buildx imagetools inspect "$1" --raw \
+              | jq -r '.manifests[]
+                | select(.platform.os == "linux")
+                | select(.platform.architecture == "amd64" or .platform.architecture == "arm64")
+                | "\(.platform.os)/\(.platform.architecture)=\(.digest)"' \
+              | sort
+          }
+
+          verify_registry() {
+            local image="$1"
+            local registry_name="$2"
+            local baseline="$work_dir/${registry_name}-${version}.txt"
+
+            platform_map "${image}:${version}" > "$baseline"
+            printf 'linux/amd64\nlinux/arm64\n' \
+              | diff -u - <(cut -d= -f1 "$baseline")
+
+            for tag in "$minor" latest; do
+              platform_map "${image}:${tag}" > "$work_dir/${registry_name}-${tag}.txt"
+              diff -u "$baseline" "$work_dir/${registry_name}-${tag}.txt"
+            done
+          }
+
+          verify_registry "$GHCR_IMAGE" ghcr
+          verify_registry "$DOCKERHUB_IMAGE" dockerhub
+          diff -u "$work_dir/ghcr-${version}.txt" "$work_dir/dockerhub-${version}.txt"
+
+          for image in "$GHCR_IMAGE" "$DOCKERHUB_IMAGE"; do
+            while IFS='=' read -r _ digest; do
+              docker buildx imagetools inspect "${image}@${digest}" --format '{{json .Image}}' \
+                | jq -e --arg version "$version" --arg revision "$GITHUB_SHA" '
+                    .config.Labels["org.opencontainers.image.version"] == $version
+                    and .config.Labels["org.opencontainers.image.revision"] == $revision
+                  ' > /dev/null
+            done < "$work_dir/ghcr-${version}.txt"
+          done
