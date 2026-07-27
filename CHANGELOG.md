@@ -4,6 +4,44 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.5.0] - 2026-07-27
+
+This feature release adds audio-track and subtitle selection for Movies and Series, strengthens long-form VOD playback, improves mobile and cross-browser presentation, isolates authentication cookies between installations, and mirrors stable images to Docker Hub.
+
+### Added
+
+- Added in-player audio-track and subtitle selection for supported Movie and Series streams, including named language choices and a clear Off option for subtitles ([#213]).
+- Added stable multi-architecture Docker Hub publication from the same release build as GitHub Container Registry, with aligned exact-version, compatible-minor, and `latest` tags ([#248]).
+
+### Changed
+
+- Embedded subtitles are extracted on demand in bounded windows for long-form VOD instead of blocking playback while processing the complete source ([#224], [#226]).
+- Subtitle cues are preserved and restored across unbuffered seeks, audio changes, and replacement HLS sessions while keeping their source timing ([#221], [#230]).
+- The Movie and Series scroll-for-details hint is hidden during web and native fullscreen playback ([#244]).
+
+### Fixed
+
+- Preserved the active VOD position when changing audio tracks instead of visually restarting the player timeline ([#216]).
+- Stabilized the VOD scrubber against a growing HLS buffer and restored accurate seeking after the requested position falls outside the generated window ([#219]).
+- Kept seeked audio aligned with stream-copied video and reduced Firefox playback overhead while player controls are visible ([#228]).
+- Made long-form subtitle startup and far-seek recovery complete promptly without blocking the application or leaving media processes behind ([#226]).
+- Corrected subtitle flicker, blank bracketed cues, overlapping-dialogue replacement, and seek-session timing across Chromium, Firefox, and iPhone Safari ([#230]).
+- Made every Movie and Series card reachable in iPhone Safari portrait and landscape layouts ([#233]).
+- Normalized subtitle font, responsive size, transparent cue background, outline, and placement across supported browsers while retaining native-platform fullscreen behavior ([#242]).
+
+### Security
+
+- Isolated JWT and session cookie names per installation so multiple NodeCast TV Plus containers on one hostname no longer overwrite or sign out each other's browser sessions ([#246]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.5.0`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Migration from the published 2.4.0 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Stable images are available from both `ghcr.io/mikaelkw/nodecast-tv-plus` and `mikaelkw/nodecast-tv-plus`; GHCR remains the canonical registry.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.4.0` and the existing deployment secrets.
+- Far seeking in iPhone Safari's native fullscreen player remains limited by WebKit's view of the generated HLS window and is tracked separately in [#235](https://github.com/MikaelKW/nodecast-tv-plus/issues/235).
+
 ## [2.4.0] - 2026-07-18
 
 This feature release adds deployment-level sign-in controls, guided first-run account protection, configurable content and navigation visibility, and browser theme selection.
@@ -204,6 +242,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.5.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.2.2...v2.3.0
@@ -253,3 +292,16 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#201]: https://github.com/MikaelKW/nodecast-tv-plus/pull/201
 [#203]: https://github.com/MikaelKW/nodecast-tv-plus/pull/203
 [#206]: https://github.com/MikaelKW/nodecast-tv-plus/pull/206
+[#213]: https://github.com/MikaelKW/nodecast-tv-plus/pull/213
+[#216]: https://github.com/MikaelKW/nodecast-tv-plus/pull/216
+[#219]: https://github.com/MikaelKW/nodecast-tv-plus/pull/219
+[#221]: https://github.com/MikaelKW/nodecast-tv-plus/pull/221
+[#224]: https://github.com/MikaelKW/nodecast-tv-plus/pull/224
+[#226]: https://github.com/MikaelKW/nodecast-tv-plus/pull/226
+[#228]: https://github.com/MikaelKW/nodecast-tv-plus/pull/228
+[#230]: https://github.com/MikaelKW/nodecast-tv-plus/pull/230
+[#233]: https://github.com/MikaelKW/nodecast-tv-plus/pull/233
+[#242]: https://github.com/MikaelKW/nodecast-tv-plus/pull/242
+[#244]: https://github.com/MikaelKW/nodecast-tv-plus/pull/244
+[#246]: https://github.com/MikaelKW/nodecast-tv-plus/pull/246
+[#248]: https://github.com/MikaelKW/nodecast-tv-plus/pull/248
