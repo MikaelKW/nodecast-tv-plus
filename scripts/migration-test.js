@@ -335,7 +335,7 @@ async function runBaseline(baseline) {
             baselineAuth = { token: legacyToken };
         } else {
             const setCookie = setup.headers.get('set-cookie') || '';
-            const authCookie = setCookie.match(/nodecast_auth=[^;]+/)?.[0];
+            const authCookie = setCookie.match(/nodecast_auth(?:_[a-f0-9]{12})?=[^;]+/)?.[0];
             assert.ok(authCookie, 'The previous Plus release must issue an authentication cookie.');
             redactions.push(authCookie);
             baselineAuth = { cookie: authCookie };
@@ -408,7 +408,7 @@ async function runBaseline(baseline) {
         const inheritedMe = await request(plusUrl, '/api/auth/me', baselineAuth);
         assert.equal(inheritedMe.payload.username, username);
         if (baseline.kind === 'upstream') {
-            assert.match(inheritedMe.headers.get('set-cookie') || '', /nodecast_auth=/,
+            assert.match(inheritedMe.headers.get('set-cookie') || '', /nodecast_auth_[a-f0-9]{12}=/,
                 'A valid legacy bearer token must migrate to an authentication cookie.');
         }
 
@@ -417,7 +417,7 @@ async function runBaseline(baseline) {
             body: { username, password }
         });
         const setCookie = login.headers.get('set-cookie') || '';
-        const authCookie = setCookie.match(/nodecast_auth=[^;]+/)?.[0];
+        const authCookie = setCookie.match(/nodecast_auth_[a-f0-9]{12}=[^;]+/)?.[0];
         assert.ok(authCookie, 'Password login must issue an authentication cookie.');
         const cookieAuth = { cookie: authCookie };
 

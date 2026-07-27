@@ -230,6 +230,7 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
           SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
           TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
           NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
+          NODECAST_INSTANCE_ID: ${NODECAST_INSTANCE_ID:-}
           TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
           OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
           OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -245,6 +246,13 @@ The included [`docker-compose.yml`](docker-compose.yml) builds the image from th
     ```
 
 The application will be available at `http://localhost:3000`.
+
+Each installation automatically stores a stable instance identifier in
+`/app/data/.nodecast-instance-id`. Authentication cookies use this identifier so
+multiple NodeCast TV Plus containers on different ports of the same hostname can
+remain signed in within one browser profile. Preserve `/app/data` during
+upgrades. When cloning an existing data volume to create a separate installation,
+set a different stable `NODECAST_INSTANCE_ID` for each clone.
 
 ### Container platforms
 

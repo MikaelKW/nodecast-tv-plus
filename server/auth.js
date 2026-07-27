@@ -36,7 +36,10 @@ function parseCookies(req) {
 }
 
 function extractJwtFromCookie(req) {
-    return parseCookies(req)[securityConfig.authCookieName] || null;
+    const cookies = parseCookies(req);
+    return cookies[securityConfig.authCookieName]
+        || cookies[securityConfig.legacyAuthCookieName]
+        || null;
 }
 
 function useSecureCookie(req) {
@@ -63,6 +66,19 @@ function clearAuthCookie(req, res) {
     const options = getAuthCookieOptions(req);
     delete options.maxAge;
     res.clearCookie(securityConfig.authCookieName, options);
+    res.clearCookie(securityConfig.legacyAuthCookieName, options);
+}
+
+function migrateLegacyAuthCookie(req, res, next) {
+    const cookies = parseCookies(req);
+    if (
+        !cookies[securityConfig.authCookieName]
+        && cookies[securityConfig.legacyAuthCookieName]
+        && verifyToken(cookies[securityConfig.legacyAuthCookieName])
+    ) {
+        setAuthCookie(req, res, cookies[securityConfig.legacyAuthCookieName]);
+    }
+    next();
 }
 
 /**
@@ -365,6 +381,7 @@ module.exports = {
     verifyToken,
     setAuthCookie,
     clearAuthCookie,
+    migrateLegacyAuthCookie,
     configureLocalStrategy,
     configureJwtStrategy,
     configureSessionSerialization,

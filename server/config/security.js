@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const instanceIdentity = require('./instanceIdentity');
 
 const MIN_SECRET_LENGTH = 32;
 const PLACEHOLDER_PATTERN = /(change|replace|example|placeholder|keyboard cat)/i;
@@ -38,6 +39,9 @@ module.exports = {
     jwtSecret: loadSecret('JWT_SECRET'),
     sessionSecret: loadSecret('SESSION_SECRET'),
     totpEncryptionSecret: loadOptionalSecret('TOTP_ENCRYPTION_KEY'),
-    authCookieName: 'nodecast_auth',
+    authCookieName: instanceIdentity.authCookieName,
+    legacyAuthCookieName: instanceIdentity.legacyAuthCookieName,
+    sessionCookieName: instanceIdentity.sessionCookieName,
+    legacySessionCookieName: instanceIdentity.legacySessionCookieName,
     authCookieMaxAgeMs: 24 * 60 * 60 * 1000
 };

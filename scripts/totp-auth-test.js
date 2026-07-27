@@ -33,6 +33,10 @@ class CookieJar {
     has(name) {
         return this.cookies.has(name);
     }
+
+    hasPrefix(prefix) {
+        return [...this.cookies.keys()].some(name => name.startsWith(prefix));
+    }
 }
 
 function getFreePort() {
@@ -162,8 +166,8 @@ async function beginPasswordLogin(baseUrl, username, password) {
     });
     assert.equal(login.response.status, 200);
     assert.equal(login.payload.requiresTwoFactor, true);
-    assert.equal(jar.has('nodecast_auth'), false, 'Password step must not issue the app authentication cookie.');
-    assert.equal(jar.has('nodecast.sid'), true, 'The pending challenge must remain server-side behind the session cookie.');
+    assert.equal(jar.hasPrefix('nodecast_auth_'), false, 'Password step must not issue the app authentication cookie.');
+    assert.equal(jar.hasPrefix('nodecast.sid.'), true, 'The pending challenge must remain server-side behind the session cookie.');
     return jar;
 }
 
@@ -242,14 +246,14 @@ async function run() {
         const nextStepCode = totp(enrollment.secret, Date.now() + 30_000);
         sensitiveValues.push(nextStepCode);
         const verified = await verifyLogin(server.baseUrl, firstChallenge, 'totp', nextStepCode);
-        assert.equal(verified.jar.has('nodecast_auth'), true);
+        assert.equal(verified.jar.hasPrefix('nodecast_auth_'), true);
 
         const replayChallenge = await beginPasswordLogin(server.baseUrl, admin.username, admin.password);
         await verifyLogin(server.baseUrl, replayChallenge, 'totp', nextStepCode, 401);
 
         const recoveryChallenge = await beginPasswordLogin(server.baseUrl, admin.username, admin.password);
         const recovered = await verifyLogin(server.baseUrl, recoveryChallenge, 'recovery', enrollment.recoveryCodes[0]);
-        assert.equal(recovered.jar.has('nodecast_auth'), true);
+        assert.equal(recovered.jar.hasPrefix('nodecast_auth_'), true);
 
         const usedRecoveryChallenge = await beginPasswordLogin(server.baseUrl, admin.username, admin.password);
         await verifyLogin(server.baseUrl, usedRecoveryChallenge, 'recovery', enrollment.recoveryCodes[0], 401);
@@ -328,7 +332,7 @@ async function run() {
         });
         assert.equal(directLogin.response.status, 200);
         assert.equal(directLogin.payload.requiresTwoFactor, undefined);
-        assert.equal(directLogin.jar.has('nodecast_auth'), true);
+        assert.equal(directLogin.jar.hasPrefix('nodecast_auth_'), true);
 
         const nonexistent = `missing-${crypto.randomBytes(8).toString('hex')}`;
         for (let attempt = 0; attempt < 5; attempt += 1) {
