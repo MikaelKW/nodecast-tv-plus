@@ -1,296 +1,394 @@
 <p align="center">
-  <img src="public/img/logo-banner.png" alt="NodeCast TV Plus" height="80" />
-</p>
-
-<p align="center">
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/releases"><img src="https://img.shields.io/github/v/release/MikaelKW/nodecast-tv-plus?display_name=tag" alt="Latest release" /></a>
-  <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
   <a href="https://hub.docker.com/r/mikaelkw/nodecast-tv-plus"><img src="https://img.shields.io/badge/Docker%20Hub-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="Docker Hub" /></a>
-  <a href="https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
+  <a href="https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus"><img src="https://img.shields.io/badge/GHCR-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="GitHub Container Registry" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="GPL-3.0 license" /></a>
 </p>
 
 # NodeCast TV Plus
 
-NodeCast TV Plus is an independent fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv), focused on additional features, usability improvements, and reliability fixes. It is a modern, web-based IPTV player featuring Live TV, EPG, Movies (VOD), and Series support.
+NodeCast TV Plus is a modern, self-hosted IPTV player for Live TV, programme guides, movies, and series. It is an independent, enhanced fork of [NodeCast TV](https://github.com/technomancer702/nodecast-tv).
 
-NodeCast TV Plus is a player only: it does not include, sell, or provide television channels or other media. Use it only with sources you are legally entitled to access.
+NodeCast TV Plus is a player only. It does not include, sell, or provide television channels or other media. Use it only with sources you are legally entitled to access.
 
-Release history and upgrade details are available in the [changelog](CHANGELOG.md). Stable, immutable versions are published on the [Releases](https://github.com/MikaelKW/nodecast-tv-plus/releases) page.
+## Highlights
 
-## Features
+- Live TV with categories, favorites, search, fast channel changes, and an interactive TV guide.
+- Movies and series with posters, metadata, seasons, episodes, favorites, and watch progress.
+- Xtream Codes, M3U playlists, and separate XMLTV/EPG sources.
+- Smart direct play, remuxing, and FFmpeg transcoding for browser compatibility.
+- In-player quality limits plus audio-track and subtitle selection.
+- NVIDIA NVENC, AMD AMF, Intel Quick Sync, and VAAPI hardware acceleration where supported by the host.
+- Local accounts with administrator/viewer roles, TOTP two-factor authentication, recovery codes, and password safeguards.
+- Standards-based OIDC single sign-on with optional SSO-only mode.
+- Per-source visibility controls, configurable navigation, and light/dark/system themes.
+- Multi-architecture Docker images for `linux/amd64` and `linux/arm64`.
 
-- **📺 Live TV**: Fast channel zapping, category grouping, and search.
-- **📅 TV Guide (EPG)**: Interactive grid guide with 24h timeline, search, and dynamic resizing.
-- **🎬 VOD Support**: Dedicated sections for Movies and TV Series with rich metadata, posters, and seasonal episode lists.
-- **❤️ Favorites System**: Unified favorites for channels, movies, and series with instant synchronization.
-- **🔐 Authentication**: User login system with admin and viewer roles.
-- **🆔 OIDC SSO**: Support for Single Sign-On via OIDC providers (Authentik, Keycloak, etc.).
-- **⚡ High Performance**: Optimized for large playlists (7000+ channels) using virtual scrolling and batch rendering.
-- **⚙️ Management**: 
-  - Support for Xtream Codes and M3U playlists.
-  - Manage hidden content categories.
-  - Playback preferences (volume memory, auto-play).
-  - Choose the starting page and which main navigation tabs are shown.
-- **🎛️ Hardware Transcoding**: GPU-accelerated transcoding with NVIDIA NVENC, AMD AMF, Intel QuickSync, and VAAPI support.
-- **🔊 Smart Audio**: Configurable 5.1→Stereo downmix presets (ITU, Night Mode, Cinematic) with automatic passthrough for compatible sources.
-- **📦 Stream Processing**: Auto-detection of stream codecs with smart remux/transcode decisions.
-- **🐳 Docker Ready**: Easy deployment containerization.
+## Interface
 
-## Screenshots
+<p align="center">
+  <img src="public/img/screenshots/screenshot-dashboard.png" width="49%" alt="NodeCast TV dashboard" />
+  <img src="public/img/screenshots/screenshot-2.png" width="49%" alt="NodeCast TV programme guide" />
+  <img src="public/img/screenshots/screenshot-3.png" width="49%" alt="NodeCast TV movie library" />
+  <img src="public/img/screenshots/screenshot-settings.png" width="49%" alt="NodeCast TV transcoding settings" />
+</p>
 
-> These screenshots were inherited from the upstream NodeCast TV project and will be replaced as the NodeCast TV Plus interface evolves.
+These screenshots were inherited from upstream NodeCast TV. Some will be replaced as the NodeCast TV Plus interface and themes evolve.
 
-<div align="center">
-  <img src="public/img/screenshots/screenshot-dashboard.png" width="45%" alt="Dashboard" />
-  <img src="public/img/screenshots/screenshot-1.png" width="45%" alt="Live TV" />
-  <img src="public/img/screenshots/screenshot-2.png" width="45%" alt="TV Guide" />
-  <img src="public/img/screenshots/screenshot-3.png" width="45%" alt="Movies" />
-  <img src="public/img/screenshots/screenshot-4.png" width="45%" alt="Series" />
-  <img src="public/img/screenshots/screenshot-settings.png" width="45%" alt="Settings" />
-</div>
+## Quick start with Docker Compose
 
-## Getting Started
+### Requirements
 
-### Recommended: run the published container
+- Docker Engine
+- Docker Compose v2 (`docker compose`)
 
-The official container supports `linux/amd64` and `linux/arm64`. GitHub Container Registry is the canonical registry:
+### 1. Create `compose.yml`
 
-[`ghcr.io/mikaelkw/nodecast-tv-plus`](https://github.com/MikaelKW/nodecast-tv-plus/pkgs/container/nodecast-tv-plus)
+The file below is an example deployment:
 
-Starting with version 2.5.0, the same stable images are mirrored to
-[`mikaelkw/nodecast-tv-plus`](https://hub.docker.com/r/mikaelkw/nodecast-tv-plus) on Docker Hub. Exact-version, compatible-minor, and `latest` tags contain matching images in both registries. Development branch and commit tags remain available only from GitHub Container Registry.
+```yaml
+services:
+  nodecast-tv-plus:
+    image: mikaelkw/nodecast-tv-plus:latest
+    container_name: nodecast-tv-plus
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - nodecast-tv-plus-data:/app/data
+    security_opt:
+      - no-new-privileges:true
 
-1. Create a directory for the deployment and download [`.env.example`](.env.example) as `.env`:
-
-   ```bash
-   mkdir nodecast-tv-plus && cd nodecast-tv-plus
-   curl -fsSL https://raw.githubusercontent.com/MikaelKW/nodecast-tv-plus/main/.env.example -o .env
-   ```
-
-   You can also download and rename the file manually.
-
-2. Generate two different secrets. This Docker-only command can be run twice:
-
-   ```bash
-   docker run --rm node:20-alpine node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-   ```
-
-   Put one value in `JWT_SECRET` and the other in `SESSION_SECRET`. Never commit the resulting `.env` file.
-
-   To allow local accounts to enable authenticator-app two-factor authentication, run the command a third time and put that independent value in `TOTP_ENCRYPTION_KEY`. Preserve this value across upgrades and include the `.env` file in a secure deployment backup. Changing or losing it makes existing TOTP enrollments unusable.
-
-3. Start the application:
-
-   ```bash
-   docker run -d \
-     --name nodecast-tv-plus \
-     --restart unless-stopped \
-     --env-file .env \
-     -p 3000:3000 \
-     -v nodecast-tv-plus-data:/app/data \
-     ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
-   ```
-
-4. Open `http://localhost:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an older installation already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
-
-5. Confirm that Docker reports the application as ready:
-
-   ```bash
-   docker inspect --format '{{.State.Health.Status}}' nodecast-tv-plus
-   ```
-
-   A ready container reports `healthy`. The lightweight `/api/health` endpoint returns only readiness status and the application version; it does not contact IPTV providers or expose configuration.
-
-The versioned tag is recommended for predictable deployments. The `latest` tag follows the newest stable release. To update later, pull the intended version and recreate the container while keeping the same data volume and `.env` file.
-
-For version 2.5.0 and later, Docker Hub can be used by substituting the image reference with the matching tag:
-
-```bash
-mikaelkw/nodecast-tv-plus:<version>
+volumes:
+  nodecast-tv-plus-data:
+    name: nodecast-tv-plus-data
 ```
 
-For sources that need more time to begin transcoding, set `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. It defaults to `15` and accepts a whole number from `1` to `300`. The value applies to each startup attempt; because one retry may occur after an initial provider rejection, the total wait can be approximately twice the configured value.
+This example reads its environment variables from `.env`. An environment file is not strictly required—variables can instead be configured directly through Docker or another container platform—but it is recommended because it keeps security secrets separate from `compose.yml`.
 
-### Migrate from upstream NodeCast TV
+The example uses [Docker Hub](https://hub.docker.com/r/mikaelkw/nodecast-tv-plus). The equivalent GitHub Container Registry image is `ghcr.io/mikaelkw/nodecast-tv-plus:latest`.
 
-NodeCast TV Plus 2.5.0 has verified migration paths from these versions:
+`latest` follows the newest stable release. For controlled upgrades, replace it with an exact version tag from the [Releases](https://github.com/MikaelKW/nodecast-tv-plus/releases) page.
 
-| Existing installation | Target | Status |
-| --- | --- | --- |
-| Upstream v2.1.1 (last formal upstream release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
-| Upstream 2.1.4 (current upstream container and source version when tested) | NodeCast TV Plus 2.5.0 | Verified by automated release gate |
-| NodeCast TV Plus 2.4.0 (previous stable Plus release) | NodeCast TV Plus 2.5.0 | Verified by automated release gate using the published image |
+### 2. Generate the security secrets
 
-The migration tests reuse each baseline's `/app/data` volume and verify the administrator account and password, source configuration and provider credential fields, application settings, categories, playlist items, favorites, watch history, hidden channels, and authentication state. Upstream baselines additionally verify migration from a valid legacy bearer token to the Plus authentication cookie.
+Generate three different random values:
 
-Migration support is version-specific. A future upstream or Plus version is not automatically supported merely because an earlier version was compatible. The automated gate covers both supported upstream baselines and upgrades a disposable persistent data volume from the published 2.4.0 image to the 2.5.0 release candidate. Any incompatible migration will be called out in the release notes and accompanied by migration instructions or a conversion tool when practical.
+```bash
+openssl rand -hex 48
+openssl rand -hex 48
+openssl rand -hex 48
+```
 
-Before migrating:
+Create `.env` and paste a different generated value after each security variable:
 
-1. Stop the upstream container and back up its complete `/app/data` directory or Docker volume.
-2. Identify the storage currently mounted at `/app/data`:
+```env
+NODE_ENV=production
+JWT_SECRET=replace-with-the-first-generated-value
+SESSION_SECRET=replace-with-the-second-generated-value
+TOTP_ENCRYPTION_KEY=replace-with-the-third-generated-value
+TZ=YOUR_REGION/YOUR_CITY
+```
 
-   ```bash
-   docker inspect nodecast-tv --format '{{range .Mounts}}{{println .Type .Name .Source "->" .Destination}}{{end}}'
-   ```
+`NODE_ENV=production` makes the container refuse to start if `JWT_SECRET` or `SESSION_SECRET` is missing or weak. This prevents a production installation from silently using temporary development secrets.
 
-3. Create a Plus `.env` file from [`.env.example`](.env.example). Set two different strong values for `JWT_SECRET` and `SESSION_SECRET`. Optionally set and preserve a third independent `TOTP_ENCRYPTION_KEY` to make authenticator-app 2FA available to local accounts.
-4. Start the Plus container with the **existing upstream storage** mounted at `/app/data`. Do not start it with a new empty volume.
+`TZ` is optional. Replace `YOUR_REGION/YOUR_CITY` with the appropriate [IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones), such as `America/New_York`, or remove the line if the default UTC time zone is suitable.
 
-For an existing named volume, keep its actual name in the `-v` argument:
+Restrict the file so that only its owner can read or modify it:
+
+```bash
+chmod 600 .env
+```
+
+These values protect logins, sessions, and local-account two-factor authentication. Preserve the same values across container upgrades and restores. Changing `TOTP_ENCRYPTION_KEY` makes existing TOTP enrollments unusable.
+
+<details>
+<summary><strong>Generate the complete .env file automatically with Docker</strong></summary>
+
+If OpenSSL is unavailable, this command creates `.env` with three independent random secrets:
+
+```bash
+docker run --rm node:20-alpine node -e "const c=require('crypto'); console.log('NODE_ENV=production'); for (const n of ['JWT_SECRET','SESSION_SECRET','TOTP_ENCRYPTION_KEY']) console.log(n+'='+c.randomBytes(48).toString('hex'))" > .env
+chmod 600 .env
+```
+
+Add an optional `TZ` line afterward if required.
+
+</details>
+
+### 3. Start NodeCast TV Plus
+
+```bash
+docker compose up -d
+```
+
+Open `http://YOUR-SERVER-IP:3000` and create the initial administrator account. Usernames retain their chosen capitalization for display but are case-insensitive when signing in. If an upstream installation migrated to this fork already contains names that differ only by capitalization, those accounts continue to require their exact spelling until an administrator renames them uniquely.
+
+Check the container:
+
+```bash
+docker compose ps
+```
+
+When ready, the container reports `healthy`. The lightweight `/api/health` endpoint also reports application readiness without contacting IPTV providers or exposing configuration.
+
+<details>
+<summary><strong>Docker run alternative</strong></summary>
+
+The same installation can be started without Compose:
 
 ```bash
 docker run -d \
   --name nodecast-tv-plus \
   --restart unless-stopped \
   --env-file .env \
+  --security-opt no-new-privileges:true \
   -p 3000:3000 \
-  -v EXISTING_UPSTREAM_VOLUME:/app/data \
-  ghcr.io/mikaelkw/nodecast-tv-plus:2.5.0
+  -v nodecast-tv-plus-data:/app/data \
+  mikaelkw/nodecast-tv-plus:latest
 ```
 
-For an existing bind-mounted directory, mount its absolute path instead:
+Use `docker ps` to check the container and `docker logs nodecast-tv-plus` to view its logs.
+
+</details>
+
+## Updating
+
+Back up the persistent data volume and `.env` file before upgrading. Then pull and recreate the container:
+
+When using `latest`, run:
 
 ```bash
--v /absolute/path/to/existing/data:/app/data
+docker compose pull
+docker compose up -d
 ```
 
-Important limitations:
+When using an exact version tag, first change the `image` value in `compose.yml` to the intended new version, then run the same commands.
 
-- Plus requires strong `JWT_SECRET` and `SESSION_SECRET` values in production. If the upstream installation used its built-in JWT secret, create a new strong value and sign in again after migration. The saved account and password are preserved.
-- Keeping the same valid `JWT_SECRET` allows an existing upstream browser token to be exchanged for the safer Plus authentication cookie. Never weaken or reuse an exposed secret solely to preserve a browser session.
-- Browser-only preferences do not follow automatically when the hostname, protocol, or port changes. Server-side users, sources, settings, favorites, and history remain in `/app/data`.
-- Custom plugins, reverse-proxy settings, SSO/OIDC environment variables, hardware-device mappings, and other configuration outside `/app/data` must be reviewed and migrated separately.
-- Downgrades are not guaranteed. To roll back safely, stop Plus and restore the backup made before migration rather than attaching a Plus-modified data volume to an older upstream container.
+The `/app/data` volume contains users, sources, settings, favorites, and watch history. Recreating the container is safe when this volume and `.env` are preserved.
 
-After startup, confirm that login, sources, favorites, history, and playback work before removing the backup or old container.
+To roll back, restore the pre-upgrade data backup and use the previous image tag. Downgrading a data volume already modified by a newer release is not guaranteed.
 
-### Build and run from source
+<details>
+<summary><strong>Updating a container created with Docker run</strong></summary>
 
-#### Prerequisites
-
-- Node.js 18 or higher (Node.js 20 recommended)
-- npm
-
-#### Installation
-
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/MikaelKW/nodecast-tv-plus.git
-    cd nodecast-tv-plus
-    ```
-
-2.  Install dependencies:
-    ```bash
-    npm ci
-    ```
-
-3.  Start the development server:
-    ```bash
-    npm run dev
-    ```
-
-4.  Open your browser at `http://localhost:3000`.
-
-### Testing changes
-
-The project includes several complementary checks:
+Pull the intended image, stop and remove the old container, then repeat the Docker Run command from the installation section:
 
 ```bash
-npm test                 # syntax, security, and server smoke tests
-npm run test:e2e         # isolated browser, M3U, EPG, API, and playback test
-npm run test:e2e:mobile  # iPhone/WebKit layout and scrolling regression test
-npm run test:e2e:subpath # login, API, navigation, and logout below /nodecast/
-npm run test:real-world  # imports the public IPTV-org sports playlist
-npm run test:migration   # upgrades pinned upstream Docker baselines into the local image
+docker pull mikaelkw/nodecast-tv-plus:latest
+docker stop nodecast-tv-plus
+docker rm nodecast-tv-plus
 ```
 
-The end-to-end and real-world tests use disposable data under `.test-data/`; they do not read or change the normal `data/` directory. The browser test generates its own short test video locally. The real-world test requires internet access and is run manually rather than in CI so an external outage cannot block every pull request.
+The named `nodecast-tv-plus-data` volume and `.env` file are not removed by these commands. Reusing both preserves the installation.
 
-The migration test requires Docker. It builds lightweight test containers from the exact supported upstream commits, pulls the published previous stable Plus image, generates temporary secrets and test records, upgrades each disposable data volume into the local Plus image, and removes the disposable containers and volumes afterward. Prepared images are also removed when no other local container still references them. The lightweight upstream baselines run the real upstream application and database code but omit media packages that are irrelevant to data migration. CI runs this release gate for pull requests targeting `main` and for manual workflow runs, ensuring migration compatibility is checked before main without slowing every feature pull request.
+</details>
 
-### Docker Compose for local builds
+## Configuration
 
-The included [`docker-compose.yml`](docker-compose.yml) builds the image from the current local checkout. This is useful when developing or testing code changes; ordinary installations should use the published container above.
+Settings that are not listed below are normally managed inside the application.
 
-1.  Create a `docker-compose.yml` file (or copy the one from this repo):
+### Security variables
 
-    Copy `.env.example` to `.env`, then generate two different random secrets. For example:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `JWT_SECRET` | Yes | Protects authentication tokens. Use a unique random value of at least 32 characters. |
+| `SESSION_SECRET` | Yes | Protects login sessions. It must be different from `JWT_SECRET`. |
+| `TOTP_ENCRYPTION_KEY` | For local-account MFA | Encrypts authenticator-app secrets. Preserve it across upgrades and restores. |
 
-    ```bash
-    node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-    ```
+The quick-start command generates all three values securely.
 
-    Run the command twice and place one value in `JWT_SECRET` and the other in `SESSION_SECRET`. Run it a third time and set `TOTP_ENCRYPTION_KEY` if local accounts should be able to enable authenticator-app 2FA. The `.env` file is ignored by Git and must never be committed.
+### Common optional variables
 
-    ```yaml
-    services:
-      nodecast-tv-plus:
-        build: .
-        container_name: nodecast-tv-plus
-        ports:
-          - "3000:3000" # Host:Container
-        volumes:
-          - ./data:/app/data
-        restart: unless-stopped
-        environment:
-          NODE_ENV: production
-          PORT: 3000 # Optional: Internal container port
-          JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
-          SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
-          TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
-          NODECAST_BASE_PATH: ${NODECAST_BASE_PATH:-}
-          NODECAST_INSTANCE_ID: ${NODECAST_INSTANCE_ID:-}
-          TRANSCODE_START_TIMEOUT_SECONDS: ${TRANSCODE_START_TIMEOUT_SECONDS:-15}
-          OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-          OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-          OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-          OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-}
-          DISABLE_LOCAL_AUTH: ${DISABLE_LOCAL_AUTH:-false}
-          OIDC_AUTO_REDIRECT: ${OIDC_AUTO_REDIRECT:-false}
-    ```
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NODE_ENV` | Not set | Set to `production` to make startup fail when `JWT_SECRET` or `SESSION_SECRET` is missing or weak instead of using temporary development secrets. Recommended as an additional production safeguard. |
+| `APP_ORIGIN` | Automatic | Public origin, such as `https://tv.example.com`, when automatic reverse-proxy detection is unsuitable. |
+| `AUTH_COOKIE_SECURE` | Automatic | Force secure cookies with `true`, or disable them with `false`. Normally leave unset. |
+| `TZ` | `Etc/UTC` | Container time zone using an IANA name such as `Europe/Oslo`. |
+| `NODECAST_BASE_PATH` | Empty | Public subpath when hosting below a path, for example `/nodecast`. |
+| `NODECAST_INSTANCE_ID` | Automatic | Distinguishes cloned installations that share a hostname. Ordinary installations do not need this. |
+| `ALLOW_LOCAL_MEDIA_URLS` | `false` | Allows loopback sources such as `http://127.0.0.1`. Private LAN addresses do not require it. |
+| `TRANSCODE_START_TIMEOUT_SECONDS` | `15` | Seconds to wait per transcode startup attempt. Accepts `1` to `300`. |
 
-2.  Build and run the container:
-    ```bash
-    docker compose up -d --build
-    ```
+Add optional values on new lines in `.env`, then apply them with:
 
-The application will be available at `http://localhost:3000`.
+```bash
+docker compose up -d
+```
 
-Each installation automatically stores a stable instance identifier in
-`/app/data/.nodecast-instance-id`. Authentication cookies use this identifier so
-multiple NodeCast TV Plus containers on different ports of the same hostname can
-remain signed in within one browser profile. Preserve `/app/data` during
-upgrades. When cloning an existing data volume to create a separate installation,
-set a different stable `NODECAST_INSTANCE_ID` for each clone.
+Each installation stores a stable identifier in `/app/data`. This keeps separate NodeCast TV Plus containers on different ports of the same hostname signed in independently. When cloning an existing data volume, set a different stable `NODECAST_INSTANCE_ID` for each clone.
 
-### Container platforms
+<details>
+<summary><strong>OIDC single sign-on</strong></summary>
 
-Published images are built for:
+Add these values to `.env`:
 
-- `linux/amd64` — standard Intel/AMD 64-bit systems
-- `linux/arm64` — 64-bit ARM systems
+```env
+OIDC_ISSUER_URL=https://identity.example.com/application/o/nodecast/
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-client-secret
+OIDC_CALLBACK_URL=https://tv.example.com/api/auth/oidc/callback
+```
 
-Hardware-accelerated transcoding still depends on compatible host hardware, drivers, and container device access.
+NodeCast TV Plus uses the provider's standard OIDC discovery document. Authentik, Keycloak, and other standards-compliant providers do not need provider-specific endpoint configuration.
 
+OIDC URLs must use HTTPS except when testing through localhost.
 
-### Hardware Acceleration Setup
+New SSO accounts receive the Viewer role. An administrator can promote them under **Settings > Users**.
 
-To enable hardware transcoding (NVENC, QSV, VAAPI), you must expose your host's GPU to the container.
+To use SSO-only sign-in:
 
-**1. Intel (QSV) & AMD (VAAPI)**
-Update your `docker-compose.yml` to map the DRI devices and add necessary groups (often required for permission):
+```env
+DISABLE_LOCAL_AUTH=true
+OIDC_AUTO_REDIRECT=true
+```
+
+Before disabling local sign-in:
+
+1. Complete the initial local administrator setup.
+2. Confirm that an SSO account can sign in.
+3. Promote the intended SSO account to Administrator.
+4. Back up `/app/data` and `.env`.
+5. Enable SSO-only mode, restart, and verify administrator access.
+
+If local sign-in remains enabled, `login.html?local=1` bypasses automatic SSO redirect for that visit.
+
+For unusual providers without discovery, `OIDC_AUTH_URL`, `OIDC_TOKEN_URL`, and `OIDC_USERINFO_URL` can override the individual endpoints.
+
+</details>
+
+<details>
+<summary><strong>Reverse proxy and subpath notes</strong></summary>
+
+Forward the original host and protocol, allow streaming responses, and disable proxy buffering. For HTTPS deployments, enabling **Force Backend Proxy** under **Settings > Transcoding** can resolve mixed-content or provider CORS restrictions.
+
+When publishing at a subpath such as `https://tv.example.com/nodecast/`:
+
+```env
+NODECAST_BASE_PATH=/nodecast
+```
+
+The reverse proxy must strip that prefix before forwarding requests. Preserve the trailing slash. When using SSO, register and configure the complete callback URL:
+
+```env
+OIDC_CALLBACK_URL=https://tv.example.com/nodecast/api/auth/oidc/callback
+```
+
+</details>
+
+## Add content
+
+1. Open **Settings > Sources**.
+2. Add an Xtream Codes connection, M3U playlist, or separate EPG source.
+3. Wait for the initial synchronization to finish.
+4. Browse the available content under **Live TV**, **TV Guide**, **Movies**, or **Series**.
+
+Source settings can control whether content appears in Live TV, Movies, or Series. The **Manage Content** tab controls individual groups and channels.
+
+## Playback and transcoding
+
+Keep **Auto Transcode (Smart)** enabled unless troubleshooting a specific provider. NodeCast TV Plus probes each stream and chooses direct playback, remuxing, audio conversion, or full transcoding as needed.
+
+During playback:
+
+- **Auto** uses the normal best-effort quality behavior.
+- A resolution limit can be selected without leaving the player.
+- Available audio and subtitle tracks can be changed for movies and episodes.
+- A provider may prevent a requested quality limit; playback then returns to the original stream with a clear notice.
+
+Common adjustments under **Settings > Transcoding**:
+
+| Problem | Adjustment |
+| --- | --- |
+| Browser reports CORS or mixed-content errors | Enable **Force Backend Proxy**. |
+| Video plays without audio | Enable **Force Audio Transcode**. |
+| Browser cannot decode the video | Enable **Force Video Transcode**. |
+| Provider startup is unusually slow | Increase `TRANSCODE_START_TIMEOUT_SECONDS` in `.env`. |
+| Constant buffering | Lower the maximum resolution or quality preset, check available CPU/GPU and network capacity, and compare HLS with MPEG-TS output when the Xtream provider offers both. |
+
+HLS is preferred. Raw MPEG-TS streams are automatically remuxed when required. RTMP and RTSP cannot be played directly by web browsers.
+
+<details>
+<summary><strong>Browser codec support and stream types</strong></summary>
+
+Browser codec support depends on the browser, operating system, device hardware, and installed media components. NodeCast TV Plus probes streams and converts unsupported media when smart transcoding is enabled.
+
+| Codec | Typical browser behavior |
+| --- | --- |
+| H.264 / AVC video | Broad native support and normally played directly. |
+| H.265 / HEVC video | Native support varies; otherwise video is transcoded. |
+| AV1 video | Native support varies by browser and hardware; otherwise video is transcoded. |
+| AAC audio | Broad native support and normally played directly. |
+| AC3 / EAC3 audio | Support varies; audio is converted to AAC when required. |
+
+On Windows, Microsoft provides the [HEVC Video Extensions](https://apps.microsoft.com/detail/9nmzlz57r3t7) for applications and browsers that use the system's HEVC support. Native playback still depends on the browser, Windows version, hardware, and media format.
+
+[WebKit documents AV1 support](https://webkit.org/blog/14445/webkit-features-in-safari-17-0/#av1) in Safari on devices with AV1 hardware decoding. On other Apple devices, smart transcoding provides the compatibility fallback.
+
+Supported input and delivery types:
+
+| Stream type | Support |
+| --- | --- |
+| HLS (`.m3u8`) | Preferred for Live TV and adaptive streaming. |
+| MPEG-TS (`.ts`) | Supported through automatic or forced remuxing/transcoding. |
+| Progressive VOD files | Supported when the provider exposes a browser-compatible or processable media URL. |
+| RTMP / RTSP | Not played directly because web browsers do not support these protocols natively. |
+
+</details>
+
+<details>
+<summary><strong>Transcoding settings reference</strong></summary>
+
+All stream-processing options are under **Settings > Transcoding**.
+
+| Setting | Options | Purpose |
+| --- | --- | --- |
+| **Hardware Encoder** | Auto, NVENC, AMF, QSV, VAAPI, Software | Selects GPU or software encoding. Auto uses the best detected option. |
+| **Max Resolution** | 4K, 1080p, 720p, 480p | Best-effort upper limit for transcoded output. Lower values reduce processing and bandwidth. |
+| **Quality Preset** | High, Medium, Low | Balances picture quality against CPU/GPU work and bandwidth. |
+| **Audio Mix Preset** | Auto, ITU, Night Mode, Cinematic, Passthrough | Controls how multi-channel audio is converted for browser playback. |
+
+Audio mix presets:
+
+| Preset | Behavior |
+| --- | --- |
+| **Auto (Smart)** | Copies compatible stereo AAC and uses a balanced downmix for multi-channel audio. |
+| **ITU-R BS.775** | Standard balanced surround-to-stereo downmix. |
+| **Night Mode** | Emphasizes dialogue and reduces loud bass or effects. |
+| **Cinematic** | Preserves a wider, more spacious presentation. |
+| **Passthrough** | Avoids audio processing when the browser and source are already compatible. |
+
+Stream-processing controls:
+
+| Setting | Purpose |
+| --- | --- |
+| **Auto Transcode (Smart)** | Probes each stream and chooses direct playback, remuxing, audio conversion, or full transcoding. Recommended for most installations. |
+| **Force Audio Transcode** | Converts audio to AAC while preserving compatible video. Useful when video works but audio does not. |
+| **Force Video Transcode** | Converts both video and audio for sources a browser cannot decode. |
+| **Force Remux** | Forces a container conversion without re-encoding compatible audio/video tracks. |
+| **Stream Output Format** | Chooses the HLS or MPEG-TS format requested from an Xtream provider. |
+| **Force Backend Proxy** | Sends provider media through NodeCast TV Plus to handle CORS, mixed-content, or provider-access restrictions. |
+
+</details>
+
+<details>
+<summary><strong>Hardware acceleration</strong></summary>
+
+Hardware acceleration requires compatible host drivers and access to the GPU from the container.
+
+For Intel Quick Sync or VAAPI devices, add this to the service in `compose.yml`:
+
 ```yaml
     devices:
-      - /dev/dri:/dev/dri # Required for VAAPI/QuickSync/AMF (Linux)
-    # group_add:       # Optional: Needed mainly if you run as non-root
-    #   - "video"      # Run on host: getent group video
-    #   - "render"     # Run on host: getent group render
+      - /dev/dri:/dev/dri
 ```
 
-**2. NVIDIA (NVENC)**
-Ensure you have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed on your host, then update your `docker-compose.yml`:
+For NVIDIA NVENC, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and add:
+
 ```yaml
     deploy:
       resources:
@@ -301,320 +399,135 @@ Ensure you have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacente
               capabilities: [gpu, utility, video, compute]
 ```
 
-**Verify:**
-After restarting the container, go to **Settings -> Transcoding**. The **Hardware Detection** status should list your GPU (e.g., "NVIDIA GPU Detected" or "VAAPI Available").
+Recreate the container, then check **Settings > Transcoding** for detected hardware. Availability depends on the host, drivers, container runtime, and codecs involved.
 
-### SSO / OIDC Setup
+</details>
 
-Enable Single Sign-On (SSO) with your preferred OIDC provider (Authentik, Keycloak, etc.) by configuring these variables in your `.env` file or Docker environment:
+<details>
+<summary><strong>IPTV middleware, TVHeadend, and Acestream</strong></summary>
 
-```env
-OIDC_ISSUER_URL=https://your-idp.com/application/o/nodecast/
-OIDC_CLIENT_ID=your_client_id
-OIDC_CLIENT_SECRET=your_client_secret
-OIDC_CALLBACK_URL=http://localhost:3000/api/auth/oidc/callback # Adjust for your domain
-```
+### IPTV middleware
 
-NodeCast TV Plus retrieves the provider endpoints from
-`OIDC_ISSUER_URL/.well-known/openid-configuration`, so standards-compliant
-providers such as Authentik and Keycloak do not require provider-specific URL
-paths. OIDC URLs must use HTTPS except when testing through localhost.
+Middleware such as Dispatcharr, Threadfin, xTeVe, or m3u-editor may expose streams without browser-compatible CORS headers or as raw MPEG-TS.
 
-If discovery is unavailable in a special deployment, the individual endpoints
-can be overridden explicitly:
+Recommended starting point:
 
-```env
-OIDC_AUTH_URL=https://your-idp.com/authorize
-OIDC_TOKEN_URL=https://your-idp.com/token
-OIDC_USERINFO_URL=https://your-idp.com/userinfo
-```
-
-**Note:** New users signing in via SSO are automatically assigned the **Viewer** role. You must manually promote them to Admin if desired.
-
-#### Optional SSO-only sign-in
-
-After OIDC has been verified, local username/password sign-in can be disabled and
-the login page can redirect directly to the identity provider:
-
-```env
-DISABLE_LOCAL_AUTH=true
-OIDC_AUTO_REDIRECT=true
-```
-
-`DISABLE_LOCAL_AUTH=true` hides the local sign-in form and blocks the password
-login API. It does not delete local accounts or revoke sessions that were already
-issued. `OIDC_AUTO_REDIRECT=true` is a login-page convenience and can be enabled
-independently. When local sign-in remains enabled, append `?local=1` to
-`login.html` to bypass automatic redirect for that visit. Failed SSO callbacks
-and deliberate logout also stop at the login page instead of creating a redirect
-loop.
-
-Use this sequence to avoid losing administrator access:
-
-1. Complete the initial local administrator setup with local sign-in enabled.
-2. Configure OIDC and confirm that an SSO account can sign in.
-3. Promote the intended SSO account to **Admin** under **Settings -> Users**.
-4. Back up `/app/data`, then enable `DISABLE_LOCAL_AUTH` and optionally
-   `OIDC_AUTO_REDIRECT`.
-5. Restart the container and verify SSO administrator access before ending the
-   existing administrator session.
-
-The one-time administrator setup remains available while the database is empty,
-even if local sign-in is disabled. This is a bootstrap safeguard; after setup,
-that local account cannot sign in while `DISABLE_LOCAL_AUTH=true`. If SSO is
-unavailable at that point, correct the OIDC configuration or temporarily set
-`DISABLE_LOCAL_AUTH=false` and restart the application.
-
-### Two-factor authentication
-
-Local accounts can enable standards-based TOTP from the username-initial menu under **Account security** after `TOTP_ENCRYPTION_KEY` is configured. The guided setup works with standard authenticator apps, and sign-in can use either a current six-digit code or one of the single-use recovery codes created during enrollment.
-
-The TOTP secret is encrypted in `/app/data/db.json`; recovery codes are stored only as keyed hashes. The QR code, manual setup key, and plaintext recovery codes are shown only during the relevant setup step. Save recovery codes securely before leaving that screen.
-
-Important operational notes:
-
-- Keep `TOTP_ENCRYPTION_KEY` stable and back it up separately from `/app/data`. Both are needed to restore existing 2FA enrollments.
-- Use a different random value from `JWT_SECRET` and `SESSION_SECRET`.
-- Local administrators can reset 2FA for another account after re-entering their own password and, when enabled, their own second factor. The reset cannot reveal the other account's secret or recovery codes.
-- SSO accounts continue to use the identity provider's authentication and MFA policy.
-
-### Usage
-
-1.  Go to **Settings** -> **Content Sources**.
-2.  Add your IPTV provider details (Xtream Codes or M3U URL).
-3.  Click "Refresh Sources".
-4.  Navigate to **Live TV**, **Movies**, or **Series** to browse your content.
-
-
-## Browser Codec Support & Transcoding
-
-NodeCast TV Plus is a web-based application. By default, **video decoding is handled by your browser**. However, the built-in **smart transcoding system** automatically converts incompatible media (e.g., HEVC video, Dolby audio) into browser-friendly formats using FFmpeg.
-
-**Codec Compatibility Table:**
-
-| Codec | Chrome | Firefox | Safari | Edge |
-|-------|--------|---------|--------|------|
-| **H.264 (AVC)** | ✅ | ✅ | ✅ | ✅ |
-| **H.265 (HEVC)** | Auto-Transcode | Auto-Transcode | ✅ | ⚠️ |
-| **AV1** | ✅ | ✅ | Auto-Transcode | ✅ |
-| **AAC Audio** | ✅ | ✅ | ✅ | ✅ |
-| **AC3/EAC3 (Dolby)** | Auto-Transcode | Auto-Transcode | ✅ | Auto-Transcode |
-
-> **⚠️ Note:** Edge requires the [HEVC Video Extensions](https://apps.microsoft.com/store/detail/hevc-video-extensions/9NMZLZ57R3T7) from the Microsoft Store to play H.265 (HEVC) natively.
-> **ℹ️ Note:** Safari plays AV1 natively on supported hardware (iPhone 15 Pro, M3 Macs). On older devices, Auto-Transcode handles it.
-
-
-
-## Supported Stream Types
-
-NodeCast TV Plus is optimized for **HLS (HTTP Live Streaming)**.
-
--   **✅ HLS (`.m3u8`)**: Fully supported and recommended. Best for adaptive bitrate and network resilience.
--   **✅ MPEG-TS (`.ts`)**: Supported via Force Remux in settings.
--   **⚠️ High Latency/P2P**: For sources like Acestream, prefer HLS output (`.m3u8`) over raw TS streams to avoid timeouts during buffering.
--   **❌ RTMP/RTSP**: Not supported natively by browsers.
-
-## Transcoding Settings
-
-All transcoding and stream processing settings are found in **Settings → Transcoding**.
-
-### Hardware Encoder
-
-| Setting | Options | Description |
-|---------|---------|-------------|
-| **Hardware Encoder** | Auto, NVENC, AMF, QSV, VAAPI, Software | GPU-accelerated encoding. Auto detects best available. |
-| **Max Resolution** | 4K, 1080p, 720p, 480p | Limit output resolution (lower = faster). |
-| **Quality Preset** | High, Medium, Low | Encoding quality/speed tradeoff. |
-| **Audio Mix Preset** | Auto, ITU, Night Mode, Cinematic, Passthrough | 5.1→Stereo downmix mode (see below). |
-
-### Audio Mix Presets
-
-| Preset | Description |
-|--------|-------------|
-| **Auto (Smart)** | Copies stereo AAC as-is, uses ITU downmix for 5.1+ |
-| **ITU-R BS.775** | Industry-standard balanced downmix |
-| **Night Mode** | Boosted dialogue, reduced bass for quiet viewing |
-| **Cinematic** | Wide soundstage, immersive surround feel |
-| **Passthrough** | No processing (may cause errors on 5.1/Dolby sources) |
-
-### Stream Processing
-
-| Setting | What It Does | When to Enable |
-|---------|--------------|----------------|
-| **Auto Transcode (Smart)** | Probes streams and only transcodes/remuxes when needed | Recommended for most users (default ON) |
-| **Force Audio Transcode** | Transcodes audio to AAC (video passes through) | When you have video but no audio (Dolby/AC3/EAC3) |
-| **Force Video Transcode** | Full transcode of both audio and video | For HEVC/VP9 sources on unsupported browsers |
-| **Force Remux** | Remuxes MPEG-TS to MP4 (no re-encoding) | For raw `.ts` streams from middleware |
-| **Stream Output Format** | HLS or TS for Xtream API requests | Try TS if HLS causes buffering |
-
-### Network
-
-| Setting | What It Does | When to Enable |
-|---------|--------------|----------------|
-| **Force Backend Proxy** | Routes streams through the server for CORS headers | When streams fail with CORS errors, or using middleware |
-
-
-## Troubleshooting
-
-### Video Won't Play (Black Screen or Loading Forever)
-
-| Symptom | Likely Cause | Solution |
-|---------|--------------|----------|
-| Black screen, `Access-Control-Allow-Origin` error | CORS blocked | Enable **"Force Backend Proxy"** in Settings → Transcoding |
-| Black screen with `MEDIA_ERR_DECODE` | Unsupported codec (HEVC/VP9) | Ensure **"Auto Transcode"** is enabled |
-| Loading forever (no error) | Browser decoder stuck | Enable **"Force Video Transcode"** (overrides Auto detection) |
-
-### No Audio (Video Plays Fine)
-
-| Symptom | Likely Cause | Solution |
-|---------|--------------|----------|
-| No audio at all | Dolby/AC3/EAC3 audio | Enable **"Force Audio Transcode"** (overrides Auto detection) |
-| Audio out of sync | Stream encoding issue | Try changing stream format to TS in Settings |
-
-### Buffering Issues
-
-| Symptom | Likely Cause | Solution |
-|---------|--------------|----------|
-| Constant buffering | Slow network or weak GPU | 1. Lower **Max Resolution** (e.g. to 720p)<br>2. Try **TS** format instead of HLS |
-
-### HTTPS / Reverse Proxy Issues
-
-If you're running NodeCast TV Plus behind a reverse proxy (Nginx, Caddy, Traefik) with HTTPS:
-
-| Symptom | Likely Cause | Solution |
-|---------|--------------|----------|
-| Streams fail with `fragLoadError` | Mixed content (HTTPS page loading HTTP streams) | Enable **"Force Backend Proxy"** in Settings → Transcoding |
-| Streams work on HTTP but not HTTPS | Reverse proxy not passing headers correctly | Ensure `X-Forwarded-Proto` header is set (see examples below) |
-
-**Caddy example:**
-```
-tv.domain.com {
-    reverse_proxy nodecast:3000 {
-        flush_interval -1
-        header_up X-Forwarded-Proto {scheme}
-    }
-}
-```
-
-To publish the application below a path such as
-`https://tv.domain.com/nodecast/`, set `NODECAST_BASE_PATH=/nodecast` and use
-a path-stripping proxy. Keep the trailing-slash redirect so relative browser
-assets resolve correctly:
-
-```caddy
-tv.domain.com {
-    redir /nodecast /nodecast/ 308
-
-    handle_path /nodecast/* {
-        reverse_proxy nodecast:3000 {
-            flush_interval -1
-            header_up X-Forwarded-Proto {scheme}
-            header_up X-Forwarded-Prefix /nodecast
-        }
-    }
-}
-```
-
-The configured path applies to login, API, image, playback, transcoding, and
-logout URLs. If SSO is enabled, register the complete public callback URL with
-the identity provider, for example
-`https://tv.domain.com/nodecast/api/auth/oidc/callback`, and set the same value
-in `OIDC_CALLBACK_URL`.
-
-**Nginx example:**
-```nginx
-location / {
-    proxy_pass http://nodecast:3000;
-    proxy_http_version 1.1;           # Required for chunked transfers and keep-alive
-    proxy_buffering off;              # Don't buffer responses (required for streaming)
-    proxy_request_buffering off;      # Don't buffer requests
-    proxy_read_timeout 300s;          # VOD: 5 min timeout for large files
-    proxy_connect_timeout 60s;        # VOD: Connection timeout
-    client_max_body_size 0;           # No upload size limit
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;  # Required for HTTPS detection
-    proxy_set_header Connection "";   # VOD: Enable keep-alive for Range requests
-}
-```
-
-### IPTV Middleware (m3u-editor, dispatcharr, Threadfin, xTeVe)
-If you manage your streams with middleware tools, you may encounter CORS issues or raw MPEG-TS streams that browsers can't play directly.
-
-**Recommended Setup:**
-1.  **Force Backend Proxy:** Enable this in **Settings → Transcoding → Network**. This routes middleware streams through NodeCast TV Plus, bypassing CORS restrictions.
-2.  **Auto Transcode:** Keep this enabled (default). It will automatically detect if the middleware stream (e.g., MPEG-TS) needs to be remuxed or transcoded for the browser.
-
-There is rarely a need to configure specific "Force Remux" settings manually anymore; the system detects stream types automatically.
+1. Keep **Auto Transcode (Smart)** enabled.
+2. Enable **Force Backend Proxy** if the browser reports CORS, HTTPS mixed-content, or provider-access errors.
+3. Prefer HLS output from the middleware when it is available.
 
 ### TVHeadend
 
-If you're using TVHeadend as your source, you may need to configure a few settings for streams to play correctly in NodeCast TV Plus:
+The simplest option is to enable **Force Backend Proxy** under **Settings > Transcoding**.
 
-**Option 1: Enable Force Backend Proxy (Easiest)**
-- In NodeCast TV Plus, go to **Settings → Transcoding → Network**
-- Enable **"Force Backend Proxy"**
-- This routes streams through the server, bypassing browser CORS restrictions
+Alternatively, configure the NodeCast TV Plus origin in TVHeadend's CORS settings. Include the complete protocol, hostname, and port, for example `http://192.168.1.100:3000`.
 
-**Option 2: Configure TVHeadend CORS**
-- In TVHeadend, go to **Configuration → General → Base → HTTP Server Settings**
-- Add your NodeCast TV Plus URL to **"CORS origin"** (e.g., `http://192.168.1.100:3000`)
-- **Note:** You must include the protocol (`http://` or `https://`)
+If authentication fails, confirm that the M3U URL and TVHeadend authentication mode are compatible. Different TVHeadend stream profiles may also produce different browser results.
 
-**Additional Tips:**
-- Enable **"digest+plain"** authentication in TVHeadend if using username/password in the M3U URL
-- Try different stream profiles (`?profile=pass` or `?profile=matroska`) if playback issues persist
+### Acestream and other P2P gateways
 
-### Acestream / P2P Streaming
+HLS output is recommended:
 
-If you are using `acestream-docker-home` or similar tools, it is **recommended** to use the HLS output format to reduce server load, though NodeCast TV Plus can remux raw streams if needed.
-
--   **Recommended:** `http://proxy:6878/ace/manifest.m3u8?id=...` (HLS Playlist - Direct Play)
--   **Supported:** `http://proxy:6878/ace/getstream?id=...` (MPEG-TS - Requires Server Remuxing)
-
-## Technology Stack
-
-- **Backend**: Node.js, Express
-- **Frontend**: Vanilla JavaScript (ES6+), CSS3
-- **Database**: SQLite (via better-sqlite3) for high-performance data storage
-- **Streaming**: HLS.js for stream playback
-- **Transcoding**: FFmpeg (integrated for hardware/software transcoding)
-
-## Project Structure
-
-```
-nodecast-tv-plus/
-├── public/              # Frontend assets
-│   ├── css/             # Stylesheets
-│   ├── js/              # Client-side logic
-│   │   ├── components/  # UI Components (ChannelList, EpgGuide, etc.)
-│   │   ├── pages/       # Page Controllers (Movies, Series, etc.)
-│   │   └── api.js       # API Client
-│   └── index.html       # Main entry point
-├── server/              # Backend server
-│   ├── config/          # Runtime and security configuration
-│   ├── routes/          # API endpoints
-│   ├── services/        # Playlist, OIDC, hardware, and transcode services
-│   ├── db.js            # Application data access layer
-│   ├── db/sqlite.js     # SQLite connection and schema
-│   └── index.js         # Server Entry Point
-├── scripts/             # Automated checks and maintenance scripts
-├── tests/               # Browser fixtures and integration tests
-└── data/                # Persistent storage (content.db, playlists)
+```text
+http://gateway:6878/ace/manifest.m3u8?id=STREAM_ID
 ```
 
-## Support and contributing
+Raw MPEG-TS output can also be processed, but requires backend remuxing and may place more load on the server:
 
+```text
+http://gateway:6878/ace/getstream?id=STREAM_ID
+```
+
+Stream availability and legality depend on the configured source. NodeCast TV Plus does not provide Acestream IDs or media.
+
+</details>
+
+## Two-factor authentication
+
+Local accounts can enable authenticator-app TOTP from the username menu under **Account security**. Sign-in accepts a current six-digit code or one of the single-use recovery codes created during enrollment.
+
+Keep both `/app/data` and `TOTP_ENCRYPTION_KEY` in the deployment backup. Recovery codes are only shown during enrollment or regeneration.
+
+SSO accounts use the identity provider's authentication and MFA policy.
+
+## Migrating from upstream NodeCast TV
+
+Downgrading from NodeCast TV Plus back to upstream NodeCast TV after Plus has opened the data volume is not supported. Returning to upstream requires restoring the complete backup created before migration.
+
+The current release verifies upgrades from the last formal upstream release (`v2.1.1`), upstream internal version `2.1.4`, and the previous stable NodeCast TV Plus release. The automated release gate checks that accounts, source configuration, settings, favorites, history, hidden content, and authentication data survive the upgrade.
+
+Before migrating:
+
+1. Stop the old container.
+2. Back up the complete storage currently mounted at `/app/data`.
+3. Create `compose.yml` and `.env` as described above.
+4. Mount the **existing** upstream storage at `/app/data` instead of creating an empty volume.
+5. Start NodeCast TV Plus and verify login, sources, favorites, history, and playback before removing the backup.
+
+Migration support is version-specific. Future upstream or Plus versions are not assumed compatible until they pass the release gate. Configuration stored outside `/app/data`, including reverse-proxy, OIDC, device mappings, and custom integrations, must be migrated separately.
+
+See the [changelog](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/CHANGELOG.md) and [release notes](https://github.com/MikaelKW/nodecast-tv-plus/releases) for version-specific upgrade information.
+
+## Troubleshooting
+
+### Container does not become healthy
+
+```bash
+docker compose ps
+docker compose logs --tail=200 nodecast-tv-plus
+```
+
+Confirm that `JWT_SECRET` and `SESSION_SECRET` are supplied through `.env`, the `environment` section of `compose.yml`, or the container platform, and that port `3000` is not already in use. `TOTP_ENCRYPTION_KEY` is additionally required when local accounts use authenticator-app MFA.
+
+### Provider or playback problem
+
+Test another known-working channel first, then review **Settings > Transcoding**. Provider outages, expired credentials, unsupported codecs, CORS restrictions, and insufficient transcoding resources can look similar in the player.
+
+When reporting a problem, redact provider URLs, credentials, query tokens, and cookies from logs and screenshots.
+
+### Preserve data before experimenting
+
+Do not remove or replace the `/app/data` volume while troubleshooting. Make a backup before changing image versions or migration settings.
+
+## Development and contributing
+
+The normal Docker installation above uses a published image and does **not** build source code locally.
+
+Source development requires Node.js 18 or newer; Node.js 20 is recommended.
+
+For development:
+
+```bash
+git clone https://github.com/MikaelKW/nodecast-tv-plus.git
+cd nodecast-tv-plus
+npm ci
+npm run dev
+```
+
+The repository's `docker-compose.yml` is intended for contributors who need to build an image from their current source checkout. This is what “local build” means; ordinary installations do not need `docker compose up -d --build`.
+
+Useful checks:
+
+```bash
+npm test                 # syntax, security, and server smoke tests
+npm run test:e2e         # isolated browser, M3U, EPG, API, and playback tests
+npm run test:e2e:mobile  # iPhone/WebKit layout and scrolling regression tests
+npm run test:e2e:subpath # login, API, navigation, and logout below /nodecast/
+npm run test:migration   # upgrades pinned upstream Docker baselines into the local image
+```
+
+Code changes normally target `develop` and pass automated and hands-on testing before promotion to `testing` and `main`.
+
+## Project links
+
+- [Releases](https://github.com/MikaelKW/nodecast-tv-plus/releases)
+- [Changelog](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/CHANGELOG.md)
+- [Roadmap](https://github.com/users/MikaelKW/projects/1)
 - [Report a bug](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=bug_report.md)
 - [Request a feature](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=feature_request.md)
-- [View open issues](https://github.com/MikaelKW/nodecast-tv-plus/issues)
-- [View pull requests](https://github.com/MikaelKW/nodecast-tv-plus/pulls)
-
-Code changes should normally target the `develop` branch and pass the repository's automated checks before promotion to `testing` and `main`.
-
-When reporting problems, redact provider credentials, private playlist URLs, tokens, cookies, and other sensitive information from screenshots and logs.
+- [Open issues](https://github.com/MikaelKW/nodecast-tv-plus/issues)
+- [Pull requests](https://github.com/MikaelKW/nodecast-tv-plus/pulls)
 
 ## License
 
-NodeCast TV Plus is distributed under the **GNU General Public License v3.0 only (`GPL-3.0-only`)**. See the authoritative [LICENSE](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/LICENSE) file for the complete terms.
+NodeCast TV Plus is distributed under the [GNU General Public License v3.0 only](LICENSE).
