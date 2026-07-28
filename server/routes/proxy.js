@@ -15,7 +15,13 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const auth = require('../auth');
 const { requestBasePath, withBasePath } = require('../config/basePath');
-const { redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { redactText, redactUrl } = require('../services/urlSecurity');
+const { fetchWithPolicy } = require('../services/outboundSecurity');
+const {
+    authorizeMediaUrl,
+    configuredSourceUrls,
+    signMediaUrl
+} = require('../services/mediaAccess');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
@@ -422,9 +428,12 @@ router.get('/epg/:sourceId', async (req, res) => {
 
 // Clear cache (kept for compatibility)
 router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clearSource(sourceId);
-    res.json({ success: true });
+    try {
+        cache.clearSource(req.params.sourceId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 
@@ -588,20 +597,18 @@ router.get('/epg/:sourceId', async (req, res) => {
  * Clear cache for a source
  * DELETE /api/proxy/cache/:sourceId
  */
-router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clearSource(sourceId);
-    res.json({ success: true });
-});
-
 /**
  * Clear EPG cache for a source (legacy endpoint, calls clearSource)
  * DELETE /api/proxy/epg/:sourceId/cache
  */
 router.delete('/epg/:sourceId/cache', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clear('epg', sourceId, 'data');
-    res.json({ success: true });
+    try {
+        cache.validateSourceId(req.params.sourceId);
+        cache.clear('epg', req.params.sourceId, 'data');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 /**
@@ -616,17 +623,25 @@ router.post('/epg/:sourceId/channels', auth.requireAdmin, async (req, res) => {
         }
 
         const { channelIds } = req.body;
-        if (!channelIds || !Array.isArray(channelIds)) {
+        if (!Array.isArray(channelIds)) {
             return res.status(400).json({ error: 'channelIds array required' });
+        }
+        if (
+            channelIds.length > 1000
+            || channelIds.some(channelId => typeof channelId !== 'string' || channelId.length > 512)
+        ) {
+            return res.status(400).json({ error: 'channelIds contains invalid entries' });
         }
 
         const data = await epgParser.fetchAndParse(source.url);
 
         // Filter programmes for requested channels
-        const result = {};
-        for (const channelId of channelIds) {
-            result[channelId] = epgParser.getCurrentAndUpcoming(data.programmes, channelId);
-        }
+        const result = Object.fromEntries(channelIds
+            .filter(channelId => !['__proto__', 'prototype', 'constructor'].includes(channelId))
+            .map(channelId => [
+                channelId,
+                epgParser.getCurrentAndUpcoming(data.programmes, channelId)
+            ]));
 
         res.json(result);
     } catch (err) {
@@ -646,10 +661,14 @@ router.get('/stream', async (req, res) => {
     let url;
 
     try {
-        url = validateHttpUrl(req.query.url);
+        url = await authorizeMediaUrl(req.query.url, {
+            token: req.query.token,
+            expiresAt: req.query.expires
+        });
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
+    const privateHostAllowlist = await configuredSourceUrls();
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         const upstreamController = new AbortController();
@@ -681,10 +700,10 @@ router.get('/stream', async (req, res) => {
                 headers['Range'] = rangeHeader;
             }
 
-            const response = await fetch(url, {
+            const response = await fetchWithPolicy(url, {
                 headers,
                 signal: upstreamController.signal
-            });
+            }, { allowPrivateHosts: privateHostAllowlist });
 
             // Retry on 5xx errors (transient upstream issues)
             if (response.status >= 500 && attempt < maxRetries) {
@@ -759,9 +778,13 @@ router.get('/stream', async (req, res) => {
                 const finalUrlObj = new URL(finalUrl);
                 const baseUrl = finalUrlObj.origin + finalUrlObj.pathname.substring(0, finalUrlObj.pathname.lastIndexOf('/') + 1);
                 const publicProxyPath = withBasePath(`${req.baseUrl}/stream`, requestBasePath(req));
-                const buildProxyUrl = targetUrl => (
-                    `${req.protocol}://${req.get('host')}${publicProxyPath}?url=${encodeURIComponent(targetUrl)}`
-                );
+                const buildProxyUrl = targetUrl => {
+                    const signature = signMediaUrl(targetUrl);
+                    return `${req.protocol}://${req.get('host')}${publicProxyPath}`
+                        + `?url=${encodeURIComponent(targetUrl)}`
+                        + `&token=${encodeURIComponent(signature.token)}`
+                        + `&expires=${signature.expiresAt}`;
+                };
 
                 manifest = manifest.split('\n').map(line => {
                     const trimmed = line.trim();
@@ -810,6 +833,9 @@ router.get('/stream', async (req, res) => {
 
             lastError = err;
             logSafeError(`Stream proxy error (attempt ${attempt}/${maxRetries}):`, err);
+            if (err.statusCode) {
+                return res.status(err.statusCode).json({ error: err.message });
+            }
 
             // A response that has started cannot be retried safely.
             if (res.headersSent) {
@@ -840,19 +866,18 @@ router.get('/stream', async (req, res) => {
  */
 router.get('/image', async (req, res) => {
     try {
-        const { url } = req.query;
-        if (!url) {
-            return res.status(400).json({ error: 'URL required' });
-        }
+        const validatedUrl = await authorizeMediaUrl(req.query.url, {
+            token: req.query.token,
+            expiresAt: req.query.expires,
+            fieldName: 'Image URL'
+        });
 
-        const validatedUrl = validateHttpUrl(url);
-
-        const response = await fetch(validatedUrl, {
+        const response = await fetchWithPolicy(validatedUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'image/*,*/*;q=0.8'
             }
-        });
+        }, { allowPrivateHosts: await configuredSourceUrls(), fieldName: 'Image URL' });
 
         if (!response.ok) {
             return res.status(response.status).send('Failed to fetch image');

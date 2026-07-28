@@ -246,21 +246,23 @@ const { getDb } = require('/app/server/db/sqlite');
     return JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
 }
 
-async function sourceCredentialDigest(containerName, sourceId) {
+async function sourceCredentialsMatch(containerName, sourceId, expected) {
     const code = `
-const crypto = require('node:crypto');
 const { sources } = require('/app/server/db');
 sources.getById(${Number(sourceId)}).then(source => {
-  const selected = { url: source.url, username: source.username, password: source.password };
-  console.log(crypto.createHash('sha256').update(JSON.stringify(selected)).digest('hex'));
+  const matches = source.url === process.env.MIGRATION_EXPECTED_URL
+    && source.username === process.env.MIGRATION_EXPECTED_USERNAME
+    && source.password === process.env.MIGRATION_EXPECTED_PASSWORD;
+  console.log(String(matches));
 });`;
-    const result = await docker(['exec', containerName, 'node', '-e', code]);
-    return result.stdout.split(/\r?\n/).filter(Boolean).at(-1);
-}
-
-function localCredentialDigest(source) {
-    const selected = { url: source.url, username: source.username, password: source.password };
-    return crypto.createHash('sha256').update(JSON.stringify(selected)).digest('hex');
+    const result = await docker([
+        'exec',
+        '-e', `MIGRATION_EXPECTED_URL=${expected.url}`,
+        '-e', `MIGRATION_EXPECTED_USERNAME=${expected.username}`,
+        '-e', `MIGRATION_EXPECTED_PASSWORD=${expected.password}`,
+        containerName, 'node', '-e', code
+    ]);
+    return result.stdout.split(/\r?\n/).filter(Boolean).at(-1) === 'true';
 }
 
 async function collectApiState(baseUrl, auth) {
@@ -309,6 +311,11 @@ async function runBaseline(baseline) {
     const providerPassword = crypto.randomBytes(36).toString('base64url');
     const playlistUrl = 'https://migration.example.invalid/playlist.m3u';
     const redactions = [password, jwtSecret, sessionSecret, providerPassword];
+    const expectedSourceCredentials = {
+        url: playlistUrl,
+        username: providerUsername,
+        password: providerPassword
+    };
 
     await docker(['volume', 'create', volume]);
     try {
@@ -385,12 +392,11 @@ async function runBaseline(baseline) {
 
         const baselineState = await collectApiState(baselineUrl, baselineAuth);
         const baselineSqlite = await sqliteSnapshot(baselineContainer, source.id);
-        const expectedCredentialDigest = localCredentialDigest({
-            url: playlistUrl,
-            username: providerUsername,
-            password: providerPassword
-        });
-        assert.equal(await sourceCredentialDigest(baselineContainer, source.id), expectedCredentialDigest);
+        assert.equal(
+            await sourceCredentialsMatch(baselineContainer, source.id, expectedSourceCredentials),
+            true,
+            'Baseline provider credentials must match the migration fixture.'
+        );
 
         await removeContainer(baselineContainer);
 
@@ -429,9 +435,11 @@ async function runBaseline(baseline) {
 
         const plusState = await collectApiState(plusUrl, cookieAuth);
         const plusSqlite = await sqliteSnapshot(plusContainer, source.id);
-        const plusCredentialDigest = await sourceCredentialDigest(plusContainer, source.id);
-
-        assert.equal(plusCredentialDigest, expectedCredentialDigest, 'Provider credentials must be preserved.');
+        assert.equal(
+            await sourceCredentialsMatch(plusContainer, source.id, expectedSourceCredentials),
+            true,
+            'Provider credentials must be preserved.'
+        );
         assert.equal(plusState.settings.maxResolution, baselineState.settings.maxResolution);
         assert.equal(plusState.settings.forceProxy, baselineState.settings.forceProxy);
         assert.equal(plusState.settings.epgDays, baselineState.settings.epgDays);

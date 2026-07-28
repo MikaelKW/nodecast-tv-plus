@@ -18,27 +18,28 @@ const JWT_EXPIRY = '24h';
 
 function parseCookies(req) {
     const header = req?.headers?.cookie;
-    if (!header) return {};
+    if (!header) return new Map();
 
     return header.split(';').reduce((cookies, part) => {
         const separator = part.indexOf('=');
         if (separator === -1) return cookies;
 
         const key = part.slice(0, separator).trim();
+        if (!key || ['__proto__', 'prototype', 'constructor'].includes(key)) return cookies;
         const rawValue = part.slice(separator + 1).trim();
         try {
-            cookies[key] = decodeURIComponent(rawValue);
+            cookies.set(key, decodeURIComponent(rawValue));
         } catch {
-            cookies[key] = rawValue;
+            cookies.set(key, rawValue);
         }
         return cookies;
-    }, {});
+    }, new Map());
 }
 
 function extractJwtFromCookie(req) {
     const cookies = parseCookies(req);
-    return cookies[securityConfig.authCookieName]
-        || cookies[securityConfig.legacyAuthCookieName]
+    return cookies.get(securityConfig.authCookieName)
+        || cookies.get(securityConfig.legacyAuthCookieName)
         || null;
 }
 
@@ -71,12 +72,14 @@ function clearAuthCookie(req, res) {
 
 function migrateLegacyAuthCookie(req, res, next) {
     const cookies = parseCookies(req);
+    const currentToken = cookies.get(securityConfig.authCookieName);
+    const legacyToken = cookies.get(securityConfig.legacyAuthCookieName);
     if (
-        !cookies[securityConfig.authCookieName]
-        && cookies[securityConfig.legacyAuthCookieName]
-        && verifyToken(cookies[securityConfig.legacyAuthCookieName])
+        !currentToken
+        && legacyToken
+        && verifyToken(legacyToken)
     ) {
-        setAuthCookie(req, res, cookies[securityConfig.legacyAuthCookieName]);
+        setAuthCookie(req, res, legacyToken);
     }
     next();
 }

@@ -1,5 +1,6 @@
 const db = require('../db');
 const totpService = require('./totpService');
+const crypto = require('node:crypto');
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
@@ -22,6 +23,7 @@ function saveSession(req) {
 async function beginChallenge(req, user) {
     await regenerateSession(req);
     req.session.twoFactorChallenge = {
+        challengeId: crypto.randomBytes(24).toString('base64url'),
         userId: user.id,
         expiresAt: Date.now() + CHALLENGE_TTL_MS
     };

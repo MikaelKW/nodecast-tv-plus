@@ -14,7 +14,11 @@ const systemFfprobe = spawnSync('ffprobe', ['-version'], {
 });
 const ffprobePath = systemFfprobe.status === 0 ? 'ffprobe' : bundledFfprobePath;
 const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
-const { TranscodeSession } = require('../server/services/transcodeSession');
+const {
+    TranscodeSession,
+    createSession,
+    removeSession
+} = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
 const { parseOptionalStreamIndex } = require('../server/services/mediaSelection');
 const {
@@ -98,6 +102,19 @@ async function createTransientServer(mediaPath, initialStatus) {
 async function main() {
     assert.ok(ffmpegPath, 'ffmpeg-static is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
+
+    const ownerSessions = [];
+    try {
+        for (let index = 0; index < 4; index += 1) {
+            ownerSessions.push(await createSession('https://example.com/controlled.mp4', { ownerId: 77 }));
+        }
+        await assert.rejects(
+            createSession('https://example.com/controlled.mp4', { ownerId: 77 }),
+            error => error.statusCode === 429
+        );
+    } finally {
+        for (const session of ownerSessions) await removeSession(session.id, 77);
+    }
 
     assert.equal(parseTranscodeStartTimeoutSeconds(), DEFAULT_TRANSCODE_START_TIMEOUT_SECONDS);
     assert.equal(parseTranscodeStartTimeoutSeconds('1'), MIN_TRANSCODE_START_TIMEOUT_SECONDS);
@@ -248,6 +265,9 @@ async function main() {
             // The production constructor validates and blocks loopback URLs. The
             // controlled test swaps in its loopback fixture only after validation.
             session.url = rejectedServer.url;
+            assert.equal(await session.getSegment('../../controlled.ts'), null);
+            assert.equal(await session.getSegment('..%2F..%2Fcontrolled.ts'), null);
+            assert.equal(await session.getSegment('segment.ts'), null);
             assert.equal(
                 await session.startAndWaitForPlaylist(5_000),
                 true,

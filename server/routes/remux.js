@@ -3,8 +3,10 @@ const router = express.Router();
 const { spawn } = require('child_process');
 const db = require('../db');
 const auth = require('../auth');
-const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../services/urlSecurity');
+const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { mediaProcessLimit } = require('../services/concurrencyLimiter');
 
 router.use(auth.requireAuth);
 
@@ -18,7 +20,7 @@ router.use(auth.requireAuth);
  * 
  * Note: This does NOT fix Dolby/AC3 audio issues - use /api/transcode for that.
  */
-router.get('/', async (req, res) => {
+router.get('/', mediaProcessLimit, async (req, res) => {
     const { url } = req.query;
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
@@ -26,9 +28,9 @@ router.get('/', async (req, res) => {
 
     let validatedUrl;
     try {
-        validatedUrl = validateHttpUrl(url);
+        validatedUrl = await authorizeMediaUrl(url);
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
