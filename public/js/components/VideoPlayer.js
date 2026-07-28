@@ -1087,7 +1087,7 @@ class VideoPlayer {
                         // Raw .ts container - use remux
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                        const remuxUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(streamUrl)}`);
+                        const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
                         this.video.play().catch(e => {
@@ -1688,8 +1688,8 @@ class VideoPlayer {
      * Get remuxed URL for a stream (container conversion only, no re-encoding)
      * Used for raw .ts streams that browsers can't play directly
      */
-    getRemuxUrl(url) {
-        return NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
+    getRemuxUrl(url, streamInfo = this.currentStreamInfo) {
+        return NodeCastUrl.remux(url, streamInfo);
     }
 
     /**
