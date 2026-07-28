@@ -518,6 +518,10 @@ npm run test:migration   # upgrades pinned upstream Docker baselines into the lo
 
 Code changes normally target `develop` and pass automated and hands-on testing before promotion to `testing` and `main`.
 
+## Security
+
+Do not report suspected security vulnerabilities through the public issue tracker. Review the [security policy](SECURITY.md), then use GitHub's [private vulnerability reporting form](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/new) so the report can be investigated before technical details are disclosed.
+
 ## Project links
 
 - [Releases](https://github.com/MikaelKW/nodecast-tv-plus/releases)
@@ -525,6 +529,8 @@ Code changes normally target `develop` and pass automated and hands-on testing b
 - [Roadmap](https://github.com/users/MikaelKW/projects/1)
 - [Report a bug](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=bug_report.md)
 - [Request a feature](https://github.com/MikaelKW/nodecast-tv-plus/issues/new?template=feature_request.md)
+- [Report a security vulnerability](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/new)
+- [Security policy](SECURITY.md)
 - [Open issues](https://github.com/MikaelKW/nodecast-tv-plus/issues)
 - [Pull requests](https://github.com/MikaelKW/nodecast-tv-plus/pulls)
 
