@@ -144,6 +144,7 @@ const API = {
         // EPG
         epg: {
             get: (sourceId) => API.request('GET', `/proxy/epg/${sourceId}`),
+            getNow: (sourceId) => API.request('GET', `/proxy/epg/${sourceId}/now`),
             getForChannels: (sourceId, channelIds) => API.request('POST', `/proxy/epg/${sourceId}/channels`, { channelIds })
         },
 
