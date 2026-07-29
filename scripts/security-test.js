@@ -8,6 +8,15 @@ const { classifyIp } = require('../server/services/outboundSecurity');
 const { DEFAULT_PROXY_TRUST, configuredProxyTrust } = require('../server/config/proxyTrust');
 const { ConcurrencyLimiter } = require('../server/services/concurrencyLimiter');
 const { signMediaUrl, verifyMediaSignature } = require('../server/services/mediaAccess');
+const {
+    parseBoundedInteger,
+    SlidingWindowLimiter,
+    SingleFlight
+} = require('../server/services/requestControls');
+const {
+    MAX_HISTORY_METADATA_BYTES,
+    normalizeHistoryPayload
+} = require('../server/services/historyPolicy');
 
 assert.equal(validateHttpUrl('https://example.com/live.m3u8?token=secret'), 'https://example.com/live.m3u8?token=secret');
 assert.equal(validateHttpUrl(' http://192.168.1.20:8080/stream '), 'http://192.168.1.20:8080/stream');
@@ -131,4 +140,74 @@ releaseFirst();
 releaseSecond();
 assert.equal(typeof concurrency.acquire('third'), 'function');
 
-console.log('Security tests passed.');
+assert.equal(parseBoundedInteger(undefined, {
+    defaultValue: 12,
+    min: 1,
+    max: 100
+}), 12);
+assert.equal(parseBoundedInteger('100', {
+    defaultValue: 12,
+    min: 1,
+    max: 100
+}), 100);
+for (const unsafeLimit of ['-1', '0', '101', '1.5', 'unbounded']) {
+    assert.throws(() => parseBoundedInteger(unsafeLimit, {
+        name: 'limit',
+        defaultValue: 12,
+        min: 1,
+        max: 100
+    }), /limit must be an integer between 1 and 100/);
+}
+
+const normalizedHistory = normalizeHistoryPayload({
+    id: 'movie-1',
+    type: 'movie',
+    sourceId: 1,
+    progress: 12.9,
+    duration: 120,
+    data: { title: 'Controlled history item' }
+});
+assert.equal(normalizedHistory.progress, 12);
+assert.equal(normalizedHistory.itemType, 'movie');
+assert.throws(
+    () => normalizeHistoryPayload({ id: 'movie-1', type: 'channel' }),
+    /type must be movie or episode/
+);
+assert.throws(
+    () => normalizeHistoryPayload({
+        id: 'movie-1',
+        type: 'movie',
+        data: { oversized: 'x'.repeat(MAX_HISTORY_METADATA_BYTES) }
+    }),
+    /data must not exceed/
+);
+
+const requestLimiter = new SlidingWindowLimiter({ limit: 2, windowMs: 1000 });
+assert.equal(requestLimiter.consume('viewer', 1000).allowed, true);
+assert.equal(requestLimiter.consume('viewer', 1001).allowed, true);
+assert.equal(requestLimiter.consume('viewer', 1002).allowed, false);
+assert.equal(requestLimiter.consume('viewer', 2001).allowed, true);
+
+const singleFlight = new SingleFlight();
+let upstreamCalls = 0;
+let releaseUpstream;
+const blockedUpstream = new Promise(resolve => { releaseUpstream = resolve; });
+const firstFlight = singleFlight.run('same-provider-request', async () => {
+    upstreamCalls += 1;
+    await blockedUpstream;
+    return { authenticated: true };
+});
+const secondFlight = singleFlight.run('same-provider-request', async () => {
+    upstreamCalls += 1;
+    return { authenticated: false };
+});
+assert.equal(firstFlight, secondFlight);
+releaseUpstream();
+Promise.all([firstFlight, secondFlight]).then(results => {
+    assert.equal(upstreamCalls, 1);
+    assert.deepEqual(results, [{ authenticated: true }, { authenticated: true }]);
+    console.log('Security tests passed.');
+}).catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});

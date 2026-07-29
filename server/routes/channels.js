@@ -1,9 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const {
+    parseBoundedInteger,
+    SlidingWindowLimiter,
+    rateLimitMiddleware
+} = require('../services/requestControls');
 const { getDb } = require('../db/sqlite');
 const auth = require('../auth');
 
 router.use(auth.requireAuth);
+
+const recentContentLimiter = new SlidingWindowLimiter({
+    limit: 120,
+    windowMs: 60 * 1000
+});
+const limitRecentContent = rateLimitMiddleware(recentContentLimiter, {
+    message: 'Too many recent-content requests. Try again shortly.'
+});
 
 function requireSourceId(value) {
     const sourceId = Number(value);
@@ -302,13 +315,19 @@ router.post('/hide/all', auth.requireAdmin, async (req, res) => {
 });
 
 // Get recent movies or series
-router.get('/recent', async (req, res) => {
+router.get('/recent', limitRecentContent, async (req, res) => {
     try {
         const { type, limit = 12 } = req.query;
         if (!type || (type !== 'movie' && type !== 'series')) {
             return res.status(400).json({ error: 'Valid type (movie or series) is required' });
         }
 
+        const boundedLimit = parseBoundedInteger(limit, {
+            name: 'limit',
+            defaultValue: 12,
+            min: 1,
+            max: 100
+        });
         const db = getDb();
         const recentItems = db.prepare(`
             SELECT * FROM playlist_items p
@@ -323,7 +342,7 @@ router.get('/recent', async (req, res) => {
               )
             ORDER BY p.added_at DESC
             LIMIT ?
-        `).all(type, parseInt(limit));
+        `).all(type, boundedLimit);
 
         // Parse JSON data for each item
         const formatted = recentItems.map(item => ({
@@ -333,6 +352,9 @@ router.get('/recent', async (req, res) => {
 
         res.json(formatted);
     } catch (err) {
+        if (err.statusCode === 400) {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('Error getting recent items:', err);
         res.status(500).json({ error: 'Failed to get recent items' });
     }
