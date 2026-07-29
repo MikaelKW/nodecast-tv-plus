@@ -155,11 +155,17 @@ class App {
         // Initialize home page first (it's needed for channel list)
         await this.pages.home.init();
 
-        // Preload EPG data in background (non-blocking)
-        // This ensures EPG info is available on Live TV page without visiting Guide first
-        this.epgGuide.loadEpg().catch(err => {
-            console.warn('Background EPG load failed:', err.message);
-        });
+        // Live TV needs only the currently-airing title. The complete guide is
+        // loaded lazily when TV Guide is opened.
+        this.epgGuide.fetchNowPlaying()
+            .then(() => {
+                this.channelList.clearProgramInfoCache();
+                this.channelList.updateVisibleEpgInfo?.();
+            })
+            .catch(err => {
+                console.warn('Background EPG load failed:', err.message);
+            })
+            .finally(() => this.epgGuide.startBackgroundRefresh());
 
         // Navigate to an explicit page hash or the configured starting page.
         const hash = window.location.hash.slice(1); // Remove #

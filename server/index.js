@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 require('dotenv').config();
 const path = require('path');
 const passport = require('passport');
@@ -28,6 +29,23 @@ app.set('trust proxy', configuredProxyTrust());
 basePathConfig.installBasePathMiddleware(app);
 
 // Middleware
+const uncompressedMediaPaths = [
+    '/api/proxy/stream',
+    '/api/remux',
+    '/api/subtitle',
+    '/api/transcode'
+];
+app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => {
+        if (uncompressedMediaPaths.some(prefix => (
+            req.path === prefix || req.path.startsWith(`${prefix}/`)
+        ))) {
+            return false;
+        }
+        return compression.filter(req, res);
+    }
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // Initialize Passport

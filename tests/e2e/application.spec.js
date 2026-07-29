@@ -233,6 +233,36 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(epg.programmes).toHaveLength(1);
     expect(epg.programmes[0].title).toBe('Controlled Test Programme');
 
+    const lightweightEpg = await page.evaluate(async id => {
+        const response = await fetch(`/api/proxy/epg/${id}/now`);
+        return response.json();
+    }, epgSource.id);
+    expect(lightweightEpg.programmes).toHaveLength(1);
+    expect(lightweightEpg.programmes[0].title).toBe('Controlled Test Programme');
+    expect(lightweightEpg.programmes[0]).not.toHaveProperty('description');
+    expect(await page.evaluate(() => window.app.epgGuide.fullEpgLoaded)).toBe(false);
+
+    const visibilityRefresh = await page.evaluate(async () => {
+        const guide = window.app.epgGuide;
+        const originalFetch = guide.fetchNowPlaying;
+        let calls = 0;
+        guide.fetchNowPlaying = async () => { calls += 1; };
+
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        const hiddenResult = await guide.refreshNowPlayingIfVisible();
+        Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+        const visibleResult = await guide.refreshNowPlayingIfVisible();
+
+        delete document.hidden;
+        guide.fetchNowPlaying = originalFetch;
+        return { calls, hiddenResult, visibleResult };
+    });
+    expect(visibilityRefresh).toEqual({
+        calls: 1,
+        hiddenResult: false,
+        visibleResult: true
+    });
+
     await page.locator('#add-epg').click();
     await page.locator('#source-name').fill('Recoverable Initial Sync');
     await page.locator('#source-url').fill(`${fixtureBaseUrl}/retry-guide.xml?access_token=sensitive-query-value`);
