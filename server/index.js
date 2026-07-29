@@ -1,10 +1,12 @@
 const express = require('express');
+const compression = require('compression');
 require('dotenv').config();
 const path = require('path');
 const passport = require('passport');
 const syncService = require('./services/syncService');
 const securityConfig = require('./config/security');
 const basePathConfig = require('./config/basePath');
+const { configuredProxyTrust } = require('./config/proxyTrust');
 const auth = require('./auth');
 
 // Initialize database
@@ -20,13 +22,30 @@ let server;
 
 // Trust proxy headers (X-Forwarded-Proto, X-Forwarded-For, etc.)
 // Required for correct protocol detection behind reverse proxies (nginx, Caddy, etc.)
-app.set('trust proxy', true);
+app.set('trust proxy', configuredProxyTrust());
 
 // Allow either the app or a path-stripping reverse proxy to handle the
 // configured public prefix. Routes below continue to operate at / internally.
 basePathConfig.installBasePathMiddleware(app);
 
 // Middleware
+const uncompressedMediaPaths = [
+    '/api/proxy/stream',
+    '/api/remux',
+    '/api/subtitle',
+    '/api/transcode'
+];
+app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => {
+        if (uncompressedMediaPaths.some(prefix => (
+            req.path === prefix || req.path.startsWith(`${prefix}/`)
+        ))) {
+            return false;
+        }
+        return compression.filter(req, res);
+    }
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // Initialize Passport

@@ -35,5 +35,21 @@
         }
     }
 
-    window.NodeCastUrl = Object.freeze({ basePath, resolve, absolute, isApi });
+    function remux(value, streamInfo = null) {
+        const params = new URLSearchParams({ url: value });
+        const trackCodecs = Array.isArray(streamInfo?.audioTracks)
+            ? streamInfo.audioTracks.map(track => track?.codec).filter(Boolean)
+            : [];
+        const audioCodecs = trackCodecs.length > 0
+            ? trackCodecs
+            : (streamInfo?.audio ? [streamInfo.audio] : []);
+
+        if (audioCodecs.length > 0) {
+            params.set('audioCodecs', audioCodecs.join(','));
+        }
+
+        return resolve(`/api/remux?${params.toString()}`);
+    }
+
+    window.NodeCastUrl = Object.freeze({ basePath, resolve, absolute, isApi, remux });
 })();

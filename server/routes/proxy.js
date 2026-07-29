@@ -4,6 +4,7 @@ const { sources } = require('../db');
 const { getDb } = require('../db/sqlite'); // Import SQLite
 const xtreamApi = require('../services/xtreamApi');
 const epgParser = require('../services/epgParser');
+const epgGuideData = require('../services/epgGuideData');
 const cache = require('../services/cache');
 const path = require('path');
 const fs = require('fs');
@@ -15,7 +16,13 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const auth = require('../auth');
 const { requestBasePath, withBasePath } = require('../config/basePath');
-const { redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { redactText, redactUrl } = require('../services/urlSecurity');
+const { fetchWithPolicy } = require('../services/outboundSecurity');
+const {
+    authorizeMediaUrl,
+    configuredSourceUrls,
+    signMediaUrl
+} = require('../services/mediaAccess');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
@@ -271,7 +278,7 @@ router.get('/xtream/:sourceId/vod_info', async (req, res) => {
 
 // Get Stream URL for playback
 // Returns the direct stream URL for a given stream ID
-router.get('/xtream/:sourceId/stream/:streamId/:type', async (req, res) => {
+router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source || source.type !== 'xtream') {
@@ -360,71 +367,39 @@ router.get('/m3u/:sourceId', async (req, res) => {
 // EPG
 router.get('/epg/:sourceId', async (req, res) => {
     try {
-        const sourceId = parseInt(req.params.sourceId);
-        const db = getDb();
-
-        // Time window: 24 hours ago to 24 hours from now
-        // This prevents returning millions of rows and crashing the server/browser
-        const windowStart = Date.now() - (24 * 60 * 60 * 1000); // -24 hours
-        const windowEnd = Date.now() + (24 * 60 * 60 * 1000);   // +24 hours
-
-        // Fetch programs within the time window
-        let programsQuery = `
-            SELECT channel_id as channelId, start_time, end_time, title, description, data 
-            FROM epg_programs 
-            WHERE source_id = ? AND end_time > ? AND start_time < ?
-        `;
-        const params = [sourceId, windowStart, windowEnd];
-
-        const programs = db.prepare(programsQuery).all(...params);
-
-        const formattedPrograms = programs.map(p => ({
-            channelId: p.channelId,
-            start: new Date(p.start_time).toISOString(), // EpgGuide parse this back
-            stop: new Date(p.end_time).toISOString(),
-            title: p.title,
-            description: p.description
-        }));
-
-        // Fetch EPG channels from playlist_items (type='epg_channel')
-
-
-        let epgChannels = [];
-
-        // Try getting stored channels first
-        const storedChannels = db.prepare(`
-            SELECT item_id as id, name, stream_icon as icon, data 
-            FROM playlist_items 
-            WHERE source_id = ? AND type = 'epg_channel'
-        `).all(sourceId);
-
-        if (storedChannels.length > 0) {
-            epgChannels = storedChannels;
-        } else {
-            // Fallback: Build from unique channelIds in programmes (Legacy behavior)
-            const uniqueChannelIds = [...new Set(programs.map(p => p.channelId))];
-            epgChannels = uniqueChannelIds.map(id => ({
-                id: id,
-                name: id // Use channelId as name (fallback)
-            }));
-        }
-
-        res.json({
-            channels: epgChannels,
-            programmes: formattedPrograms
-        });
-
+        res.json(epgGuideData.getFullGuide(req.params.sourceId));
     } catch (err) {
+        if (err instanceof TypeError) {
+            return res.status(400).json({ error: err.message });
+        }
         logSafeError('EPG proxy error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// The Live TV sidebar only needs the currently airing title. Keep this response
+// to at most one lightweight programme row per channel; the complete guide
+// remains available from the established endpoint above.
+router.get('/epg/:sourceId/now', (req, res) => {
+    try {
+        res.json(epgGuideData.getNowPlaying(req.params.sourceId));
+    } catch (err) {
+        if (err instanceof TypeError) {
+            return res.status(400).json({ error: err.message });
+        }
+        logSafeError('EPG now-playing error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
 
 // Clear cache (kept for compatibility)
 router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clearSource(sourceId);
-    res.json({ success: true });
+    try {
+        cache.clearSource(req.params.sourceId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 
@@ -516,92 +491,17 @@ router.get('/xtream/:sourceId/:action', async (req, res) => {
 });
 
 /**
- * Get Xtream stream URL
- * GET /api/proxy/xtream/:sourceId/stream/:streamId
- */
-router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
-    try {
-        const source = await sources.getById(req.params.sourceId);
-        if (!source || source.type !== 'xtream') {
-            return res.status(404).json({ error: 'Xtream source not found' });
-        }
-
-        const api = xtreamApi.createFromSource(source);
-        const { streamId, type = 'live' } = req.params;
-        const { container = 'm3u8' } = req.query;
-
-        const url = api.buildStreamUrl(streamId, type, container);
-        res.json({ url });
-    } catch (err) {
-        logSafeError('Stream URL error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * Fetch and parse EPG (with file-based caching)
- * GET /api/proxy/epg/:sourceId
- * Query params:
- *   - refresh=1  Force refresh, bypass cache
- *   - maxAge=N   Max cache age in hours (default 24)
- */
-router.get('/epg/:sourceId', async (req, res) => {
-    try {
-        const sourceId = req.params.sourceId;
-        const source = await sources.getById(sourceId);
-        if (!source || (source.type !== 'epg' && source.type !== 'xtream')) {
-            return res.status(404).json({ error: 'Valid EPG source not found' });
-        }
-
-        const forceRefresh = req.query.refresh === '1';
-        const maxAgeHours = parseInt(req.query.maxAge) || DEFAULT_MAX_AGE_HOURS;
-        const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-
-        // Check file cache (unless force refresh)
-        if (!forceRefresh) {
-            const cached = cache.get('epg', sourceId, 'data', maxAgeMs);
-            if (cached) {
-                return res.json(cached);
-            }
-        }
-
-        // Fetch fresh data
-        let url = source.url;
-        if (source.type === 'xtream') {
-            const api = xtreamApi.createFromSource(source);
-            url = api.getXmltvUrl();
-        }
-
-        const data = await epgParser.fetchAndParse(url);
-
-        // Store in file cache
-        cache.set('epg', sourceId, 'data', data);
-
-        res.json(data);
-    } catch (err) {
-        logSafeError('EPG proxy error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * Clear cache for a source
- * DELETE /api/proxy/cache/:sourceId
- */
-router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clearSource(sourceId);
-    res.json({ success: true });
-});
-
-/**
  * Clear EPG cache for a source (legacy endpoint, calls clearSource)
  * DELETE /api/proxy/epg/:sourceId/cache
  */
 router.delete('/epg/:sourceId/cache', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clear('epg', sourceId, 'data');
-    res.json({ success: true });
+    try {
+        cache.validateSourceId(req.params.sourceId);
+        cache.clear('epg', req.params.sourceId, 'data');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 /**
@@ -616,17 +516,25 @@ router.post('/epg/:sourceId/channels', auth.requireAdmin, async (req, res) => {
         }
 
         const { channelIds } = req.body;
-        if (!channelIds || !Array.isArray(channelIds)) {
+        if (!Array.isArray(channelIds)) {
             return res.status(400).json({ error: 'channelIds array required' });
+        }
+        if (
+            channelIds.length > 1000
+            || channelIds.some(channelId => typeof channelId !== 'string' || channelId.length > 512)
+        ) {
+            return res.status(400).json({ error: 'channelIds contains invalid entries' });
         }
 
         const data = await epgParser.fetchAndParse(source.url);
 
         // Filter programmes for requested channels
-        const result = {};
-        for (const channelId of channelIds) {
-            result[channelId] = epgParser.getCurrentAndUpcoming(data.programmes, channelId);
-        }
+        const result = Object.fromEntries(channelIds
+            .filter(channelId => !['__proto__', 'prototype', 'constructor'].includes(channelId))
+            .map(channelId => [
+                channelId,
+                epgParser.getCurrentAndUpcoming(data.programmes, channelId)
+            ]));
 
         res.json(result);
     } catch (err) {
@@ -646,10 +554,14 @@ router.get('/stream', async (req, res) => {
     let url;
 
     try {
-        url = validateHttpUrl(req.query.url);
+        url = await authorizeMediaUrl(req.query.url, {
+            token: req.query.token,
+            expiresAt: req.query.expires
+        });
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
+    const privateHostAllowlist = await configuredSourceUrls();
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         const upstreamController = new AbortController();
@@ -681,10 +593,10 @@ router.get('/stream', async (req, res) => {
                 headers['Range'] = rangeHeader;
             }
 
-            const response = await fetch(url, {
+            const response = await fetchWithPolicy(url, {
                 headers,
                 signal: upstreamController.signal
-            });
+            }, { allowPrivateHosts: privateHostAllowlist });
 
             // Retry on 5xx errors (transient upstream issues)
             if (response.status >= 500 && attempt < maxRetries) {
@@ -759,9 +671,13 @@ router.get('/stream', async (req, res) => {
                 const finalUrlObj = new URL(finalUrl);
                 const baseUrl = finalUrlObj.origin + finalUrlObj.pathname.substring(0, finalUrlObj.pathname.lastIndexOf('/') + 1);
                 const publicProxyPath = withBasePath(`${req.baseUrl}/stream`, requestBasePath(req));
-                const buildProxyUrl = targetUrl => (
-                    `${req.protocol}://${req.get('host')}${publicProxyPath}?url=${encodeURIComponent(targetUrl)}`
-                );
+                const buildProxyUrl = targetUrl => {
+                    const signature = signMediaUrl(targetUrl);
+                    return `${req.protocol}://${req.get('host')}${publicProxyPath}`
+                        + `?url=${encodeURIComponent(targetUrl)}`
+                        + `&token=${encodeURIComponent(signature.token)}`
+                        + `&expires=${signature.expiresAt}`;
+                };
 
                 manifest = manifest.split('\n').map(line => {
                     const trimmed = line.trim();
@@ -810,6 +726,9 @@ router.get('/stream', async (req, res) => {
 
             lastError = err;
             logSafeError(`Stream proxy error (attempt ${attempt}/${maxRetries}):`, err);
+            if (err.statusCode) {
+                return res.status(err.statusCode).json({ error: err.message });
+            }
 
             // A response that has started cannot be retried safely.
             if (res.headersSent) {
@@ -840,19 +759,18 @@ router.get('/stream', async (req, res) => {
  */
 router.get('/image', async (req, res) => {
     try {
-        const { url } = req.query;
-        if (!url) {
-            return res.status(400).json({ error: 'URL required' });
-        }
+        const validatedUrl = await authorizeMediaUrl(req.query.url, {
+            token: req.query.token,
+            expiresAt: req.query.expires,
+            fieldName: 'Image URL'
+        });
 
-        const validatedUrl = validateHttpUrl(url);
-
-        const response = await fetch(validatedUrl, {
+        const response = await fetchWithPolicy(validatedUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'image/*,*/*;q=0.8'
             }
-        });
+        }, { allowPrivateHosts: await configuredSourceUrls(), fieldName: 'Image URL' });
 
         if (!response.ok) {
             return res.status(response.status).send('Failed to fetch image');

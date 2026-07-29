@@ -21,8 +21,9 @@ class GuidePage {
             await channelList.loadChannels();
         }
 
-        // Only load EPG data if not already loaded
-        if (!this.app.epgGuide.programmes || this.app.epgGuide.programmes.length === 0) {
+        // Startup loads only now-playing titles; the guide requires the complete
+        // programme window and loads it only when this page is opened.
+        if (!this.app.epgGuide.fullEpgLoaded) {
             await this.app.epgGuide.loadEpg();
         } else {
             // Just re-render with existing data (updates time position)

@@ -5,6 +5,18 @@ const auth = require('../auth');
 
 router.use(auth.requireAuth);
 
+function requireSourceId(value) {
+    const sourceId = Number(value);
+    return Number.isSafeInteger(sourceId) && sourceId > 0 ? sourceId : null;
+}
+
+function contentTypes(value) {
+    if (value === 'movies') return ['movie'];
+    if (value === 'series') return ['series'];
+    if (value === 'channels' || value === 'live' || value === undefined) return ['live'];
+    return null;
+}
+
 // Helper to map API item types to DB types and tables
 function mapItemType(apiType) {
     switch (apiType) {
@@ -234,18 +246,17 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
 // Show ALL items for a source (single SQL statement - much faster than bulk)
 router.post('/show/all', auth.requireAdmin, async (req, res) => {
     try {
-        const { sourceId, contentType } = req.body;
-        if (!sourceId) return res.status(400).json({ error: 'sourceId required' });
+        const { contentType } = req.body;
+        const sourceId = requireSourceId(req.body.sourceId);
+        const types = contentTypes(contentType);
+        if (!sourceId) return res.status(400).json({ error: 'Valid sourceId required' });
+        if (!types) return res.status(400).json({ error: 'Invalid contentType' });
 
         const db = getDb();
         let catCount = 0;
         let itemCount = 0;
 
         // Determine which types to update based on contentType
-        const types = contentType === 'movies' ? ['movie']
-            : contentType === 'series' ? ['series']
-                : ['live']; // default to channels
-
         for (const type of types) {
             const catResult = db.prepare(`UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
             const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
@@ -253,7 +264,7 @@ router.post('/show/all', auth.requireAdmin, async (req, res) => {
             itemCount += itemResult.changes;
         }
 
-        console.log(`[Channels] Show all for source ${sourceId} (${contentType}): ${catCount} categories, ${itemCount} items`);
+        console.log('[Channels] Show all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
     } catch (err) {
         console.error('Error show all:', err);
@@ -264,18 +275,17 @@ router.post('/show/all', auth.requireAdmin, async (req, res) => {
 // Hide ALL items for a source (single SQL statement - much faster than bulk)
 router.post('/hide/all', auth.requireAdmin, async (req, res) => {
     try {
-        const { sourceId, contentType } = req.body;
-        if (!sourceId) return res.status(400).json({ error: 'sourceId required' });
+        const { contentType } = req.body;
+        const sourceId = requireSourceId(req.body.sourceId);
+        const types = contentTypes(contentType);
+        if (!sourceId) return res.status(400).json({ error: 'Valid sourceId required' });
+        if (!types) return res.status(400).json({ error: 'Invalid contentType' });
 
         const db = getDb();
         let catCount = 0;
         let itemCount = 0;
 
         // Determine which types to update based on contentType
-        const types = contentType === 'movies' ? ['movie']
-            : contentType === 'series' ? ['series']
-                : ['live']; // default to channels
-
         for (const type of types) {
             const catResult = db.prepare(`UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
             const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
@@ -283,7 +293,7 @@ router.post('/hide/all', auth.requireAdmin, async (req, res) => {
             itemCount += itemResult.changes;
         }
 
-        console.log(`[Channels] Hide all for source ${sourceId} (${contentType}): ${catCount} categories, ${itemCount} items`);
+        console.log('[Channels] Hide all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
     } catch (err) {
         console.error('Error hide all:', err);
@@ -323,7 +333,7 @@ router.get('/recent', async (req, res) => {
 
         res.json(formatted);
     } catch (err) {
-        console.error(`Error getting recent ${req.query.type}:`, err);
+        console.error('Error getting recent items:', err);
         res.status(500).json({ error: 'Failed to get recent items' });
     }
 });

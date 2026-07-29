@@ -16,8 +16,8 @@ router.use((req, res, next) => {
     next();
 });
 
-function limiterKey(req, suffix) {
-    return `${req.ip || req.socket?.remoteAddress || 'unknown'}:${suffix}`;
+function limiterKey(suffix) {
+    return suffix;
 }
 
 function enforceLimiter(res, limiter, key) {
@@ -34,7 +34,7 @@ function respondError(res, error, fallback) {
 }
 
 async function verifyPasswordReauthentication(req, res, user) {
-    const key = limiterKey(req, `reauth:${user.id}`);
+    const key = limiterKey(`reauth:${user.id}`);
     if (!enforceLimiter(res, passwordIdentityLimiter, key)) return false;
     if (!user.passwordHash || !await auth.verifyPassword(String(req.body.password || ''), user.passwordHash)) {
         passwordIdentityLimiter.recordFailure(key);
@@ -47,7 +47,7 @@ async function verifyPasswordReauthentication(req, res, user) {
 
 async function verifyExistingFactor(req, res, user) {
     if (!twoFactorAuth.hasEnabledTotp(user)) return true;
-    const key = limiterKey(req, `factor:${user.id}`);
+    const key = limiterKey(`factor:${user.id}`);
     if (!enforceLimiter(res, twoFactorLimiter, key)) return false;
     const valid = await twoFactorAuth.verifyCredential(user, {
         type: req.body.credentialType,
@@ -71,7 +71,7 @@ router.post('/verify', async (req, res) => {
         const challenge = twoFactorAuth.getChallenge(req);
         if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
 
-        const key = limiterKey(req, `login:${challenge.userId}`);
+        const key = limiterKey(`login:${challenge.userId}:${challenge.challengeId}`);
         if (!enforceLimiter(res, twoFactorLimiter, key)) return;
 
         const user = await db.users.getById(challenge.userId);
@@ -147,7 +147,7 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'The enrollment has expired. Start again.' });
         }
 
-        const key = limiterKey(req, `enroll:${user.id}`);
+        const key = limiterKey(`enroll:${user.id}`);
         if (!enforceLimiter(res, twoFactorLimiter, key)) return;
         const validation = totpService.validateToken(pending.encryptedSecret, user, req.body.code);
         if (!validation) {

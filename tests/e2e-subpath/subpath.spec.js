@@ -50,6 +50,16 @@ test('the application remains inside its configured reverse-proxy path', async (
 
     const rewrittenManifest = await page.evaluate(async () => {
         const upstreamUrl = 'http://127.0.0.1:3211/recoverable-hls/playlist.m3u8';
+        const sourceResponse = await fetch(NodeCastUrl.resolve('/api/sources'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Controlled subpath media origin',
+                url: upstreamUrl
+            })
+        });
+        if (!sourceResponse.ok) throw new Error(`Source setup failed: ${sourceResponse.status}`);
         const response = await fetch(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(upstreamUrl)}`));
         if (!response.ok) throw new Error(`Manifest proxy failed: ${response.status}`);
         return response.text();

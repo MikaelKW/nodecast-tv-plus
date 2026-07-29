@@ -5,6 +5,7 @@
 
 const readline = require('readline');
 const { Readable } = require('stream');
+const { fetchWithPolicy } = require('./outboundSecurity');
 
 /**
  * Generate a simple stable ID from name and group
@@ -155,7 +156,7 @@ async function parse(input) {
  * @returns {Promise<{ channels: Array, groups: Array }>}
  */
 async function fetchAndParse(url) {
-    const response = await fetch(url);
+    const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [url] });
     if (!response.ok) {
         throw new Error(`Failed to fetch M3U: ${response.status} ${response.statusText}`);
     }
@@ -254,7 +255,7 @@ async function* parseStreaming(input, batchSize = 500) {
  * @yields {{ channels: Array, groups: Set, isLast: boolean }}
  */
 async function* fetchAndParseStreaming(url, batchSize = 500) {
-    const response = await fetch(url);
+    const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [url] });
     if (!response.ok) {
         throw new Error(`Failed to fetch M3U: ${response.status} ${response.statusText}`);
     }
@@ -278,11 +279,11 @@ async function* fetchAndParseStreaming(url, batchSize = 500) {
  * @returns {Promise<number>} Number of entries
  */
 async function countEntries(url) {
-    const response = await fetch(url, {
+    const response = await fetchWithPolicy(url, {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-    });
+    }, { allowPrivateHosts: [url] });
 
     if (!response.ok) {
         throw new Error(`Failed to fetch playlist: ${response.status}`);

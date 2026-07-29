@@ -3,9 +3,10 @@ const router = express.Router();
 const { spawn } = require('child_process');
 const auth = require('../auth');
 const db = require('../db');
-const { validateHttpUrl } = require('../services/urlSecurity');
+const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { parseOptionalStreamIndex } = require('../services/mediaSelection');
 const { buildSubtitleExtractionArgs } = require('../services/subtitleExtraction');
+const { mediaProcessLimit } = require('../services/concurrencyLimiter');
 
 router.use(auth.requireAuth);
 
@@ -15,7 +16,7 @@ router.use(auth.requireAuth);
  * 
  * Extracts a specific subtitle track and converts it to WebVTT on the fly.
  */
-router.get('/', async (req, res) => {
+router.get('/', mediaProcessLimit, async (req, res) => {
     const { url, index, start, duration } = req.query;
 
     if (!url || index === undefined) {
@@ -27,7 +28,7 @@ router.get('/', async (req, res) => {
     let windowStart = 0;
     let windowDuration = null;
     try {
-        validatedUrl = validateHttpUrl(url);
+        validatedUrl = await authorizeMediaUrl(url);
         streamIndex = parseOptionalStreamIndex(index, 'index');
 
         const hasWindow = start !== undefined || duration !== undefined;
@@ -42,7 +43,7 @@ router.get('/', async (req, res) => {
             }
         }
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';

@@ -1,9 +1,12 @@
 function normalizeBasePath(value = '') {
     const trimmed = String(value).trim();
     if (!trimmed || trimmed === '/') return '';
+    if (trimmed.length > 1024) return '';
 
     const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-    const normalized = withLeadingSlash.replace(/\/+$/, '');
+    let end = withLeadingSlash.length;
+    while (end > 0 && withLeadingSlash.charCodeAt(end - 1) === 47) end -= 1;
+    const normalized = withLeadingSlash.slice(0, end);
     if (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(normalized)) return '';
     const segments = normalized.slice(1).split('/');
     return segments.some(segment => segment === '.' || segment === '..') ? '' : normalized;
