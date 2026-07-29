@@ -6,6 +6,7 @@
 const sax = require('sax');
 const zlib = require('zlib');
 const { Readable } = require('stream');
+const { fetchWithPolicy } = require('./outboundSecurity');
 
 function createValidatedCalendarDate(year, month, day, hour, minute, second) {
     if (
@@ -256,7 +257,7 @@ function getCurrentAndUpcoming(programmes, channelId, count = 5) {
  * Fetch and parse XMLTV from URL
  */
 async function fetchAndParse(url) {
-    const response = await fetch(url);
+    const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [url] });
     if (!response.ok) {
         throw new Error(`Failed to fetch EPG: ${response.status} ${response.statusText}`);
     }
@@ -306,7 +307,7 @@ async function fetchAndParse(url) {
  * @yields {{ channels: Array|null, programmes: Array, isLast: boolean }}
  */
 async function* fetchAndParseStreaming(url, batchSize = 1000) {
-    const response = await fetch(url);
+    const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [url] });
     if (!response.ok) {
         throw new Error(`Failed to fetch EPG: ${response.status} ${response.statusText}`);
     }

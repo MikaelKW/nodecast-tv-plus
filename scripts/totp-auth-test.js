@@ -106,8 +106,8 @@ async function stopServer(child) {
     if (child.exitCode === null) child.kill('SIGKILL');
 }
 
-async function request(baseUrl, route, { method = 'GET', body, jar = new CookieJar() } = {}) {
-    const headers = {};
+async function request(baseUrl, route, { method = 'GET', body, jar = new CookieJar(), headers: extraHeaders = {} } = {}) {
+    const headers = { ...extraHeaders };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (jar.header()) headers.Cookie = jar.header();
     const response = await fetch(`${baseUrl}${route}`, {
@@ -225,6 +225,25 @@ async function run() {
 
         const enrollment = await enroll(server.baseUrl, adminJar, admin.password);
         sensitiveValues.push(enrollment.secret, enrollment.enrollmentCode, ...enrollment.recoveryCodes);
+
+        const spoofedAddressChallenge = await beginPasswordLogin(server.baseUrl, admin.username, admin.password);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            const failed = await request(server.baseUrl, '/api/auth/2fa/verify', {
+                method: 'POST',
+                jar: spoofedAddressChallenge,
+                headers: { 'X-Forwarded-For': `198.51.100.${attempt + 1}` },
+                body: { credentialType: 'totp', credential: '000000' }
+            });
+            assert.equal(failed.response.status, 401);
+        }
+        const challengeAfterSpoofing = await request(server.baseUrl, '/api/auth/2fa/challenge', {
+            jar: spoofedAddressChallenge
+        });
+        assert.equal(
+            challengeAfterSpoofing.payload.required,
+            false,
+            'Changing forwarding headers must not create a fresh TOTP attempt budget.'
+        );
 
         const databaseText = await fs.readFile(path.join(dataDirectory, 'db.json'), 'utf8');
         assert.equal(databaseText.includes(enrollment.secret), false, 'The TOTP secret must not be stored in plaintext.');
