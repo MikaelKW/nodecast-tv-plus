@@ -212,6 +212,119 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    // One unavailable provider must not prevent later healthy providers from
+    // appearing in Live TV. This protects fresh sessions from retaining a
+    // partially loaded channel list when an earlier source fails.
+    const healthyAfterFailureSource = await page.evaluate(async url => {
+        const response = await fetch('/api/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Healthy Source After Failure',
+                url
+            })
+        });
+        if (!response.ok) throw new Error(`Healthy source creation failed: ${response.status}`);
+        return response.json();
+    }, `${fixtureBaseUrl}/playlist.m3u`);
+    await waitForSync(page, healthyAfterFailureSource.id);
+
+    const partialSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
+        const originalCategories = API.proxy.xtream.liveCategories;
+        const originalStreams = API.proxy.xtream.liveStreams;
+        const originalConsoleError = console.error;
+        const errors = [];
+
+        API.proxy.xtream.liveCategories = (sourceId, options) => (
+            String(sourceId) === String(failedId)
+                ? Promise.reject(new Error('Controlled provider failure'))
+                : originalCategories(sourceId, options)
+        );
+        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => (
+            String(sourceId) === String(failedId)
+                ? Promise.reject(new Error('Controlled provider failure'))
+                : originalStreams(sourceId, categoryId, options)
+        );
+        console.error = (...args) => errors.push(args.map(String).join(' '));
+
+        try {
+            await window.app.channelList.loadSources();
+            window.app.channelList.sourceSelect.value = '';
+            await window.app.channelList.loadChannels();
+            return {
+                failedChannels: window.app.channelList.channels.filter(channel =>
+                    String(channel.sourceId) === String(failedId)
+                ).length,
+                healthyChannels: window.app.channelList.channels.filter(channel =>
+                    String(channel.sourceId) === String(healthyId)
+                ).length,
+                errors
+            };
+        } finally {
+            API.proxy.xtream.liveCategories = originalCategories;
+            API.proxy.xtream.liveStreams = originalStreams;
+            console.error = originalConsoleError;
+        }
+    }, { failedId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
+
+    expect(partialSourceLoad.failedChannels).toBe(0);
+    expect(partialSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(partialSourceLoad.errors.some(message =>
+        message.includes(`Error loading source ${m3uSource.id}`)
+    )).toBe(true);
+
+    const transientSourceLoad = await page.evaluate(async ({ recoveredId, healthyId }) => {
+        const originalCategories = API.proxy.xtream.liveCategories;
+        const originalStreams = API.proxy.xtream.liveStreams;
+        let categoryAttempts = 0;
+        let streamAttempts = 0;
+
+        API.proxy.xtream.liveCategories = (sourceId, options) => {
+            if (String(sourceId) === String(recoveredId) && categoryAttempts++ === 0) {
+                return Promise.reject(new Error('Controlled transient category failure'));
+            }
+            return originalCategories(sourceId, options);
+        };
+        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => {
+            if (String(sourceId) === String(recoveredId) && streamAttempts++ === 0) {
+                return Promise.reject(new Error('Controlled transient stream failure'));
+            }
+            return originalStreams(sourceId, categoryId, options);
+        };
+
+        try {
+            await window.app.channelList.loadSources();
+            window.app.channelList.sourceSelect.value = '';
+            await window.app.channelList.loadChannels();
+            return {
+                recoveredChannels: window.app.channelList.channels.filter(channel =>
+                    String(channel.sourceId) === String(recoveredId)
+                ).length,
+                healthyChannels: window.app.channelList.channels.filter(channel =>
+                    String(channel.sourceId) === String(healthyId)
+                ).length,
+                categoryAttempts,
+                streamAttempts
+            };
+        } finally {
+            API.proxy.xtream.liveCategories = originalCategories;
+            API.proxy.xtream.liveStreams = originalStreams;
+        }
+    }, { recoveredId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
+
+    expect(transientSourceLoad.recoveredChannels).toBeGreaterThan(0);
+    expect(transientSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(transientSourceLoad.categoryAttempts).toBe(2);
+    expect(transientSourceLoad.streamAttempts).toBe(2);
+
+    await page.evaluate(async id => {
+        const response = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(`Healthy source cleanup failed: ${response.status}`);
+        await window.app.channelList.loadSources();
+        await window.app.channelList.loadChannels();
+    }, healthyAfterFailureSource.id);
+
     await page.locator('#add-epg').click();
     await page.locator('#source-name').fill('Controlled EPG');
     await page.locator('#source-url').fill(`${fixtureBaseUrl}/guide.xml`);
