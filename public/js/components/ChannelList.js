@@ -754,16 +754,33 @@ class ChannelList {
             const m3uSources = this.sources.filter(s => s.type === 'm3u' && s.enabled && API.sources.isVisibleIn(s, 'live'));
             console.log('[ChannelList] loadAllChannels: xtream=', xtreamSources.length, 'm3u=', m3uSources.length);
 
-            const sourceRequests = [
-                ...xtreamSources.map(source => this.fetchSourceChannels(source.id, 'xtream')),
-                ...m3uSources.map(source => this.fetchSourceChannels(source.id, 'm3u'))
+            const sourceDescriptors = [
+                ...xtreamSources.map(source => ({ source, type: 'xtream' })),
+                ...m3uSources.map(source => ({ source, type: 'm3u' }))
             ];
+            const fetchSource = descriptor =>
+                this.fetchSourceChannels(descriptor.source.id, descriptor.type);
 
-            const [sourceResults] = await Promise.all([
-                Promise.allSettled(sourceRequests),
+            const [initialResults] = await Promise.all([
+                Promise.allSettled(sourceDescriptors.map(fetchSource)),
                 this.loadHiddenItems(),
                 this.loadFavorites()
             ]);
+            const sourceResults = [...initialResults];
+            const failedIndexes = sourceResults
+                .map((result, index) => result.status === 'rejected' ? index : -1)
+                .filter(index => index !== -1);
+
+            if (failedIndexes.length > 0) {
+                console.warn(`[ChannelList] Retrying ${failedIndexes.length} unavailable source(s)`);
+                await new Promise(resolve => setTimeout(resolve, 250));
+                const retryResults = await Promise.allSettled(
+                    failedIndexes.map(index => fetchSource(sourceDescriptors[index]))
+                );
+                retryResults.forEach((result, retryIndex) => {
+                    sourceResults[failedIndexes[retryIndex]] = result;
+                });
+            }
 
             let successfulSources = 0;
             sourceResults.forEach((result, index) => {
@@ -773,11 +790,11 @@ class ChannelList {
                     return;
                 }
 
-                const source = [...xtreamSources, ...m3uSources][index];
+                const source = sourceDescriptors[index]?.source;
                 console.error(`Error loading source ${source?.id}:`, result.reason);
             });
 
-            if (sourceRequests.length > 0 && successfulSources === 0) {
+            if (sourceDescriptors.length > 0 && successfulSources === 0) {
                 throw new Error('Unable to load channels from any enabled source');
             }
 
