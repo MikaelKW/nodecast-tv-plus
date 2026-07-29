@@ -22,9 +22,11 @@ This patch release improves compatibility with AAC audio in MPEG-TS live streams
 
 ### Security
 
-- Tightened media-proxy and playback destination validation, including redirect checks and restrictions around local or otherwise unintended network targets.
-- Strengthened cache and transcode path containment, media-process limits, proxy-trust handling, TOTP attempt bounds, and session lifecycle controls.
-- Published security advisories accompany this release with affected-version and remediation details.
+- Tightened media-proxy and playback destination validation, including redirect checks and restrictions around local or otherwise unintended network targets. [GHSA-fvg4-p7ph-7pcf](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/GHSA-fvg4-p7ph-7pcf)
+- Strengthened cache-directory containment so administrative cleanup remains confined to application cache storage. [GHSA-r779-m9mv-pjqf](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/GHSA-r779-m9mv-pjqf)
+- Strengthened transcode-segment path containment so authenticated requests remain confined to their intended session directory. [GHSA-93v6-vvxj-2f97](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/GHSA-93v6-vvxj-2f97)
+- Restricted proxy-trust handling and strengthened account- and challenge-bound TOTP attempt limits. [GHSA-6m25-cj9x-gf5p](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/GHSA-6m25-cj9x-gf5p)
+- Added media-process limits and strengthened session lifecycle controls.
 
 ### Upgrade notes
 
