@@ -15,6 +15,12 @@ class EpgGuide {
 
         this.channels = [];
         this.programmes = [];
+        this.nowChannels = [];
+        this.nowByChannel = new Map();
+        this.programmesByChannel = new Map();
+        this.channelMap = new Map();
+        this.nowChannelMap = new Map();
+        this.fullEpgLoaded = false;
         this.currentDate = new Date();
         this.timeOffset = 0; // Hours offset from now
         this.pixelsPerMinute = 6.67; // Width scaling (30min = 200px)
@@ -70,6 +76,14 @@ class EpgGuide {
 
         // Update current time indicator every minute
         setInterval(() => this.updateNowIndicator(), 60000);
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this._backgroundRefreshTimer) {
+                this.refreshNowPlayingIfVisible().catch(err => {
+                    console.error('[EPG] Visibility refresh failed:', err);
+                });
+            }
+        });
 
         this.initResizer();
     }
@@ -134,20 +148,23 @@ class EpgGuide {
 
         console.log('[EPG] Starting display refresh timer: every 5 minutes');
 
-        this._backgroundRefreshTimer = setInterval(async () => {
-            console.log('[EPG] Refreshing EPG display from cache');
-            try {
-                await this.fetchEpgData(false); // Fetch cached data (no force refresh)
-
-                // Update channel list program info if visible
-                if (window.app?.channelList) {
-                    window.app.channelList.clearProgramInfoCache();
-                    window.app.channelList.updateVisibleEpgInfo?.();
-                }
-            } catch (err) {
+        this._backgroundRefreshTimer = setInterval(() => {
+            this.refreshNowPlayingIfVisible().catch(err => {
                 console.error('[EPG] Display refresh failed:', err);
-            }
+            });
         }, refreshIntervalMs);
+    }
+
+    async refreshNowPlayingIfVisible() {
+        if (document.hidden) return false;
+
+        console.log('[EPG] Refreshing now-playing data from cache');
+        await this.fetchNowPlaying();
+        if (window.app?.channelList) {
+            window.app.channelList.clearProgramInfoCache();
+            window.app.channelList.updateVisibleEpgInfo?.();
+        }
+        return true;
     }
 
     /**
@@ -175,12 +192,13 @@ class EpgGuide {
         try {
             this.container.innerHTML = '<div class="loading"></div>';
             await this.fetchEpgData(forceRefresh);
+            this.fullEpgLoaded = true;
             this.lastRefreshTime = new Date();
             this.render();
 
-            // Start background refresh timer after initial load
-            // This ensures EPG data stays fresh while the app is open
-            this.startBackgroundRefresh();
+            if (!this._backgroundRefreshTimer) {
+                this.startBackgroundRefresh();
+            }
         } catch (err) {
             console.error('Error loading EPG:', err);
             this.container.innerHTML = `
@@ -195,73 +213,89 @@ class EpgGuide {
     /**
      * Fetch EPG data from sources
      */
-    async fetchEpgData(forceRefresh = false) {
-        // Get ALL sources and filter for EPG-capable types
-        const allSources = await API.sources.getAll();
-        const sources = allSources.filter(s => (s.type === 'epg' || s.type === 'xtream') && s.enabled);
+    async fetchEpgData() {
+        const data = await this._fetchFromSources('full');
+        this.channels = data.channels;
+        this.programmes = data.programmes;
+        this.channelMap = this._indexChannels(this.channels);
+        this.programmesByChannel = new Map();
 
-        if (sources.length === 0) {
-            this.channels = [];
-            this.programmes = [];
-            return;
+        for (const programme of this.programmes) {
+            const channelProgrammes = this.programmesByChannel.get(programme.channelId) || [];
+            channelProgrammes.push(programme);
+            this.programmesByChannel.set(programme.channelId, channelProgrammes);
+        }
+        for (const channelProgrammes of this.programmesByChannel.values()) {
+            channelProgrammes.sort((a, b) => new Date(a.start) - new Date(b.start));
         }
 
-        // Build query params for server-side caching
-        // Sync interval is controlled by server, we just hint at max cache age
-        const maxAge = 24; // hours - server controls actual refresh
-        const queryParams = forceRefresh ? '?refresh=1' : `?maxAge=${maxAge}`;
+        await this._loadFavorites();
+    }
 
-        // Load EPG from ALL sources in parallel
-        const fetchPromises = sources.map(async (source) => {
-            try {
-                const response = await fetch(NodeCastUrl.resolve(`/api/proxy/epg/${source.id}${queryParams}`));
-                if (!response.ok) throw new Error(`Status ${response.status}`);
-                return await response.json();
-            } catch (e) {
-                console.warn(`Failed to load EPG for source ${source.name}:`, e);
-                return null;
+    async fetchNowPlaying() {
+        const data = await this._fetchFromSources('now');
+        this.nowChannels = data.channels;
+        this.nowChannelMap = this._indexChannels(this.nowChannels);
+        this.nowByChannel = new Map(data.programmes.map(programme => [programme.channelId, programme]));
+
+        if (!this.fullEpgLoaded) {
+            this.channels = this.nowChannels;
+            this.channelMap = this.nowChannelMap;
+        }
+
+        await this._loadFavorites();
+    }
+
+    async _fetchFromSources(mode) {
+        const allSources = await API.sources.getAll();
+        const sources = allSources.filter(source =>
+            (source.type === 'epg' || source.type === 'xtream')
+            && source.enabled
+            && API.sources.isVisibleIn(source, 'live')
+        );
+
+        if (sources.length === 0) {
+            return { channels: [], programmes: [] };
+        }
+
+        const results = await Promise.allSettled(sources.map(source =>
+            mode === 'now'
+                ? API.proxy.epg.getNow(source.id)
+                : API.proxy.epg.get(source.id)
+        ));
+        const successful = results.filter(result => result.status === 'fulfilled');
+
+        results.forEach((result, index) => {
+            if (result.status === 'rejected') {
+                console.warn(`Failed to load ${mode} EPG for source ${sources[index].name}:`, result.reason);
             }
         });
 
-        const results = await Promise.all(fetchPromises);
-
-        // Merge results
-        this.channels = [];
-        this.programmes = [];
-
-        let hasData = false;
-        results.forEach(data => {
-            if (data) {
-                if (data.channels && data.channels.length > 0) {
-                    this.channels = this.channels.concat(data.channels);
-                }
-                if (data.programmes && data.programmes.length > 0) {
-                    this.programmes = this.programmes.concat(data.programmes);
-                }
-                if (data.channels || data.programmes) {
-                    hasData = true;
-                }
-            }
-        });
-
-        if (!hasData) {
+        if (successful.length === 0) {
             throw new Error('Failed to load EPG data from any source');
         }
 
-        // Build secondary indexes for faster lookup
-        this.channelMap = new Map();
-        // Index by ID
-        this.channels.forEach(ch => {
-            this.channelMap.set(ch.id, ch);
-            // Also index by name (normalized) for fallback matching
-            if (ch.name) {
-                this.channelMap.set(ch.name.toLowerCase(), ch);
+        return successful.reduce((merged, result) => {
+            merged.channels.push(...(result.value.channels || []));
+            merged.programmes.push(...(result.value.programmes || []));
+            return merged;
+        }, { channels: [], programmes: [] });
+    }
+
+    _indexChannels(channels) {
+        const index = new Map();
+        channels.forEach(channel => {
+            index.set(channel.id, channel);
+            if (channel.name) {
+                index.set(channel.name.toLowerCase(), channel);
             }
         });
+        return index;
+    }
 
-        // Load favorites
-        const favs = await API.favorites.getAll();
-        this.favorites = new Set(favs.map(f => `${f.source_id}:${f.item_id}`));
+    async _loadFavorites() {
+        const favorites = await API.favorites.getAll();
+        this.favorites = new Set(favorites.map(favorite => `${favorite.source_id}:${favorite.item_id}`));
     }
 
     /**
@@ -271,31 +305,26 @@ class EpgGuide {
      * @returns {object|null} Program object with title, start, stop
      */
     getCurrentProgram(tvgId, channelName) {
-        if (!this.programmes || this.programmes.length === 0) return null;
-
-        // Find EPG channel using fast map lookup
-        let epgChannel = null;
-        if (tvgId && this.channelMap && this.channelMap.has(tvgId)) {
-            epgChannel = this.channelMap.get(tvgId);
-        } else if (channelName && this.channelMap) {
-            epgChannel = this.channelMap.get(channelName.toLowerCase());
-        } else {
-            // Fallback to slow search if map fails or not built yet
-            epgChannel = this.channels.find(epg =>
-                (tvgId && epg.id === tvgId) || epg.name === channelName
-            );
+        const nowTime = Date.now();
+        const nowChannel = this._findEpgChannel(tvgId, channelName, this.nowChannelMap);
+        const currentNow = nowChannel ? this.nowByChannel.get(nowChannel.id) : null;
+        if (currentNow
+            && nowTime >= new Date(currentNow.start).getTime()
+            && nowTime < new Date(currentNow.stop).getTime()) {
+            return {
+                title: currentNow.title,
+                start: currentNow.start,
+                stop: currentNow.stop,
+                description: currentNow.description
+            };
         }
 
+        const epgChannel = this._findEpgChannel(tvgId, channelName, this.channelMap);
         if (!epgChannel) return null;
 
-        const now = new Date();
-        const nowTime = now.getTime();
-
-        // Filter programs for this channel
-        const current = this.programmes.find(p => {
-            if (p.channelId !== epgChannel.id) return false;
-            const start = new Date(p.start).getTime();
-            const stop = new Date(p.stop).getTime();
+        const current = (this.programmesByChannel.get(epgChannel.id) || []).find(programme => {
+            const start = new Date(programme.start).getTime();
+            const stop = new Date(programme.stop).getTime();
             return nowTime >= start && nowTime < stop;
         });
 
@@ -305,6 +334,26 @@ class EpgGuide {
             stop: current.stop,
             description: current.description
         } : null;
+    }
+
+    _findEpgChannel(tvgId, channelName, channelMap) {
+        if (tvgId && channelMap?.has(tvgId)) {
+            return channelMap.get(tvgId);
+        }
+        if (channelName && channelMap) {
+            return channelMap.get(channelName.toLowerCase()) || null;
+        }
+        return null;
+    }
+
+    getProgrammesForChannel(channelId) {
+        return this.programmesByChannel.get(channelId) || [];
+    }
+
+    invalidateFullGuide() {
+        this.fullEpgLoaded = false;
+        this.programmes = [];
+        this.programmesByChannel = new Map();
     }
 
     /**
@@ -371,9 +420,10 @@ class EpgGuide {
 
         // Match ALL playable channels with optional EPG data
         const allChannels = playableChannels.map(sourceChannel => {
-            // Try to find matching EPG channel by tvgId or name
-            const epgChannel = this.channels.find(epg =>
-                epg.id === sourceChannel.tvgId || epg.name === sourceChannel.name
+            const epgChannel = this._findEpgChannel(
+                sourceChannel.tvgId,
+                sourceChannel.name,
+                this.channelMap
             );
             return { epgChannel, sourceChannel };
         });
@@ -566,14 +616,12 @@ class EpgGuide {
         // Get programs if EPG data exists
         let channelProgrammes = [];
         if (epgChannel) {
-            channelProgrammes = this.programmes
-                .filter(p => p.channelId === epgChannel.id)
+            channelProgrammes = this.getProgrammesForChannel(epgChannel.id)
                 .filter(p => {
                     const start = new Date(p.start);
                     const stop = new Date(p.stop);
                     return start < this.endTime && stop > this.startTime;
-                })
-                .sort((a, b) => new Date(a.start) - new Date(b.start));
+                });
         }
 
         // Fallback values if EPG channel is missing

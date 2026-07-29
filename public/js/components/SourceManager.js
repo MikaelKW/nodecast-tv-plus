@@ -236,7 +236,12 @@ class SourceManager {
         }
 
         if ((type === 'epg' || type === 'xtream') && window.app?.epgGuide) {
-            refreshes.push(window.app.epgGuide.loadEpg(true));
+            window.app.epgGuide.invalidateFullGuide();
+            refreshes.push(
+                window.app.currentPage === 'guide'
+                    ? window.app.epgGuide.loadEpg()
+                    : window.app.epgGuide.fetchNowPlaying()
+            );
         }
 
         const results = await Promise.allSettled(refreshes);
@@ -586,7 +591,14 @@ class SourceManager {
             console.warn('[SourceManager] Content visibility refresh failed:', result.reason);
         });
 
-        if (window.app?.epgGuide) window.app.epgGuide.render();
+        if (window.app?.epgGuide) {
+            window.app.epgGuide.invalidateFullGuide();
+            if (window.app.currentPage === 'guide') {
+                await window.app.epgGuide.loadEpg();
+            } else {
+                await window.app.epgGuide.fetchNowPlaying();
+            }
+        }
     }
 
     /**
@@ -604,6 +616,14 @@ class SourceManager {
                 await window.app.channelList.loadSources();
                 await window.app.channelList.loadChannels();
             }
+            if (window.app?.epgGuide) {
+                window.app.epgGuide.invalidateFullGuide();
+                if (window.app.currentPage === 'guide') {
+                    await window.app.epgGuide.loadEpg();
+                } else {
+                    await window.app.epgGuide.fetchNowPlaying();
+                }
+            }
         } catch (err) {
             alert('Error deleting source: ' + err.message);
         }
@@ -616,6 +636,14 @@ class SourceManager {
         try {
             await API.sources.toggle(id);
             await this.loadSources();
+            if (window.app?.epgGuide) {
+                window.app.epgGuide.invalidateFullGuide();
+                if (window.app.currentPage === 'guide') {
+                    await window.app.epgGuide.loadEpg();
+                } else {
+                    await window.app.epgGuide.fetchNowPlaying();
+                }
+            }
         } catch (err) {
             alert('Error toggling source: ' + err.message);
         }
@@ -710,9 +738,14 @@ class SourceManager {
             await API.proxy.cache.clear(id);
 
             if (type === 'epg') {
-                // Force refresh EPG data
+                // Refresh the view from the synchronized database.
                 if (window.app?.epgGuide) {
-                    await window.app.epgGuide.loadEpg(true);
+                    window.app.epgGuide.invalidateFullGuide();
+                    if (window.app.currentPage === 'guide') {
+                        await window.app.epgGuide.loadEpg();
+                    } else {
+                        await window.app.epgGuide.fetchNowPlaying();
+                    }
                 }
                 alert('EPG data synced & refreshed!');
             } else if (type === 'xtream') {
