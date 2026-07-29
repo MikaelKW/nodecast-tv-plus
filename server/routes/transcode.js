@@ -7,10 +7,12 @@ const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
-const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
+const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../services/urlSecurity');
+const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 const { parseOptionalStreamIndex } = require('../services/mediaSelection');
 const { TRANSCODE_START_TIMEOUT_MS } = require('../config/transcode');
+const { mediaProcessLimit } = require('../services/concurrencyLimiter');
 
 router.use(auth.requireAuth);
 
@@ -57,11 +59,11 @@ router.post('/session', async (req, res) => {
     let resolutionOverride;
     let selectedAudioStreamIndex;
     try {
-        validatedUrl = validateHttpUrl(url);
+        validatedUrl = await authorizeMediaUrl(url);
         resolutionOverride = parseMaxResolutionOverride(maxResolution);
         selectedAudioStreamIndex = parseOptionalStreamIndex(audioStreamIndex, 'audioStreamIndex');
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
@@ -103,7 +105,8 @@ router.post('/session', async (req, res) => {
             audioStreamIndex: selectedAudioStreamIndex,
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight
-                : 0
+                : 0,
+            ownerId: req.user.id
         });
 
         // Wait for the first segment, retrying one immediate provider rejection.
@@ -129,7 +132,10 @@ router.post('/session', async (req, res) => {
     } catch (err) {
         if (clientDisconnected) return;
         console.error('[Transcode] Session creation failed:', redactText(err?.stack || err));
-        res.status(500).json({ error: 'Failed to create session', details: err.message });
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Failed to create session',
+            ...(err.statusCode ? {} : { details: err.message })
+        });
     } finally {
         res.off('close', cleanupDisconnectedSession);
     }
@@ -141,7 +147,7 @@ router.post('/session', async (req, res) => {
  */
 router.get('/:sessionId/stream.m3u8', async (req, res) => {
     const { sessionId } = req.params;
-    const session = transcodeSession.getSession(sessionId);
+    const session = transcodeSession.getSession(sessionId, req.user.id);
 
     if (!session) {
         return res.status(404).json({ error: 'Session not found' });
@@ -165,11 +171,11 @@ router.get('/:sessionId/:segment', async (req, res) => {
     const { sessionId, segment } = req.params;
 
     // Only handle .ts files
-    if (!segment.endsWith('.ts')) {
+    if (!/^seg\d{4,12}\.ts$/.test(segment)) {
         return res.status(404).json({ error: 'Invalid segment' });
     }
 
-    const session = transcodeSession.getSession(sessionId);
+    const session = transcodeSession.getSession(sessionId, req.user.id);
     if (!session) {
         return res.status(404).json({ error: 'Session not found' });
     }
@@ -192,7 +198,8 @@ router.delete('/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
 
     try {
-        await transcodeSession.removeSession(sessionId);
+        const removed = await transcodeSession.removeSession(sessionId, req.user.id);
+        if (!removed) return res.status(404).json({ error: 'Session not found' });
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to remove session', details: err.message });
@@ -214,7 +221,7 @@ router.get('/sessions', auth.requireAdmin, (req, res) => {
  * Transcodes audio to AAC for browser compatibility while passing video through.
  * This fixes playback issues with Dolby/AC3/EAC3 audio that browsers can't decode.
  */
-router.get('/', async (req, res) => {
+router.get('/', mediaProcessLimit, async (req, res) => {
     const { url } = req.query;
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
@@ -222,9 +229,9 @@ router.get('/', async (req, res) => {
 
     let validatedUrl;
     try {
-        validatedUrl = validateHttpUrl(url);
+        validatedUrl = await authorizeMediaUrl(url);
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';

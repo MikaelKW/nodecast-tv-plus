@@ -25,6 +25,7 @@ class VideoPlayer {
         this._playId = 0;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
+        this._xtreamStreamFormats = new Map();
         this.currentChannel = null;
         this.overlayTimer = null;
         this.overlayDuration = 5000; // 5 seconds
@@ -895,6 +896,63 @@ class VideoPlayer {
     }
 
     /**
+     * Prefer a channel format that succeeded after an automatic Xtream fallback.
+     * This cache is intentionally session-only so a temporary provider failure
+     * does not permanently override the configured global preference.
+     */
+    getPreferredXtreamStreamFormat(sourceId, streamId, configuredFormat = 'm3u8') {
+        const key = `${String(sourceId)}:${String(streamId)}`;
+        return this._xtreamStreamFormats.get(key) || configuredFormat;
+    }
+
+    rememberXtreamStreamFormat(sourceId, streamId, format) {
+        if (
+            sourceId === undefined ||
+            sourceId === null ||
+            streamId === undefined ||
+            streamId === null ||
+            !format
+        ) {
+            return;
+        }
+        const key = `${String(sourceId)}:${String(streamId)}`;
+        this._xtreamStreamFormats.set(key, format);
+    }
+
+    /**
+     * Some Xtream providers do not expose the HLS form of a live stream even
+     * when HLS is the configured default. Retry the same channel once as raw
+     * MPEG-TS, which the smart probe can then route through remux/transcode.
+     */
+    async getXtreamTransportFallback(channel, streamUrl, alreadyAttempted = false) {
+        if (
+            alreadyAttempted ||
+            channel?.sourceType !== 'xtream' ||
+            channel?.sourceId === undefined ||
+            channel?.sourceId === null ||
+            channel?.streamId === undefined ||
+            channel?.streamId === null ||
+            typeof streamUrl !== 'string' ||
+            !streamUrl.toLowerCase().includes('.m3u8')
+        ) {
+            return null;
+        }
+
+        try {
+            const result = await API.proxy.xtream.getStreamUrl(
+                channel.sourceId,
+                channel.streamId,
+                'live',
+                'ts'
+            );
+            return result?.url && result.url !== streamUrl ? result.url : null;
+        } catch (error) {
+            console.warn('[Player] Unable to prepare the Xtream MPEG-TS fallback:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Stop and cleanup current transcode session
      */
     async stopTranscodeSession() {
@@ -918,7 +976,9 @@ class VideoPlayer {
         skipProbe = false,
         throwOnError = false,
         qualitySourceInfo = null,
-        forceDirectFallback = false
+        forceDirectFallback = false,
+        xtreamFormatFallbackAttempted = false,
+        xtreamFallbackFormat = null
     } = {}) {
         const playId = ++this._playId;
         const previousPendingRequest = this._pendingConnectionRequest;
@@ -994,6 +1054,14 @@ class VideoPlayer {
                     }
                     if (this._playId !== playId) return;
                     console.log(`[Player] Probe result: video=${info.video}, audio=${info.audio}, ${info.width}x${info.height}, compatible=${info.compatible}`);
+
+                    if (xtreamFallbackFormat) {
+                        this.rememberXtreamStreamFormat(
+                            channel?.sourceId,
+                            channel?.streamId,
+                            xtreamFallbackFormat
+                        );
+                    }
 
                     // Store probe result for quality badge display
                     this.currentStreamInfo = info;
@@ -1087,7 +1155,7 @@ class VideoPlayer {
                         // Raw .ts container - use remux
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                        const remuxUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(streamUrl)}`);
+                        const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
                         this.video.play().catch(e => {
@@ -1103,6 +1171,22 @@ class VideoPlayer {
                     console.log('[Player] Auto: Using HLS.js (compatible)');
                 } catch (err) {
                     if (err.name === 'AbortError' || this._playId !== playId) return;
+
+                    const fallbackUrl = await this.getXtreamTransportFallback(
+                        channel,
+                        streamUrl,
+                        xtreamFormatFallbackAttempted
+                    );
+                    if (fallbackUrl && this._playId === playId) {
+                        console.warn('[Player] Xtream HLS unavailable. Retrying this source as MPEG-TS.');
+                        return this.play(channel, fallbackUrl, {
+                            preserveQuality,
+                            throwOnError,
+                            xtreamFormatFallbackAttempted: true,
+                            xtreamFallbackFormat: 'ts'
+                        });
+                    }
+
                     console.warn('[Player] Probe failed, using normal playback:', err.message);
                     this.qualityCapPending = this.playbackQuality === 'auto';
                     // Continue with normal playback on probe failure
@@ -1702,8 +1786,8 @@ class VideoPlayer {
      * Get remuxed URL for a stream (container conversion only, no re-encoding)
      * Used for raw .ts streams that browsers can't play directly
      */
-    getRemuxUrl(url) {
-        return NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
+    getRemuxUrl(url, streamInfo = this.currentStreamInfo) {
+        return NodeCastUrl.remux(url, streamInfo);
     }
 
     /**

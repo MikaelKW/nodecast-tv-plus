@@ -7,11 +7,35 @@ const fs = require('fs');
 const path = require('path');
 
 // Cache directory
-const cacheDir = path.join(__dirname, '..', '..', 'data', 'cache');
+const cacheDir = path.resolve(__dirname, '..', '..', 'data', 'cache');
+const CACHE_TYPES = new Set(['epg', 'm3u', 'xtream']);
+
+function validateType(type) {
+    if (!CACHE_TYPES.has(type)) {
+        throw new Error('Invalid cache type');
+    }
+    return type;
+}
+
+function validateSourceId(sourceId) {
+    const normalized = String(sourceId);
+    if (!/^[1-9]\d*$/.test(normalized)) {
+        throw new Error('Invalid cache source ID');
+    }
+    return normalized;
+}
+
+function containedPath(...parts) {
+    const resolved = path.resolve(cacheDir, ...parts);
+    if (resolved !== cacheDir && !resolved.startsWith(`${cacheDir}${path.sep}`)) {
+        throw new Error('Invalid cache path');
+    }
+    return resolved;
+}
 
 // Ensure cache directories exist
 function ensureCacheDir(type, sourceId) {
-    const dir = path.join(cacheDir, type, String(sourceId));
+    const dir = containedPath(validateType(type), validateSourceId(sourceId));
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -51,7 +75,7 @@ function get(type, sourceId, key, maxAgeMs) {
 
         return cached.data;
     } catch (err) {
-        console.warn(`Cache read error for ${type}/${sourceId}/${key}:`, err.message);
+        console.warn('Cache read failed:', err.message);
         return null;
     }
 }
@@ -72,7 +96,7 @@ function set(type, sourceId, key, data) {
         };
         fs.writeFileSync(cachePath, JSON.stringify(cached));
     } catch (err) {
-        console.error(`Cache write error for ${type}/${sourceId}/${key}:`, err.message);
+        console.error('Cache write failed:', err.message);
     }
 }
 
@@ -94,10 +118,11 @@ function clear(type, sourceId, key) {
  * Clear all cache for a source
  */
 function clearSource(sourceId) {
+    const safeSourceId = validateSourceId(sourceId);
     try {
         const types = ['epg', 'm3u', 'xtream'];
         for (const type of types) {
-            const dir = path.join(cacheDir, type, String(sourceId));
+            const dir = containedPath(type, safeSourceId);
             if (fs.existsSync(dir)) {
                 fs.rmSync(dir, { recursive: true });
             }
@@ -147,5 +172,6 @@ module.exports = {
     clear,
     clearSource,
     clearAll,
-    getInfo
+    getInfo,
+    validateSourceId
 };

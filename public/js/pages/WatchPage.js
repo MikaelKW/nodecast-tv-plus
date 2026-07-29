@@ -806,7 +806,7 @@ class WatchPage {
                     // TODO: Move remux to session logic if seeking is needed for TS files
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                    const finalUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
+                    const finalUrl = NodeCastUrl.remux(url, info);
                     this.video.src = finalUrl;
                     this.video.play().catch(e => {
                         if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
@@ -874,7 +874,7 @@ class WatchPage {
         if (!forceDirectFallback && settings.forceRemux && isRawTs) {
             console.log('[WatchPage] Force Remux enabled');
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
-            const finalUrl = NodeCastUrl.resolve(`/api/remux?url=${encodeURIComponent(url)}`);
+            const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
             this.video.src = finalUrl;
             this.video.play().catch(e => {
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);

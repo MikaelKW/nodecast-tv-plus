@@ -81,6 +81,11 @@ function authenticateOidc(options) {
     };
 }
 
+function bearerTokenFromHeader(value) {
+    if (typeof value !== 'string' || value.slice(0, 7).toLowerCase() !== 'bearer ') return null;
+    return value.slice(7).trim() || null;
+}
+
 /**
  * Report the public sign-in methods. This deliberately exposes only booleans
  * so the login page never receives provider credentials or internal details.
@@ -273,7 +278,7 @@ router.get('/me', auth.requireAuth, async (req, res) => {
         }
 
         // Seamlessly migrate existing installations from localStorage-only tokens.
-        const bearerToken = req.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+        const bearerToken = bearerTokenFromHeader(req.get('authorization'));
         if (bearerToken) {
             auth.setAuthCookie(req, res, bearerToken);
         }

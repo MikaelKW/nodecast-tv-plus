@@ -115,6 +115,18 @@ async function run() {
             return;
         }
 
+        if (request.url === '/segment.ts' || request.url === '/key.bin') {
+            response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+            response.end('controlled-media');
+            return;
+        }
+
+        if (request.url === '/redirect-to-metadata') {
+            response.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
+            response.end();
+            return;
+        }
+
         if (request.url === '/oversized.m3u8') {
             response.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
             response.end(`#EXTM3U\n${'x'.repeat(5 * 1024 * 1024)}`);
@@ -181,6 +193,27 @@ async function run() {
         assert.ok(cookie);
 
         const proxy = target => `${appBaseUrl}/api/proxy/stream?url=${encodeURIComponent(target)}`;
+        const configuredSource = await fetch(`${appBaseUrl}/api/sources`, {
+            method: 'POST',
+            headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Controlled proxy origin',
+                url: `${sourceBaseUrl}/playlist.m3u8`
+            })
+        });
+        assert.equal(configuredSource.status, 201);
+
+        const unauthorizedResponse = await fetch(
+            proxy(`http://127.0.0.1:${sourcePort + 1}/unconfigured`),
+            { headers: { Cookie: cookie } }
+        );
+        assert.equal(unauthorizedResponse.status, 403);
+        const protectedRedirect = await fetch(
+            proxy(`${sourceBaseUrl}/redirect-to-metadata`),
+            { headers: { Cookie: cookie } }
+        );
+        assert.equal(protectedRedirect.status, 403);
 
         const binaryResponse = await fetch(proxy(`${sourceBaseUrl}/binary`), { headers: { Cookie: cookie } });
         assert.equal(binaryResponse.status, 200);
@@ -210,6 +243,12 @@ async function run() {
         assert.match(manifest, /#EXTM3U/);
         assert.ok(manifest.includes(`url=${encodeURIComponent(`${sourceBaseUrl}/key.bin`)}`));
         assert.ok(manifest.includes(`url=${encodeURIComponent(`${sourceBaseUrl}/segment.ts`)}`));
+        assert.match(manifest, /[?&]token=/);
+        assert.match(manifest, /[?&]expires=/);
+        const segmentProxyUrl = manifest.split('\n').find(line => line.includes('segment.ts'));
+        const segmentResponse = await fetch(segmentProxyUrl, { headers: { Cookie: cookie } });
+        assert.equal(segmentResponse.status, 200);
+        assert.equal(await segmentResponse.text(), 'controlled-media');
 
         const oversizedResponse = await fetch(proxy(`${sourceBaseUrl}/oversized.m3u8`), { headers: { Cookie: cookie } });
         assert.equal(oversizedResponse.status, 502);

@@ -3,8 +3,10 @@ const router = express.Router();
 const { spawn } = require('child_process');
 const db = require('../db');
 const auth = require('../auth');
-const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('../services/urlSecurity');
-const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
+const { redactText, redactUrl } = require('../services/urlSecurity');
+const { authorizeMediaUrl } = require('../services/mediaAccess');
+const { mediaProcessLimit } = require('../services/concurrencyLimiter');
+const { buildRemuxArgs, parseAudioCodecs } = require('../services/remux');
 
 router.use(auth.requireAuth);
 
@@ -18,17 +20,19 @@ router.use(auth.requireAuth);
  * 
  * Note: This does NOT fix Dolby/AC3 audio issues - use /api/transcode for that.
  */
-router.get('/', async (req, res) => {
-    const { url } = req.query;
+router.get('/', mediaProcessLimit, async (req, res) => {
+    const { url, audioCodecs: audioCodecsValue } = req.query;
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
     let validatedUrl;
+    let audioCodecs;
     try {
-        validatedUrl = validateHttpUrl(url);
+        validatedUrl = await authorizeMediaUrl(url);
+        audioCodecs = parseAudioCodecs(audioCodecsValue);
     } catch (err) {
-        return res.status(400).json({ error: err.message });
+        return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffmpegPath = req.app.locals.ffmpegPath || 'ffmpeg';
@@ -40,49 +44,11 @@ router.get('/', async (req, res) => {
     console.log(`[Remux] Starting remux for: ${redactUrl(validatedUrl)}`);
     console.log(`[Remux] Using User-Agent: ${settings.userAgentPreset}`);
 
-    // FFmpeg arguments for pure remux (no encoding)
-    // Very lightweight - just changes container from TS to fragmented MP4
-    const args = [
-        '-hide_banner',
-        '-loglevel', 'warning',
-        '-user_agent', userAgent,
-        '-user_agent', userAgent,
-        // Standard probe size to handle complex containers (MKV) correctly
-        '-probesize', '5000000',
-        '-analyzeduration', '5000000',
-        // Error resilience: discard corrupt packets, generate timestamps, ignore DTS, no buffering
-        '-fflags', '+genpts+discardcorrupt+igndts+nobuffer',
-        // Ignore errors in stream and continue
-        '-err_detect', 'ignore_err',
-        // Limit max demux delay to prevent buffering issues with bad timestamps
-        '-max_delay', '5000000',
-        // Reconnect settings for network drops
-        ...appendHttpReconnectArgs([]),
-        // Prevent Range/HEAD requests that some providers reject with 405
-        '-seekable', '0',
-        '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
-        '-i', validatedUrl,
-        // STRICT MAPPING: Only map video and audio, ignore subtitles/data/attachments
-        // This prevents remux failure when source container has incompatible subtitle tracks (e.g. MKV -> MP4)
-        '-map', '0:v',
-        '-map', '0:a',
-        // Drop subtitles (-sn) and data (-dn) explicitly
-        '-sn', '-dn',
-        // Copy streams without re-encoding
-        '-c', 'copy',
-        // Ensure extradata is correctly extracted/converted (fixes Annex B -> AVCC issues in Firefox)
-        '-bsf:v', 'dump_extra',
-        // NOTE: We intentionally do NOT use -bsf:a aac_adtstoasc here
-        // That filter only works for AAC audio and breaks AC3/EAC3/MP3.
-        // If AAC audio from MPEG-TS fails in MP4, use /api/transcode instead.
-        // Handle timestamp discontinuities at output
-        '-fps_mode', 'passthrough',
-        '-max_muxing_queue_size', '1024',
-        // Fragmented MP4 for streaming (browser-compatible)
-        '-f', 'mp4',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-' // Output to stdout
-    ];
+    const args = buildRemuxArgs({
+        url: validatedUrl,
+        userAgent,
+        audioCodecs
+    });
 
     let ffmpeg;
     try {

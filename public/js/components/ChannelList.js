@@ -1168,7 +1168,12 @@ class ChannelList {
         let streamUrl;
         if (channel.sourceType === 'xtream') {
             // Get stream format from player settings (server-side) or fallback
-            const streamFormat = window.app?.player?.settings?.streamFormat || 'm3u8';
+            const configuredFormat = window.app?.player?.settings?.streamFormat || 'm3u8';
+            const streamFormat = window.app?.player?.getPreferredXtreamStreamFormat?.(
+                channel.sourceId,
+                channel.streamId,
+                configuredFormat
+            ) || configuredFormat;
             const result = await API.proxy.xtream.getStreamUrl(channel.sourceId, channel.streamId, 'live', streamFormat);
             streamUrl = result.url;
         } else {

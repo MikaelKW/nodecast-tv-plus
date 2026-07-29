@@ -32,6 +32,8 @@ const CACHE_DIR = process.env.NODECAST_CACHE_DIR
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle timeout
 const SEGMENT_DURATION = 4; // seconds per HLS segment
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+const MAX_ACTIVE_SESSIONS = 12;
+const MAX_ACTIVE_SESSIONS_PER_USER = 4;
 
 /**
  * Generate a unique session ID
@@ -69,6 +71,7 @@ class TranscodeSession extends EventEmitter {
         this.startTime = Date.now();
         this.mediaStartTime = Math.max(0, Number(options.seekOffset) || 0);
         this.lastAccess = Date.now();
+        this.ownerId = options.ownerId ?? null;
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
             ffprobePath: options.ffprobePath || 'ffprobe',
@@ -576,7 +579,6 @@ class TranscodeSession extends EventEmitter {
      */
     async isPlaylistReady() {
         try {
-            await fs.access(this.playlistPath);
             const content = await fs.readFile(this.playlistPath, 'utf8');
             // Check if playlist has at least one segment
             return content.includes('.ts');
@@ -681,7 +683,10 @@ class TranscodeSession extends EventEmitter {
      */
     async getSegment(segmentName) {
         this.touch();
-        const segmentPath = path.join(this.dir, segmentName);
+        if (!/^seg\d{4,12}\.ts$/.test(segmentName)) return null;
+        const sessionDirectory = path.resolve(this.dir);
+        const segmentPath = path.resolve(sessionDirectory, segmentName);
+        if (!segmentPath.startsWith(`${sessionDirectory}${path.sep}`)) return null;
         try {
             await fs.access(segmentPath);
             return segmentPath;
@@ -712,6 +717,19 @@ class TranscodeSession extends EventEmitter {
  * Create a new transcode session
  */
 async function createSession(url, options = {}) {
+    const ownerId = options.ownerId ?? null;
+    const activeSessions = Array.from(sessions.values()).filter(
+        session => !['stopped', 'error'].includes(session.status)
+    );
+    const ownerSessions = activeSessions.filter(session => session.ownerId === ownerId);
+    if (
+        activeSessions.length >= MAX_ACTIVE_SESSIONS
+        || ownerSessions.length >= MAX_ACTIVE_SESSIONS_PER_USER
+    ) {
+        const error = new Error('Too many transcode sessions are already running. Try again shortly.');
+        error.statusCode = 429;
+        throw error;
+    }
     await ensureCacheDir();
     const session = new TranscodeSession(url, options);
     sessions.set(session.id, session);
@@ -721,8 +739,9 @@ async function createSession(url, options = {}) {
 /**
  * Get an existing session by ID
  */
-function getSession(sessionId) {
+function getSession(sessionId, ownerId = null) {
     const session = sessions.get(sessionId);
+    if (session && ownerId !== null && session.ownerId !== ownerId) return null;
     if (session) {
         session.touch();
     }
@@ -747,12 +766,14 @@ async function getOrCreateSession(url, options = {}) {
 /**
  * Stop and remove a session
  */
-async function removeSession(sessionId) {
-    const session = sessions.get(sessionId);
+async function removeSession(sessionId, ownerId = null) {
+    const session = getSession(sessionId, ownerId);
     if (session) {
         await session.cleanup();
         sessions.delete(sessionId);
+        return true;
     }
+    return false;
 }
 
 /**

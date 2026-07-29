@@ -3,6 +3,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { redactText, redactUrl, validateHttpUrl } = require('../server/services/urlSecurity');
 const { normalizeBasePath, withBasePath } = require('../server/config/basePath');
+const cache = require('../server/services/cache');
+const { classifyIp } = require('../server/services/outboundSecurity');
+const { DEFAULT_PROXY_TRUST, configuredProxyTrust } = require('../server/config/proxyTrust');
+const { ConcurrencyLimiter } = require('../server/services/concurrencyLimiter');
+const { signMediaUrl, verifyMediaSignature } = require('../server/services/mediaAccess');
 
 assert.equal(validateHttpUrl('https://example.com/live.m3u8?token=secret'), 'https://example.com/live.m3u8?token=secret');
 assert.equal(validateHttpUrl(' http://192.168.1.20:8080/stream '), 'http://192.168.1.20:8080/stream');
@@ -73,5 +78,57 @@ assert.equal(withBasePath('/api/version', '/nodecast'), '/nodecast/api/version')
 for (const unsafeBasePath of ['//example.com', '/nodecast?next=/', '/nodecast#fragment', '/../admin', '/node cast']) {
     assert.equal(normalizeBasePath(unsafeBasePath), '', `Unsafe base path accepted: ${unsafeBasePath}`);
 }
+assert.equal(normalizeBasePath(`/${'a'.repeat(2048)}`), '');
+
+assert.equal(cache.validateSourceId(1), '1');
+assert.equal(cache.validateSourceId('42'), '42');
+for (const unsafeSourceId of ['../..', '1/../../', '0', '-1', '1.5', 'source']) {
+    assert.throws(() => cache.validateSourceId(unsafeSourceId), /Invalid cache source ID/);
+}
+
+assert.equal(classifyIp('8.8.8.8'), 'public');
+assert.equal(classifyIp('10.0.0.1'), 'private');
+assert.equal(classifyIp('127.0.0.1'), 'loopback');
+assert.equal(classifyIp('169.254.169.254'), 'protected');
+assert.equal(classifyIp('::ffff:169.254.169.254'), 'protected');
+assert.equal(classifyIp('fd00::1'), 'private');
+
+const signatureTestTime = 1_700_000_000_000;
+const signedMedia = signMediaUrl('https://media.example.com/segment.ts', signatureTestTime);
+assert.equal(
+    verifyMediaSignature(
+        'https://media.example.com/segment.ts',
+        signedMedia.token,
+        signedMedia.expiresAt,
+        signatureTestTime + 1
+    ),
+    true
+);
+assert.equal(
+    verifyMediaSignature(
+        'https://media.example.com/different.ts',
+        signedMedia.token,
+        signedMedia.expiresAt,
+        signatureTestTime + 1
+    ),
+    false
+);
+
+assert.equal(configuredProxyTrust(''), DEFAULT_PROXY_TRUST);
+assert.equal(configuredProxyTrust('false'), false);
+assert.equal(configuredProxyTrust('1'), 1);
+assert.equal(configuredProxyTrust('true'), DEFAULT_PROXY_TRUST);
+assert.throws(() => configuredProxyTrust('100'), /between 0 and 10/);
+
+const concurrency = new ConcurrencyLimiter({ globalLimit: 2, perIdentityLimit: 1 });
+const releaseFirst = concurrency.acquire('first');
+assert.equal(typeof releaseFirst, 'function');
+assert.equal(concurrency.acquire('first'), null);
+const releaseSecond = concurrency.acquire('second');
+assert.equal(typeof releaseSecond, 'function');
+assert.equal(concurrency.acquire('third'), null);
+releaseFirst();
+releaseSecond();
+assert.equal(typeof concurrency.acquire('third'), 'function');
 
 console.log('Security tests passed.');

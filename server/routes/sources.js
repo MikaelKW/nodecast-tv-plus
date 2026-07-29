@@ -7,6 +7,7 @@ const syncService = require('../services/syncService');
 const m3uParser = require('../services/m3uParser');
 const auth = require('../auth');
 const { redactText, validateHttpUrl } = require('../services/urlSecurity');
+const { fetchWithPolicy } = require('../services/outboundSecurity');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 
@@ -236,12 +237,12 @@ router.post('/:id/test', auth.requireAdmin, async (req, res) => {
             const result = await xtreamApi.authenticate(source.url, source.username, source.password);
             res.json({ success: true, data: result });
         } else if (source.type === 'm3u') {
-            const response = await fetch(source.url);
+            const response = await fetchWithPolicy(source.url, {}, { allowPrivateHosts: [source.url] });
             const text = await response.text();
             const isValid = text.includes('#EXTM3U');
             res.json({ success: isValid, message: isValid ? 'Valid M3U playlist' : 'Invalid M3U format' });
         } else if (source.type === 'epg') {
-            const response = await fetch(source.url);
+            const response = await fetchWithPolicy(source.url, {}, { allowPrivateHosts: [source.url] });
             const text = await response.text();
             const isValid = text.includes('<tv') || text.includes('<?xml');
             res.json({ success: isValid, message: isValid ? 'Valid EPG XML' : 'Invalid EPG format' });
