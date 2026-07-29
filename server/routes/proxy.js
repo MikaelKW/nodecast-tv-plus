@@ -4,6 +4,7 @@ const { sources } = require('../db');
 const { getDb } = require('../db/sqlite'); // Import SQLite
 const xtreamApi = require('../services/xtreamApi');
 const epgParser = require('../services/epgParser');
+const epgGuideData = require('../services/epgGuideData');
 const cache = require('../services/cache');
 const path = require('path');
 const fs = require('fs');
@@ -271,7 +272,7 @@ router.get('/xtream/:sourceId/vod_info', async (req, res) => {
 
 // Get Stream URL for playback
 // Returns the direct stream URL for a given stream ID
-router.get('/xtream/:sourceId/stream/:streamId/:type', async (req, res) => {
+router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source || source.type !== 'xtream') {
@@ -360,62 +361,27 @@ router.get('/m3u/:sourceId', async (req, res) => {
 // EPG
 router.get('/epg/:sourceId', async (req, res) => {
     try {
-        const sourceId = parseInt(req.params.sourceId);
-        const db = getDb();
-
-        // Time window: 24 hours ago to 24 hours from now
-        // This prevents returning millions of rows and crashing the server/browser
-        const windowStart = Date.now() - (24 * 60 * 60 * 1000); // -24 hours
-        const windowEnd = Date.now() + (24 * 60 * 60 * 1000);   // +24 hours
-
-        // Fetch programs within the time window
-        let programsQuery = `
-            SELECT channel_id as channelId, start_time, end_time, title, description, data 
-            FROM epg_programs 
-            WHERE source_id = ? AND end_time > ? AND start_time < ?
-        `;
-        const params = [sourceId, windowStart, windowEnd];
-
-        const programs = db.prepare(programsQuery).all(...params);
-
-        const formattedPrograms = programs.map(p => ({
-            channelId: p.channelId,
-            start: new Date(p.start_time).toISOString(), // EpgGuide parse this back
-            stop: new Date(p.end_time).toISOString(),
-            title: p.title,
-            description: p.description
-        }));
-
-        // Fetch EPG channels from playlist_items (type='epg_channel')
-
-
-        let epgChannels = [];
-
-        // Try getting stored channels first
-        const storedChannels = db.prepare(`
-            SELECT item_id as id, name, stream_icon as icon, data 
-            FROM playlist_items 
-            WHERE source_id = ? AND type = 'epg_channel'
-        `).all(sourceId);
-
-        if (storedChannels.length > 0) {
-            epgChannels = storedChannels;
-        } else {
-            // Fallback: Build from unique channelIds in programmes (Legacy behavior)
-            const uniqueChannelIds = [...new Set(programs.map(p => p.channelId))];
-            epgChannels = uniqueChannelIds.map(id => ({
-                id: id,
-                name: id // Use channelId as name (fallback)
-            }));
-        }
-
-        res.json({
-            channels: epgChannels,
-            programmes: formattedPrograms
-        });
-
+        res.json(epgGuideData.getFullGuide(req.params.sourceId));
     } catch (err) {
+        if (err instanceof TypeError) {
+            return res.status(400).json({ error: err.message });
+        }
         logSafeError('EPG proxy error:', err);
+        res.status(500).json({ error: 'Database error' });
+    }
+});
+
+// The Live TV sidebar only needs the currently airing title. Keep this response
+// to at most one lightweight programme row per channel; the complete guide
+// remains available from the established endpoint above.
+router.get('/epg/:sourceId/now', (req, res) => {
+    try {
+        res.json(epgGuideData.getNowPlaying(req.params.sourceId));
+    } catch (err) {
+        if (err instanceof TypeError) {
+            return res.status(400).json({ error: err.message });
+        }
+        logSafeError('EPG now-playing error:', err);
         res.status(500).json({ error: 'Database error' });
     }
 });
@@ -513,85 +479,6 @@ router.get('/xtream/:sourceId/:action', async (req, res) => {
         logSafeError('Xtream proxy error:', err);
         res.status(500).json({ error: err.message });
     }
-});
-
-/**
- * Get Xtream stream URL
- * GET /api/proxy/xtream/:sourceId/stream/:streamId
- */
-router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
-    try {
-        const source = await sources.getById(req.params.sourceId);
-        if (!source || source.type !== 'xtream') {
-            return res.status(404).json({ error: 'Xtream source not found' });
-        }
-
-        const api = xtreamApi.createFromSource(source);
-        const { streamId, type = 'live' } = req.params;
-        const { container = 'm3u8' } = req.query;
-
-        const url = api.buildStreamUrl(streamId, type, container);
-        res.json({ url });
-    } catch (err) {
-        logSafeError('Stream URL error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * Fetch and parse EPG (with file-based caching)
- * GET /api/proxy/epg/:sourceId
- * Query params:
- *   - refresh=1  Force refresh, bypass cache
- *   - maxAge=N   Max cache age in hours (default 24)
- */
-router.get('/epg/:sourceId', async (req, res) => {
-    try {
-        const sourceId = req.params.sourceId;
-        const source = await sources.getById(sourceId);
-        if (!source || (source.type !== 'epg' && source.type !== 'xtream')) {
-            return res.status(404).json({ error: 'Valid EPG source not found' });
-        }
-
-        const forceRefresh = req.query.refresh === '1';
-        const maxAgeHours = parseInt(req.query.maxAge) || DEFAULT_MAX_AGE_HOURS;
-        const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-
-        // Check file cache (unless force refresh)
-        if (!forceRefresh) {
-            const cached = cache.get('epg', sourceId, 'data', maxAgeMs);
-            if (cached) {
-                return res.json(cached);
-            }
-        }
-
-        // Fetch fresh data
-        let url = source.url;
-        if (source.type === 'xtream') {
-            const api = xtreamApi.createFromSource(source);
-            url = api.getXmltvUrl();
-        }
-
-        const data = await epgParser.fetchAndParse(url);
-
-        // Store in file cache
-        cache.set('epg', sourceId, 'data', data);
-
-        res.json(data);
-    } catch (err) {
-        logSafeError('EPG proxy error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * Clear cache for a source
- * DELETE /api/proxy/cache/:sourceId
- */
-router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
-    const sourceId = req.params.sourceId;
-    cache.clearSource(sourceId);
-    res.json({ success: true });
 });
 
 /**

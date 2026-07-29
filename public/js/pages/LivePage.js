@@ -13,9 +13,9 @@ class LivePage {
         await this.app.channelList.loadSources();
         await this.app.channelList.loadChannels();
 
-        // Silently fetch EPG data for sidebar info
+        // Silently fetch only current programme titles for sidebar info.
         try {
-            await this.app.epgGuide.fetchEpgData();
+            await this.app.epgGuide.fetchNowPlaying();
 
             // Clear cache so we don't get stale "null" results from initial render
             this.app.channelList.clearProgramInfoCache();

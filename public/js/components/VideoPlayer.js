@@ -1588,43 +1588,37 @@ class VideoPlayer {
             return;
         }
         try {
-            // First, try to use the centralized EpgGuide data (already loaded)
-            if (window.app && window.app.epgGuide && window.app.epgGuide.programmes) {
-                const epgGuide = window.app.epgGuide;
+            const epgGuide = window.app?.epgGuide;
+            const currentProgram = epgGuide?.getCurrentProgram(channel.tvgId, channel.name);
 
-                // Get current program from EpgGuide
-                const currentProgram = epgGuide.getCurrentProgram(channel.tvgId, channel.name);
+            // Once the complete guide has been opened, reuse its indexed window
+            // for both current and upcoming programme information.
+            if (currentProgram && epgGuide.fullEpgLoaded) {
+                const epgChannel = epgGuide.channelMap?.get(channel.tvgId)
+                    || epgGuide.channelMap?.get(channel.name?.toLowerCase());
+                const now = Date.now();
+                const upcoming = epgChannel
+                    ? epgGuide.getProgrammesForChannel(epgChannel.id)
+                        .filter(programme => new Date(programme.start).getTime() > now)
+                        .slice(0, 5)
+                        .map(programme => ({
+                            title: programme.title,
+                            start: new Date(programme.start),
+                            stop: new Date(programme.stop),
+                            description: programme.description || ''
+                        }))
+                    : [];
 
-                if (currentProgram) {
-                    // Find upcoming programs from the guide's data
-                    const epgChannel = epgGuide.channelMap?.get(channel.tvgId) ||
-                        epgGuide.channelMap?.get(channel.name?.toLowerCase());
-
-                    let upcoming = [];
-                    if (epgChannel) {
-                        const now = Date.now();
-                        upcoming = epgGuide.programmes
-                            .filter(p => p.channelId === epgChannel.id && new Date(p.start).getTime() > now)
-                            .slice(0, 5)
-                            .map(p => ({
-                                title: p.title,
-                                start: new Date(p.start),
-                                stop: new Date(p.stop),
-                                description: p.desc || ''
-                            }));
-                    }
-
-                    this.updateNowPlaying(channel, {
-                        current: {
-                            title: currentProgram.title,
-                            start: new Date(currentProgram.start),
-                            stop: new Date(currentProgram.stop),
-                            description: currentProgram.desc || ''
-                        },
-                        upcoming
-                    });
-                    return; // Success, exit early
-                }
+                this.updateNowPlaying(channel, {
+                    current: {
+                        title: currentProgram.title,
+                        start: new Date(currentProgram.start),
+                        stop: new Date(currentProgram.stop),
+                        description: currentProgram.description || ''
+                    },
+                    upcoming
+                });
+                return;
             }
 
             // Fallback: Try to get EPG from Xtream API if available
@@ -1662,11 +1656,31 @@ class VideoPlayer {
                             },
                             upcoming
                         });
+                        return;
                     }
                 }
             }
+
+            // Startup intentionally loads only now-playing EPG data. Use it when
+            // the provider has no short guide, without forcing the full guide
+            // payload into every Live TV session.
+            if (currentProgram) {
+                this.updateNowPlaying(channel, {
+                    current: {
+                        title: currentProgram.title,
+                        start: new Date(currentProgram.start),
+                        stop: new Date(currentProgram.stop),
+                        description: currentProgram.description || ''
+                    },
+                    upcoming: []
+                });
+                return;
+            }
+
+            this.updateNowPlaying(channel, null);
         } catch (err) {
             console.log('EPG data not available:', err.message);
+            this.updateNowPlaying(channel, null);
         }
     }
 
