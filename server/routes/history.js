@@ -1,12 +1,9 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { getDb } = require('../db/sqlite');
 const { requireAuth } = require('../auth');
-const {
-    parseBoundedInteger,
-    SlidingWindowLimiter,
-    rateLimitMiddleware
-} = require('../services/requestControls');
+const { parseBoundedInteger } = require('../services/requestControls');
 const {
     normalizeHistoryPayload,
     pruneHistory
@@ -15,19 +12,21 @@ const {
 // Middleware to ensure authentication
 router.use(requireAuth);
 
-const historyWriteLimiter = new SlidingWindowLimiter({
+const limitHistoryWrites = rateLimit({
     limit: 120,
-    windowMs: 60 * 1000
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many watch-history updates. Try again shortly.' }
 });
-const historyReadLimiter = new SlidingWindowLimiter({
+const limitHistoryReads = rateLimit({
     limit: 120,
-    windowMs: 60 * 1000
-});
-const limitHistoryWrites = rateLimitMiddleware(historyWriteLimiter, {
-    message: 'Too many watch-history updates. Try again shortly.'
-});
-const limitHistoryReads = rateLimitMiddleware(historyReadLimiter, {
-    message: 'Too many watch-history requests. Try again shortly.'
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many watch-history requests. Try again shortly.' }
 });
 
 /**

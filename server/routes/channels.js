@@ -1,21 +1,19 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
-const {
-    parseBoundedInteger,
-    SlidingWindowLimiter,
-    rateLimitMiddleware
-} = require('../services/requestControls');
+const { parseBoundedInteger } = require('../services/requestControls');
 const { getDb } = require('../db/sqlite');
 const auth = require('../auth');
 
 router.use(auth.requireAuth);
 
-const recentContentLimiter = new SlidingWindowLimiter({
+const limitRecentContent = rateLimit({
     limit: 120,
-    windowMs: 60 * 1000
-});
-const limitRecentContent = rateLimitMiddleware(recentContentLimiter, {
-    message: 'Too many recent-content requests. Try again shortly.'
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many recent-content requests. Try again shortly.' }
 });
 
 function requireSourceId(value) {

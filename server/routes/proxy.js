@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { sources } = require('../db');
 const { getDb } = require('../db/sqlite'); // Import SQLite
@@ -24,8 +25,6 @@ const {
     signMediaUrl
 } = require('../services/mediaAccess');
 const {
-    SlidingWindowLimiter,
-    rateLimitMiddleware,
     SingleFlight
 } = require('../services/requestControls');
 
@@ -68,12 +67,13 @@ async function* prependResponseChunk(firstChunk, iterator) {
 
 router.use(auth.requireAuth);
 
-const upstreamMetadataLimiter = new SlidingWindowLimiter({
+const limitUpstreamMetadata = rateLimit({
     limit: 120,
-    windowMs: 60 * 1000
-});
-const limitUpstreamMetadata = rateLimitMiddleware(upstreamMetadataLimiter, {
-    message: 'Too many provider metadata requests. Try again shortly.'
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many provider metadata requests. Try again shortly.' }
 });
 const upstreamSingleFlight = new SingleFlight();
 
