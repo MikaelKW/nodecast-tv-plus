@@ -4,6 +4,35 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.5.2] - 2026-07-30
+
+This focused patch release bounds authenticated history and provider-metadata work and makes Continue Watching preserve manually selected playback positions.
+
+### Changed
+
+- Bound authenticated history and recent-content requests, validate retained watch-history data, and limit stored history to a defined per-account maximum.
+- Rate-limit history mutation and provider-metadata operations while coalescing identical concurrent Xtream authentication and metadata requests.
+- Remove the obsolete dynamic Xtream catch-all route and avoid returning raw upstream error details.
+
+### Fixed
+
+- Persist forward and backward Movie or Series seeks immediately so Continue Watching does not fall back to the previous timed checkpoint ([#272]).
+- Preserve the explicit seek destination while a replacement transcode session starts, preventing temporary keyframe preroll timestamps from overwriting saved progress ([#272]).
+- Save the final playback position before Back navigation, including when playback is paused ([#272]).
+
+### Security
+
+- Strengthened authenticated resource controls around retained playback history and repeated provider metadata operations.
+- A published security advisory accompanies this release with affected-version and remediation details.
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.5.2`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Migration from the published 2.5.1 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Stable images are available from both `ghcr.io/mikaelkw/nodecast-tv-plus` and `mikaelkw/nodecast-tv-plus`; GHCR remains the canonical registry.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.5.1` and the existing deployment secrets.
+
 ## [2.5.1] - 2026-07-29
 
 This patch release improves compatibility with AAC audio in MPEG-TS live streams, reduces startup and guide-loading work for large providers, and strengthens media, network, cache, session, and authentication boundaries.
@@ -272,6 +301,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.5.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.3.1...v2.4.0
@@ -338,3 +368,4 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#248]: https://github.com/MikaelKW/nodecast-tv-plus/pull/248
 [#258]: https://github.com/MikaelKW/nodecast-tv-plus/issues/258
 [#261]: https://github.com/MikaelKW/nodecast-tv-plus/pull/261
+[#272]: https://github.com/MikaelKW/nodecast-tv-plus/issues/272
