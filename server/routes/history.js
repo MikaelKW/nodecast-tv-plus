@@ -1,20 +1,48 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { getDb } = require('../db/sqlite');
 const { requireAuth } = require('../auth');
+const { parseBoundedInteger } = require('../services/requestControls');
+const {
+    normalizeHistoryPayload,
+    pruneHistory
+} = require('../services/historyPolicy');
 
 // Middleware to ensure authentication
 router.use(requireAuth);
+
+const limitHistoryWrites = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many watch-history updates. Try again shortly.' }
+});
+const limitHistoryReads = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many watch-history requests. Try again shortly.' }
+});
 
 /**
  * GET /api/history
  * Returns the watch history for the authenticated user
  */
-router.get('/', (req, res) => {
+router.get('/', limitHistoryReads, (req, res) => {
     try {
         const db = getDb();
         const userId = req.user.id;
-        const limit = parseInt(req.query.limit) || 20;
+        const limit = parseBoundedInteger(req.query.limit, {
+            name: 'limit',
+            defaultValue: 20,
+            min: 1,
+            max: 100
+        });
 
         const rows = db.prepare(`
             SELECT * FROM watch_history 
@@ -30,6 +58,9 @@ router.get('/', (req, res) => {
 
         res.json(history);
     } catch (err) {
+        if (err.statusCode === 400) {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('[History] Error fetching history:', err);
         res.status(500).json({ error: 'Failed to fetch history' });
     }
@@ -39,45 +70,55 @@ router.get('/', (req, res) => {
  * POST /api/history
  * Saves/updates watch progress for an item
  */
-router.post('/', (req, res) => {
+router.post('/', limitHistoryWrites, (req, res) => {
     try {
         const db = getDb();
         const userId = req.user.id;
-        const { id, type, parentId, progress, duration, data, sourceId } = req.body;
+        const {
+            itemId,
+            itemType,
+            parentId,
+            progress,
+            duration,
+            serializedData,
+            sourceId
+        } = normalizeHistoryPayload(req.body);
 
-        if (!id || !type) {
-            return res.status(400).json({ error: 'Missing required fields (id, type)' });
-        }
-
-        const compositeId = `${userId}:${id}`;
+        const compositeId = `${userId}:${itemId}`;
         const timestamp = Date.now();
 
-        const stmt = db.prepare(`
-            INSERT INTO watch_history (id, user_id, source_id, item_type, item_id, parent_id, progress, duration, updated_at, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                source_id = excluded.source_id,
-                progress = excluded.progress,
-                duration = excluded.duration,
-                updated_at = excluded.updated_at,
-                data = excluded.data
-        `);
+        const saveHistory = db.transaction(() => {
+            db.prepare(`
+                INSERT INTO watch_history (id, user_id, source_id, item_type, item_id, parent_id, progress, duration, updated_at, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source_id = excluded.source_id,
+                    progress = excluded.progress,
+                    duration = excluded.duration,
+                    updated_at = excluded.updated_at,
+                    data = excluded.data
+            `).run(
+                compositeId,
+                userId,
+                sourceId,
+                itemType,
+                itemId,
+                parentId,
+                progress,
+                duration,
+                timestamp,
+                serializedData
+            );
 
-        stmt.run(
-            compositeId,
-            userId,
-            sourceId || null,
-            type,
-            id.toString(),
-            parentId ? parentId.toString() : null,
-            progress || 0,
-            duration || 0,
-            timestamp,
-            JSON.stringify(data || {})
-        );
+            pruneHistory(db, userId);
+        });
+        saveHistory();
 
         res.json({ success: true, timestamp });
     } catch (err) {
+        if (err.statusCode === 400) {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('[History] Error saving progress:', err);
         res.status(500).json({ error: 'Failed to save progress' });
     }
@@ -87,7 +128,7 @@ router.post('/', (req, res) => {
  * DELETE /api/history/:itemId
  * Removes an item from the user's watch history
  */
-router.delete('/:itemId', (req, res) => {
+router.delete('/:itemId', limitHistoryWrites, (req, res) => {
     try {
         const db = getDb();
         const userId = req.user.id;
