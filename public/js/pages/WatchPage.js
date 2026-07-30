@@ -125,6 +125,7 @@ class WatchPage {
         this.currentTranscodeOptions = null;
         this.seekChanging = false;
         this.progressScrubbing = false;
+        this.pendingSeekProgress = null;
 
         // Overlay timer
         this.overlayTimeout = null;
@@ -356,6 +357,7 @@ class WatchPage {
         this.currentSeason = content.currentSeason || null;
         this.currentEpisode = content.currentEpisode || null;
         this.resumeTime = content.resumeTime || 0;
+        this.pendingSeekProgress = null;
         this.containerExtension = content.containerExtension || 'mp4';
         this.returnPage = content.type === 'movie' ? 'movies' : 'series';
         this.sourceUrl = streamUrl;
@@ -1079,7 +1081,7 @@ class WatchPage {
         if (this.volumeSlider) this.volumeSlider.value = savedVolume;
     }
 
-    stop() {
+    stop({ saveHistory = true } = {}) {
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
@@ -1087,7 +1089,9 @@ class WatchPage {
 
         // Stop history tracking and save final progress
         this.stopHistoryTracking();
-        this.saveProgress();
+        if (saveHistory) {
+            this.saveProgress();
+        }
 
         // Cleanup transcode session if exists. Disable window loading before
         // resetting the media element so its final seeking event cannot start
@@ -1117,6 +1121,7 @@ class WatchPage {
         this.currentTranscodeOptions = null;
         this.seekChanging = false;
         this.progressScrubbing = false;
+        this.pendingSeekProgress = null;
 
         this.hideNowPlaying();
     }
@@ -1181,20 +1186,27 @@ class WatchPage {
         const targetIsGenerated = !this.currentSessionId || (
             target >= sessionStart && target <= sessionEnd
         );
+        this.pendingSeekProgress = target;
 
         if (targetIsGenerated) {
             this.video.currentTime = Math.max(0, Math.min(target - sessionStart, mediaDuration || 0));
+            await this.saveProgress({
+                allowPaused: true,
+                progressOverride: target
+            });
             return;
         }
 
         const sessionOptions = this.currentTranscodeOptions ? { ...this.currentTranscodeOptions } : null;
-        if (!sessionOptions || !this.sourceUrl) return;
+        if (!sessionOptions || !this.sourceUrl) {
+            this.pendingSeekProgress = null;
+            return;
+        }
 
         const shouldResume = !this.video.paused;
         this.seekChanging = true;
         this.showLoading();
         this.stopHistoryTracking();
-        this.saveProgress();
 
         try {
             await this.stopTranscodeSession();
@@ -1216,7 +1228,12 @@ class WatchPage {
             });
             this.playHls(playlistUrl, { autoPlay: shouldResume });
             this.setVolumeFromStorage();
+            await this.saveProgress({
+                allowPaused: true,
+                progressOverride: sessionTarget
+            });
         } catch (error) {
+            this.pendingSeekProgress = null;
             console.warn('[WatchPage] Seek session failed:', error.message);
             this.updateTranscodeStatus('warning', 'Seek unavailable · Playback stopped');
         } finally {
@@ -1330,6 +1347,10 @@ class WatchPage {
         if (!this.video || !this.video.duration) return;
 
         const currentTime = this.getCurrentPlaybackTime();
+        if (Number.isFinite(this.pendingSeekProgress)
+            && currentTime >= this.pendingSeekProgress - 0.5) {
+            this.pendingSeekProgress = null;
+        }
         const duration = this.getPlaybackDuration();
         const percent = Number.isFinite(duration) && duration > 0
             ? (currentTime / duration) * 100
@@ -2512,8 +2533,10 @@ class WatchPage {
 
     // === Navigation ===
 
-    goBack() {
-        this.stop();
+    async goBack() {
+        this.stopHistoryTracking();
+        await this.saveProgress({ allowPaused: true });
+        this.stop({ saveHistory: false });
         this.cancelNextEpisode();
 
         // Navigate to the page we came from (stored in returnPage)
@@ -2546,10 +2569,16 @@ class WatchPage {
         }
     }
 
-    async saveProgress() {
-        if (!this.content || !this.video || this.video.paused) return;
+    async saveProgress({ allowPaused = false, progressOverride = null } = {}) {
+        if (!this.content || !this.video || (!allowPaused && this.video.paused)) return;
 
-        const progress = Math.floor(this.getCurrentPlaybackTime());
+        const effectiveOverride = progressOverride ?? this.pendingSeekProgress;
+        const hasProgressOverride = effectiveOverride !== null
+            && effectiveOverride !== undefined
+            && Number.isFinite(Number(effectiveOverride));
+        const progress = Math.floor(hasProgressOverride
+            ? Math.max(0, Number(effectiveOverride))
+            : this.getCurrentPlaybackTime());
         const duration = Math.floor(this.getPlaybackDuration());
 
         if (isNaN(progress) || isNaN(duration) || duration <= 0) return;

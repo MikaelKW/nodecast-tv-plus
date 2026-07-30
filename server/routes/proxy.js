@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { sources } = require('../db');
 const { getDb } = require('../db/sqlite'); // Import SQLite
@@ -23,6 +24,9 @@ const {
     configuredSourceUrls,
     signMediaUrl
 } = require('../services/mediaAccess');
+const {
+    SingleFlight
+} = require('../services/requestControls');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
@@ -63,8 +67,15 @@ async function* prependResponseChunk(firstChunk, iterator) {
 
 router.use(auth.requireAuth);
 
-// Default cache max age in hours
-const DEFAULT_MAX_AGE_HOURS = 24;
+const limitUpstreamMetadata = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many provider metadata requests. Try again shortly.' }
+});
+const upstreamSingleFlight = new SingleFlight();
 
 // Helper to get formatted category list from DB
 function getCategoriesFromDb(sourceId, type, includeHidden = false) {
@@ -130,8 +141,8 @@ function getStreamsFromDb(sourceId, type, categoryId = null, includeHidden = fal
 
 // --- Xtream Codes Proxy API --- //
 
-// Login / Authenticate
-router.get('/xtream/:sourceId', async (req, res) => {
+// Login / Authenticate. Keep both forms for compatibility with existing clients.
+router.get(['/xtream/:sourceId', '/xtream/:sourceId/auth'], limitUpstreamMetadata, async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source || source.type !== 'xtream') return res.status(404).send('Source not found');
@@ -141,12 +152,19 @@ router.get('/xtream/:sourceId', async (req, res) => {
         const cached = cache.get('xtream', source.id, 'auth', 300000);
         if (cached) return res.json(cached);
 
-        const api = xtreamApi.createFromSource(source);
-        const data = await api.authenticate();
+        const data = await upstreamSingleFlight.run(`auth:${source.id}`, async () => {
+            const latestCached = cache.get('xtream', source.id, 'auth', 300000);
+            if (latestCached) return latestCached;
+            const api = xtreamApi.createFromSource(source);
+            return api.authenticate();
+        });
         cache.set('xtream', source.id, 'auth', data);
         res.json(data);
     } catch (err) {
-        res.status(502).json({ error: 'Upstream error', details: err.message });
+        logSafeError('Xtream authentication error:', err);
+        res.status(err.statusCode || 502).json({
+            error: err.statusCode === 429 ? err.message : 'Upstream error'
+        });
     }
 });
 
@@ -233,7 +251,7 @@ router.get('/xtream/:sourceId/series', async (req, res) => {
 
 // Series Info (Episodes)
 // Proxy series info request
-router.get('/xtream/:sourceId/series_info', async (req, res) => {
+router.get('/xtream/:sourceId/series_info', limitUpstreamMetadata, async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source) return res.status(404).send('Source not found');
@@ -245,17 +263,22 @@ router.get('/xtream/:sourceId/series_info', async (req, res) => {
         const cached = cache.get('xtream', source.id, cacheKey, 3600000);
         if (cached) return res.json(cached);
 
-        const api = xtreamApi.createFromSource(source);
-        const data = await api.getSeriesInfo(seriesId);
+        const data = await upstreamSingleFlight.run(`series-info:${source.id}:${seriesId}`, async () => {
+            const latestCached = cache.get('xtream', source.id, cacheKey, 3600000);
+            if (latestCached) return latestCached;
+            const api = xtreamApi.createFromSource(source);
+            return api.getSeriesInfo(seriesId);
+        });
         cache.set('xtream', source.id, cacheKey, data);
         res.json(data);
     } catch (err) {
-        res.status(502).json({ error: 'Upstream error', details: err.message });
+        logSafeError('Xtream series info error:', err);
+        res.status(502).json({ error: 'Upstream error' });
     }
 });
 
 // VOD Info
-router.get('/xtream/:sourceId/vod_info', async (req, res) => {
+router.get('/xtream/:sourceId/vod_info', limitUpstreamMetadata, async (req, res) => {
     try {
         const source = await sources.getById(req.params.sourceId);
         if (!source) return res.status(404).send('Source not found');
@@ -267,12 +290,17 @@ router.get('/xtream/:sourceId/vod_info', async (req, res) => {
         const cached = cache.get('xtream', source.id, cacheKey, 3600000);
         if (cached) return res.json(cached);
 
-        const api = xtreamApi.createFromSource(source);
-        const data = await api.getVodInfo(vodId);
+        const data = await upstreamSingleFlight.run(`vod-info:${source.id}:${vodId}`, async () => {
+            const latestCached = cache.get('xtream', source.id, cacheKey, 3600000);
+            if (latestCached) return latestCached;
+            const api = xtreamApi.createFromSource(source);
+            return api.getVodInfo(vodId);
+        });
         cache.set('xtream', source.id, cacheKey, data);
         res.json(data);
     } catch (err) {
-        res.status(502).json({ error: 'Upstream error', details: err.message });
+        logSafeError('Xtream VOD info error:', err);
+        res.status(502).json({ error: 'Upstream error' });
     }
 });
 
@@ -404,89 +432,34 @@ router.delete('/cache/:sourceId', auth.requireAdmin, (req, res) => {
 
 
 
-/**
- * Proxy Xtream API calls
- * GET /api/proxy/xtream/:sourceId/:action
- */
-router.get('/xtream/:sourceId/:action', async (req, res) => {
+// Short EPG remains an upstream metadata request because it is not part of the
+// synchronized local catalogue. Identical concurrent lookups share one request.
+router.get('/xtream/:sourceId/short_epg', limitUpstreamMetadata, async (req, res) => {
     try {
-        const sourceId = req.params.sourceId;
-        const source = await sources.getById(sourceId);
+        const source = await sources.getById(req.params.sourceId);
         if (!source || source.type !== 'xtream') {
             return res.status(404).json({ error: 'Xtream source not found' });
         }
 
-        const { action } = req.params;
-        const { category_id, stream_id, vod_id, series_id, limit, refresh, maxAge } = req.query;
-        const forceRefresh = refresh === '1';
-        const maxAgeHours = parseInt(maxAge) || DEFAULT_MAX_AGE_HOURS;
-        const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-
-        // Actions that should be cached
-        const cacheableActions = [
-            'live_categories', 'live_streams',
-            'vod_categories', 'vod_streams',
-            'series_categories', 'series'
-        ];
-
-        // Build cache key (include category_id if present)
-        const cacheKey = category_id ? `${action}_${category_id}` : action;
-
-        // Check cache for cacheable actions
-        if (!forceRefresh && cacheableActions.includes(action)) {
-            const cached = cache.get('xtream', sourceId, cacheKey, maxAgeMs);
-            if (cached) {
-                return res.json(cached);
-            }
+        const streamId = req.query.stream_id;
+        if (!streamId || String(streamId).length > 512) {
+            return res.status(400).json({ error: 'Valid stream_id required' });
+        }
+        const limit = req.query.limit === undefined ? undefined : String(req.query.limit);
+        if (limit !== undefined && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 100)) {
+            return res.status(400).json({ error: 'limit must be an integer between 1 and 100' });
         }
 
-        // Fetch fresh data
-        const api = xtreamApi.createFromSource(source);
-        let data;
-        switch (action) {
-            case 'auth':
-                data = await api.authenticate();
-                break;
-            case 'live_categories':
-                data = await api.getLiveCategories();
-                break;
-            case 'live_streams':
-                data = await api.getLiveStreams(category_id);
-                break;
-            case 'vod_categories':
-                data = await api.getVodCategories();
-                break;
-            case 'vod_streams':
-                data = await api.getVodStreams(category_id);
-                break;
-            case 'vod_info':
-                data = await api.getVodInfo(vod_id);
-                break;
-            case 'series_categories':
-                data = await api.getSeriesCategories();
-                break;
-            case 'series':
-                data = await api.getSeries(category_id);
-                break;
-            case 'series_info':
-                data = await api.getSeriesInfo(series_id);
-                break;
-            case 'short_epg':
-                data = await api.getShortEpg(stream_id, limit);
-                break;
-            default:
-                return res.status(400).json({ error: 'Unknown action' });
-        }
-
-        // Cache the result for cacheable actions
-        if (cacheableActions.includes(action)) {
-            cache.set('xtream', sourceId, cacheKey, data);
-        }
-
+        const data = await upstreamSingleFlight.run(
+            `short-epg:${source.id}:${streamId}:${limit || ''}`,
+            () => xtreamApi.createFromSource(source).getShortEpg(streamId, limit)
+        );
         res.json(data);
     } catch (err) {
         logSafeError('Xtream proxy error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(err.statusCode || 502).json({
+            error: err.statusCode === 429 ? err.message : 'Upstream error'
+        });
     }
 });
 
