@@ -1046,6 +1046,42 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
     ))), { timeout: 30_000 }).toBe(true);
 
+    // Seeking and then leaving immediately while paused must persist the seek
+    // destination. Continue Watching must resume from that saved content time
+    // instead of the last naturally played interval checkpoint.
+    const seekHistory = await page.evaluate(async () => {
+        const watch = window.app.pages.watch;
+        const itemId = watch.content.id;
+        await watch.seekToContentTime(12);
+        watch.video.pause();
+        await watch.goBack();
+        const history = await window.API.request('GET', '/history?limit=20');
+        const item = history.find(entry => String(entry.item_id) === String(itemId));
+        return item ? { progress: item.progress, duration: item.duration } : null;
+    });
+    expect(seekHistory).toBeTruthy();
+    expect(seekHistory.progress).toBeGreaterThanOrEqual(11);
+    expect(seekHistory.progress).toBeLessThanOrEqual(12);
+    expect(seekHistory.duration).toBeGreaterThan(19);
+
+    await page.evaluate(async ({ url, sourceId, resumeTime }) => {
+        await window.app.pages.watch.play({
+            id: 'controlled-multi-track-movie',
+            type: 'movie',
+            title: 'Controlled Multi-track Movie',
+            sourceId,
+            categoryId: 'controlled',
+            resumeTime
+        }, url);
+    }, {
+        url: `${fixtureBaseUrl}/multi-track.mkv`,
+        sourceId: m3uSource.id,
+        resumeTime: seekHistory.progress
+    });
+    await expect.poll(() => page.evaluate(() => (
+        window.app.pages.watch.getCurrentPlaybackTime()
+    )), { timeout: 30_000 }).toBeGreaterThanOrEqual(11);
+
     // The movie/series player uses the same transactional fallback when a
     // provider permits browser playback but rejects FFmpeg.
     await page.evaluate(async () => {
