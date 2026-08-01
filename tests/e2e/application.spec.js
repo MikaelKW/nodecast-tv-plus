@@ -270,6 +270,21 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    const variantSource = await page.evaluate(async url => {
+        const response = await fetch('/api/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Controlled Quality Variants',
+                url
+            })
+        });
+        if (!response.ok) throw new Error(`Variant source creation failed: ${response.status}`);
+        return response.json();
+    }, `${fixtureBaseUrl}/variant-playlist.m3u`);
+    await waitForSync(page, variantSource.id);
+
     // One unavailable provider must not prevent later healthy providers from
     // appearing in Live TV. This protects fresh sessions from retaining a
     // partially loaded channel list when an earlier source fails.
@@ -710,6 +725,17 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await page.locator('#source-select').selectOption(`m3u:${variantSource.id}`);
+    const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(variantGroup).toContainText('4');
+    await variantGroup.click();
+    for (const name of ['Quality Variant 4K', 'Quality Variant FHD', 'Quality Variant HD', 'Quality Variant SD']) {
+        await expect(page.locator('.channel-name', { hasText: name, exact: true })).toBeVisible();
+    }
+    await page.locator('#channel-search').fill('Quality Variant');
+    await expect(page.locator('.channel-item')).toHaveCount(4);
+    await page.locator('#channel-search').fill('');
+    await page.locator('#source-select').selectOption('');
     await page.locator('.group-header', { hasText: 'Local Test' }).click();
     await expect(page.locator('.channel-name', { hasText: 'NodeCast Test Pattern' })).toBeVisible();
     await page.locator('.channel-item', { hasText: 'NodeCast Test Pattern' }).click();

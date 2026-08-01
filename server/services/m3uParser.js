@@ -5,6 +5,7 @@
 
 const readline = require('readline');
 const { Readable } = require('stream');
+const crypto = require('crypto');
 const { fetchWithPolicy } = require('./outboundSecurity');
 
 /**
@@ -23,6 +24,37 @@ function generateStableId(name, group) {
         hash = hash & hash; // Convert to 32bit integer
     }
     return `m3u_${Math.abs(hash).toString(36)}`;
+}
+
+/**
+ * Keep the legacy M3U item ID for the first occurrence of an EPG identity,
+ * while assigning deterministic per-stream IDs when a playlist reuses that
+ * identity for multiple quality variants.
+ *
+ * The EPG identity remains available separately as tvgId. The generated
+ * suffix is derived from channel metadata and the stream URL without storing
+ * the URL itself in the identifier.
+ */
+function assignStreamId(info, groupTitle, streamUrl, assignedIds) {
+    const baseId = String(info.tvgId || generateStableId(info.name, groupTitle));
+
+    if (!assignedIds.has(baseId)) {
+        assignedIds.add(baseId);
+        return baseId;
+    }
+
+    const signature = [baseId, info.name || '', groupTitle || '', streamUrl].join('\u0000');
+    const suffix = crypto.createHash('sha256').update(signature).digest('hex').slice(0, 12);
+    let candidate = `${baseId}__${suffix}`;
+    let duplicateIndex = 2;
+
+    while (assignedIds.has(candidate)) {
+        candidate = `${baseId}__${suffix}_${duplicateIndex}`;
+        duplicateIndex += 1;
+    }
+
+    assignedIds.add(candidate);
+    return candidate;
 }
 
 /**
@@ -87,6 +119,7 @@ function parseExtinf(line) {
 async function parse(input) {
     const channels = [];
     const groupsSet = new Set();
+    const assignedIds = new Set();
     let currentInfo = null;
     let currentGroup = null;
 
@@ -126,8 +159,7 @@ async function parse(input) {
             // This is a stream URL
             if (currentInfo) {
                 const groupTitle = currentInfo.groupTitle || currentGroup || 'Uncategorized';
-                // Generate a stable ID: use tvgId if present, otherwise hash name+group
-                const stableId = currentInfo.tvgId || generateStableId(currentInfo.name, groupTitle);
+                const stableId = assignStreamId(currentInfo, groupTitle, trimmed, assignedIds);
 
                 channels.push({
                     ...currentInfo,
@@ -186,6 +218,7 @@ async function fetchAndParse(url) {
  */
 async function* parseStreaming(input, batchSize = 500) {
     const groupsSet = new Set();
+    const assignedIds = new Set();
     let currentInfo = null;
     let currentGroup = null;
     let batch = [];
@@ -220,7 +253,7 @@ async function* parseStreaming(input, batchSize = 500) {
         } else if (!trimmed.startsWith('#')) {
             if (currentInfo) {
                 const groupTitle = currentInfo.groupTitle || currentGroup || 'Uncategorized';
-                const stableId = currentInfo.tvgId || generateStableId(currentInfo.name, groupTitle);
+                const stableId = assignStreamId(currentInfo, groupTitle, trimmed, assignedIds);
 
                 batch.push({
                     ...currentInfo,
