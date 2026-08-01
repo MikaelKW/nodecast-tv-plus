@@ -2320,6 +2320,7 @@ kbd {
 
 .content-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   margin-left: auto;
 }
