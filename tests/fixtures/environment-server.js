@@ -48,6 +48,20 @@ function controlledPlaylist(baseUrl) {
     ].join('\n');
 }
 
+function controlledVariantPlaylist(baseUrl) {
+    return [
+        '#EXTM3U',
+        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant 4K`,
+        `${baseUrl}/sample.mp4?variant=4k`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant FHD`,
+        `${baseUrl}/sample.mp4?variant=fhd`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant HD`,
+        `${baseUrl}/sample.mp4?variant=hd`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant SD`,
+        `${baseUrl}/sample.mp4?variant=sd`
+    ].join('\n');
+}
+
 function controlledGuideXml() {
     const now = Date.now();
     const startTime = new Date(now - 30 * 60 * 1000);
@@ -215,6 +229,11 @@ async function start() {
             };
             if (pathname === '/delayed-playlist.m3u') return setTimeout(sendPlaylist, 1500);
             return sendPlaylist();
+        }
+
+        if (pathname === '/variant-playlist.m3u') {
+            res.writeHead(200, { 'Content-Type': 'application/x-mpegURL', 'Access-Control-Allow-Origin': '*' });
+            return res.end(controlledVariantPlaylist(baseUrl));
         }
 
         if (pathname === '/guide.xml') {
