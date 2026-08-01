@@ -15,6 +15,7 @@
         "test:hardware": "node scripts/hw-detect-test.js",
         "test:oidc": "node scripts/oidc-discovery-test.js",
         "test:xtream": "node scripts/xtream-epg-collision-test.js",
+        "test:variants": "node scripts/channel-variant-test.js",
         "test:transcode": "node scripts/transcode-test.js",
         "test:subtitle": "node scripts/subtitle-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
@@ -32,7 +33,7 @@
         "test:resource-controls": "node scripts/resource-controls-test.js",
         "test:updates": "node scripts/release-update-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:remux && npm run test:xtream-fallback && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:transcode && npm run test:subtitle && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:remux && npm run test:xtream-fallback && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:transcode && npm run test:subtitle && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
