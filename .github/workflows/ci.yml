@@ -89,8 +89,51 @@ jobs:
           load: true
           push: false
           tags: nodecast-tv-plus:ci
+          pull: true
+          build-args: |
+            RUNTIME_REFRESH=ci-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify runtime-only image contents
+        shell: bash
+        run: |
+          docker run --rm --entrypoint sh nodecast-tv-plus:ci -eu -c '
+            for command in node ffmpeg ffprobe python3 curl; do
+              command -v "$command" >/dev/null
+            done
+
+            for command in npm npx corepack make gcc g++; do
+              if command -v "$command" >/dev/null; then
+                echo "Unexpected build command in runtime image: $command"
+                exit 1
+              fi
+            done
+
+            for package in linux-libc-dev libc6-dev make g++; do
+              if dpkg-query -s "$package" >/dev/null 2>&1; then
+                echo "Unexpected build package in runtime image: $package"
+                exit 1
+              fi
+            done
+
+            node -e "require(\"better-sqlite3\"); require(\"ffmpeg-static\")"
+          '
+
+      - name: Block fixable high and critical runtime vulnerabilities
+        shell: bash
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
+            image \
+            --scanners vuln \
+            --pkg-types os \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress \
+            nodecast-tv-plus:ci
 
       - name: Verify container health
         shell: bash
