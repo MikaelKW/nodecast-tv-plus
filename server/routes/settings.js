@@ -1,10 +1,22 @@
 const express = require('express');
-const router = express.Router();
+const { rateLimit } = require('express-rate-limit');
 const { settings, getDefaultSettings } = require('../db');
 const syncService = require('../services/syncService');
+const releaseUpdates = require('../services/releaseUpdates');
 const auth = require('../auth');
 
-router.use(auth.requireAuth);
+function createRouter({ authService = auth, releaseUpdateService = releaseUpdates } = {}) {
+    const router = express.Router();
+    router.use(authService.requireAuth);
+
+    const limitManualUpdateChecks = rateLimit({
+        limit: 6,
+        windowMs: 10 * 60 * 1000,
+        keyGenerator: req => String(req.user.id),
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        message: { error: 'Too many update checks. Try again shortly.' }
+    });
 
 /**
  * Get all settings
@@ -24,9 +36,15 @@ router.get('/', async (req, res) => {
  * Update settings (partial update)
  * PUT /api/settings
  */
-router.put('/', auth.requireAdmin, async (req, res) => {
+router.put('/', authService.requireAdmin, async (req, res) => {
     try {
         const updates = req.body;
+        if (
+            Object.prototype.hasOwnProperty.call(updates, 'automaticUpdateChecks')
+            && typeof updates.automaticUpdateChecks !== 'boolean'
+        ) {
+            return res.status(400).json({ error: 'automaticUpdateChecks must be true or false' });
+        }
         const updatedSettings = await settings.update(updates);
 
         // If sync interval changed, restart the server-side sync timer
@@ -45,7 +63,7 @@ router.put('/', auth.requireAdmin, async (req, res) => {
  * Reset settings to defaults
  * DELETE /api/settings
  */
-router.delete('/', auth.requireAdmin, async (req, res) => {
+router.delete('/', authService.requireAdmin, async (req, res) => {
     try {
         const defaultSettings = await settings.reset();
         res.json(defaultSettings);
@@ -75,10 +93,34 @@ router.get('/sync-status', (req, res) => {
 });
 
 /**
+ * Get the current version and cached stable-release status.
+ * GET /api/settings/about
+ */
+router.get('/about', authService.requireAdmin, async (req, res) => {
+    try {
+        res.json(await releaseUpdateService.getStatus({ refreshIfDue: true }));
+    } catch {
+        res.status(503).json({ error: 'Release information is temporarily unavailable.' });
+    }
+});
+
+/**
+ * Check the fixed official GitHub Releases endpoint immediately.
+ * POST /api/settings/about/check
+ */
+router.post('/about/check', authService.requireAdmin, limitManualUpdateChecks, async (req, res) => {
+    try {
+        res.json(await releaseUpdateService.checkNow({ force: true }));
+    } catch {
+        res.status(503).json({ error: 'Release information is temporarily unavailable.' });
+    }
+});
+
+/**
  * Get hardware capabilities (GPU acceleration support)
  * GET /api/settings/hw-info
  */
-router.get('/hw-info', auth.requireAdmin, async (req, res) => {
+router.get('/hw-info', authService.requireAdmin, async (req, res) => {
     try {
         const hwDetect = require('../services/hwDetect');
         let capabilities = hwDetect.getCapabilities();
@@ -99,7 +141,7 @@ router.get('/hw-info', auth.requireAdmin, async (req, res) => {
  * Refresh hardware detection (re-probe GPUs)
  * POST /api/settings/hw-info/refresh
  */
-router.post('/hw-info/refresh', auth.requireAdmin, async (req, res) => {
+router.post('/hw-info/refresh', authService.requireAdmin, async (req, res) => {
     try {
         const hwDetect = require('../services/hwDetect');
         const capabilities = await hwDetect.refresh();
@@ -110,5 +152,9 @@ router.post('/hw-info/refresh', auth.requireAdmin, async (req, res) => {
     }
 });
 
-module.exports = router;
+    return router;
+}
+
+module.exports = createRouter();
+module.exports.createRouter = createRouter;
 

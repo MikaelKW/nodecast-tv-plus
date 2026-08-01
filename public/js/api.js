@@ -159,7 +159,9 @@ const API = {
         get: () => API.request('GET', '/settings'),
         update: (data) => API.request('PUT', '/settings', data),
         reset: () => API.request('DELETE', '/settings'),
-        getDefaults: () => API.request('GET', '/settings/defaults')
+        getDefaults: () => API.request('GET', '/settings/defaults'),
+        getAbout: () => API.request('GET', '/settings/about'),
+        checkForUpdates: () => API.request('POST', '/settings/about/check')
     },
 
     // Users (admin only)

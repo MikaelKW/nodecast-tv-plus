@@ -223,6 +223,25 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#content-tree', '.settings-container');
 
+    await page.route('**/api/settings/about**', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+            currentVersion: '2.5.2',
+            latestVersion: null,
+            releaseUrl: null,
+            lastCheckedAt: null,
+            automaticChecksEnabled: false,
+            updateAvailable: null,
+            state: 'disabled'
+        })
+    }));
+    await page.locator('#about-tab').click();
+    await expect(page.locator('#tab-about')).toHaveClass(/active/);
+    await expect(page.locator('#about-update-badge')).toHaveText('Automatic checks off');
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.about-project-links', '.settings-container');
+
     await page.locator('#mobile-menu-toggle').click();
     await page.locator('#account-menu-trigger').click();
     await expect(page.locator('#account-menu-popover')).toBeVisible();

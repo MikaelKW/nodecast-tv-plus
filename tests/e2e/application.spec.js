@@ -184,6 +184,64 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
         .toHaveAttribute('aria-label', 'Show password');
 
+    // About uses a fixed server-side GitHub endpoint. Keep the browser test
+    // deterministic while covering current, update-available, and disabled UI states.
+    let automaticUpdateChecks = true;
+    let manualUpdateChecks = 0;
+    page.on('request', request => {
+        if (request.method() !== 'PUT' || !request.url().endsWith('/api/settings')) return;
+        const requested = request.postDataJSON()?.automaticUpdateChecks;
+        if (typeof requested === 'boolean') automaticUpdateChecks = requested;
+    });
+    await page.route('**/api/settings/about**', async route => {
+        const manual = route.request().method() === 'POST';
+        if (manual) manualUpdateChecks += 1;
+        const latestVersion = manual ? '2.5.3' : '2.5.2';
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                currentVersion: '2.5.2',
+                latestVersion,
+                releaseUrl: `https://github.com/MikaelKW/nodecast-tv-plus/releases/tag/v${latestVersion}`,
+                publishedAt: '2026-08-01T08:00:00.000Z',
+                lastCheckedAt: '2026-08-01T09:00:00.000Z',
+                lastErrorAt: null,
+                automaticChecksEnabled: automaticUpdateChecks,
+                updateAvailable: manual,
+                state: automaticUpdateChecks || manual
+                    ? (manual ? 'update-available' : 'up-to-date')
+                    : 'disabled'
+            })
+        });
+    });
+
+    await page.locator('#about-tab').click();
+    await expect(page.locator('#tab-about')).toHaveClass(/active/);
+    await expect(page.locator('#about-current-version')).toHaveText('2.5.2');
+    await expect(page.locator('#about-update-badge')).toHaveText('Up to date');
+    await expect(page.locator('#about-latest-version')).toHaveText('2.5.2');
+    await expect(page.locator('#about-release-link'))
+        .toHaveAttribute('href', 'https://github.com/MikaelKW/nodecast-tv-plus/releases/tag/v2.5.2');
+
+    await page.locator('#about-check-updates').click();
+    await expect(page.locator('#about-update-badge')).toHaveText('Update available');
+    await expect(page.locator('#about-latest-version')).toHaveText('2.5.3');
+    await expect(page.locator('#about-release-link')).toHaveText('View release');
+    expect(manualUpdateChecks).toBe(1);
+
+    await page.locator('#setting-automatic-update-checks + .toggle-slider').click();
+    await expect(page.locator('#setting-automatic-update-checks')).not.toBeChecked();
+    await expect(page.locator('#about-update-badge')).toHaveText('Automatic checks off');
+    await expect(page.locator('#about-preference-status')).toHaveText(
+        'Automatic update checks disabled. Manual checks remain available.'
+    );
+    expect(await page.evaluate(async () => (await API.settings.get()).automaticUpdateChecks)).toBe(false);
+    await page.locator('#setting-automatic-update-checks + .toggle-slider').click();
+    await expect(page.locator('#setting-automatic-update-checks')).toBeChecked();
+    await expect(page.locator('#about-preference-status')).toHaveText('Automatic update checks enabled.');
+    expect(await page.evaluate(async () => (await API.settings.get()).automaticUpdateChecks)).toBe(true);
+
     await page.locator('.tab[data-tab="sources"]').click();
     await expect(page.locator('#tab-sources')).toHaveClass(/active/);
     await page.locator('#add-m3u').click();

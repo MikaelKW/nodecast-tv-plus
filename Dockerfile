@@ -8,12 +8,42 @@
 # Build: docker compose build
 # Run with VAAPI: docker run --device /dev/dri:/dev/dri --group-add video ...
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS dependency-builder
 
-# Install Node.js, FFmpeg, and hardware acceleration drivers
-ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+WORKDIR /app
+
+COPY package*.json ./
+
+# Build native production dependencies without retaining the toolchain later.
+RUN npm ci --omit=dev
+
+FROM ubuntu:24.04 AS runtime
+
+# RUNTIME_REFRESH is set uniquely by CI and release workflows so the final
+# operating-system package layer cannot be reused from an older build.
+ARG TARGETARCH
+ARG RUNTIME_REFRESH=manual
+ENV DEBIAN_FRONTEND=noninteractive
+RUN echo "Refreshing runtime packages for ${RUNTIME_REFRESH}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
@@ -27,21 +57,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     ffmpeg \
     python3 \
-    make \
-    g++ \
     $DRIVERS \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get purge -y --auto-remove gnupg \
+    && rm -rf \
+        /usr/lib/node_modules/npm \
+        /usr/lib/node_modules/corepack \
+        /usr/bin/npm \
+        /usr/bin/npx \
+        /usr/bin/corepack \
+        /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Verify FFmpeg installed
 RUN ffmpeg -version && ffmpeg -encoders 2>/dev/null | grep -E "vaapi|nvenc|qsv|libx264" | head -10
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies (better-sqlite3 will build from source using g++ installed above)
-RUN npm ci --omit=dev
+# Copy only the compiled production dependency tree from the builder stage.
+COPY --from=dependency-builder /app/node_modules ./node_modules
 
 # Copy application files
 COPY . .
