@@ -303,11 +303,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, `${fixtureBaseUrl}/playlist.m3u`);
     await waitForSync(page, healthyAfterFailureSource.id);
 
-    const partialSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
+    const retainedSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
         const originalCategories = API.proxy.xtream.liveCategories;
         const originalStreams = API.proxy.xtream.liveStreams;
         const originalConsoleError = console.error;
         const errors = [];
+        const failedChannelsBefore = window.app.channelList.channels.filter(channel =>
+            String(channel.sourceId) === String(failedId)
+        ).length;
 
         API.proxy.xtream.liveCategories = (sourceId, options) => (
             String(sourceId) === String(failedId)
@@ -326,6 +329,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
             return {
+                failedChannelsBefore,
                 failedChannels: window.app.channelList.channels.filter(channel =>
                     String(channel.sourceId) === String(failedId)
                 ).length,
@@ -341,9 +345,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         }
     }, { failedId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(partialSourceLoad.failedChannels).toBe(0);
-    expect(partialSourceLoad.healthyChannels).toBeGreaterThan(0);
-    expect(partialSourceLoad.errors.some(message =>
+    expect(retainedSourceLoad.failedChannelsBefore).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedChannels).toBe(retainedSourceLoad.failedChannelsBefore);
+    expect(retainedSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(retainedSourceLoad.errors.some(message =>
         message.includes(`Error loading source ${m3uSource.id}`)
     )).toBe(true);
 
