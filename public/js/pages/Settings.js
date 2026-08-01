@@ -31,6 +31,9 @@ class SettingsPage {
 
         // User management (admin only)
         this.initUserManagement();
+
+        // Version and release information
+        this.initAboutSettings();
     }
 
     initAppearanceSettings() {
@@ -475,6 +478,123 @@ class SettingsPage {
         }
     }
 
+    initAboutSettings() {
+        const checkButton = document.getElementById('about-check-updates');
+        const automaticToggle = document.getElementById('setting-automatic-update-checks');
+        const preferenceStatus = document.getElementById('about-preference-status');
+        if (!checkButton || !automaticToggle || !preferenceStatus) return;
+
+        checkButton.addEventListener('click', () => this.loadAboutInformation({ manual: true }));
+        automaticToggle.addEventListener('change', async () => {
+            const requestedValue = automaticToggle.checked;
+            automaticToggle.disabled = true;
+            preferenceStatus.classList.add('hidden');
+            try {
+                const updated = await API.settings.update({ automaticUpdateChecks: requestedValue });
+                if (this.app.player?.settings) {
+                    this.app.player.settings.automaticUpdateChecks = updated.automaticUpdateChecks;
+                }
+                preferenceStatus.textContent = requestedValue
+                    ? 'Automatic update checks enabled.'
+                    : 'Automatic update checks disabled. Manual checks remain available.';
+                preferenceStatus.classList.remove('field-error', 'hidden');
+                await this.loadAboutInformation();
+            } catch (error) {
+                automaticToggle.checked = !requestedValue;
+                preferenceStatus.textContent = `Unable to save update preference: ${error.message}`;
+                preferenceStatus.classList.add('field-error');
+                preferenceStatus.classList.remove('hidden');
+            } finally {
+                automaticToggle.disabled = false;
+            }
+        });
+    }
+
+    async loadAboutInformation({ manual = false } = {}) {
+        const checkButton = document.getElementById('about-check-updates');
+        if (!checkButton) return;
+
+        const originalText = checkButton.textContent;
+        checkButton.disabled = true;
+        checkButton.textContent = 'Checking…';
+        try {
+            const status = manual
+                ? await API.settings.checkForUpdates()
+                : await API.settings.getAbout();
+            this.renderAboutInformation(status);
+        } catch {
+            this.renderAboutInformation({ state: 'unavailable' });
+        } finally {
+            checkButton.disabled = false;
+            checkButton.textContent = originalText;
+        }
+    }
+
+    renderAboutInformation(status = {}) {
+        const currentVersion = document.getElementById('about-current-version');
+        const latestVersion = document.getElementById('about-latest-version');
+        const lastChecked = document.getElementById('about-last-checked');
+        const badge = document.getElementById('about-update-badge');
+        const message = document.getElementById('about-update-message');
+        const releaseLink = document.getElementById('about-release-link');
+        const automaticToggle = document.getElementById('setting-automatic-update-checks');
+        if (!currentVersion || !latestVersion || !lastChecked || !badge || !message || !releaseLink) return;
+
+        currentVersion.textContent = status.currentVersion || currentVersion.textContent || 'Unknown';
+        latestVersion.textContent = status.latestVersion || 'Not checked';
+        lastChecked.textContent = status.lastCheckedAt
+            ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                .format(new Date(status.lastCheckedAt))
+            : 'Never';
+        if (automaticToggle && typeof status.automaticChecksEnabled === 'boolean') {
+            automaticToggle.checked = status.automaticChecksEnabled;
+        }
+
+        const presentation = {
+            'update-available': {
+                badge: 'Update available',
+                message: status.latestVersion
+                    ? `NodeCast TV Plus ${status.latestVersion} is available.`
+                    : 'A newer stable release is available.'
+            },
+            'up-to-date': {
+                badge: 'Up to date',
+                message: 'This installation is running the latest stable release.'
+            },
+            disabled: {
+                badge: 'Automatic checks off',
+                message: 'Use Check for updates whenever you want to check manually.'
+            },
+            unavailable: {
+                badge: 'Check unavailable',
+                message: 'GitHub could not be reached. NodeCast continues to work normally.'
+            },
+            'not-checked': {
+                badge: 'Not checked',
+                message: 'No stable-release check has completed yet.'
+            }
+        }[status.state] || {
+            badge: 'Not checked',
+            message: 'No stable-release check has completed yet.'
+        };
+
+        badge.textContent = presentation.badge;
+        badge.dataset.state = status.state || 'not-checked';
+        message.textContent = presentation.message;
+        if (status.lastErrorAt && status.lastCheckedAt) {
+            message.textContent += ' The latest attempt failed, so the last successful result is shown.';
+        }
+
+        if (typeof status.releaseUrl === 'string' && status.releaseUrl.startsWith('https://github.com/MikaelKW/nodecast-tv-plus/releases/tag/')) {
+            releaseLink.href = status.releaseUrl;
+            releaseLink.textContent = status.updateAvailable ? 'View release' : 'View current release';
+            releaseLink.classList.remove('hidden');
+        } else {
+            releaseLink.removeAttribute('href');
+            releaseLink.classList.add('hidden');
+        }
+    }
+
     async loadUsers() {
         const userList = document.getElementById('user-list');
         if (!userList) return;
@@ -772,6 +892,10 @@ class SettingsPage {
             this.loadUsers();
         }
 
+        if (tabName === 'about') {
+            this.loadAboutInformation();
+        }
+
         // Load hardware info when switching to transcode tab
         if (tabName === 'transcode') {
             this.loadHardwareInfo();
@@ -880,6 +1004,11 @@ class SettingsPage {
                 display.title = 'Sync has not run yet since server started';
             }
         } catch (err) {
+            // Navigating away can cancel the request after the Settings DOM has
+            // already been replaced. That is expected and should not surface as
+            // an application error; genuine failures while Settings remains open
+            // still use the fallback state and console error below.
+            if (!display.isConnected) return;
             console.error('Error fetching sync status:', err);
             display.textContent = 'Unknown';
             display.title = 'Could not fetch sync status';

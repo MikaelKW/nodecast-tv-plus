@@ -82,6 +82,7 @@ function getDefaultSettings() {
     autoTranscode: true,
     streamFormat: 'm3u8',
     epgRefreshInterval: '24',
+    automaticUpdateChecks: true,
     // User-Agent settings
     userAgentPreset: 'chrome',    // chrome | vlc | tivimate | custom
     userAgentCustom: '',          // Custom UA string when preset is 'custom'
@@ -422,6 +423,9 @@ const settings = {
   async update(newSettings) {
     const db = await loadDb();
     const updates = { ...newSettings };
+    if (Object.prototype.hasOwnProperty.call(updates, 'automaticUpdateChecks')) {
+      updates.automaticUpdateChecks = updates.automaticUpdateChecks === true;
+    }
     if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
       updates.navigation = normalizeNavigationSettings({
         ...normalizeNavigationSettings(db.settings?.navigation),
