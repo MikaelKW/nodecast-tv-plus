@@ -1004,6 +1004,11 @@ class SettingsPage {
                 display.title = 'Sync has not run yet since server started';
             }
         } catch (err) {
+            // Navigating away can cancel the request after the Settings DOM has
+            // already been replaced. That is expected and should not surface as
+            // an application error; genuine failures while Settings remains open
+            // still use the fallback state and console error below.
+            if (!display.isConnected) return;
             console.error('Error fetching sync status:', err);
             display.textContent = 'Unknown';
             display.title = 'Could not fetch sync status';
