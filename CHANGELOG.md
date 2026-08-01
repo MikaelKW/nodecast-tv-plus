@@ -22,8 +22,7 @@ This focused patch release bounds authenticated history and provider-metadata wo
 
 ### Security
 
-- Strengthened authenticated resource controls around retained playback history and repeated provider metadata operations.
-- A published security advisory accompanies this release with affected-version and remediation details.
+- Strengthened authenticated resource controls around retained playback history and repeated provider metadata operations. [GHSA-hx3m-ggfm-hj5x](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/GHSA-hx3m-ggfm-hj5x)
 
 ### Upgrade notes
 
