@@ -21,6 +21,7 @@ class ChannelList {
         this.visibleFavorites = new Set(); // Set<"sourceId:channelId">
         this.currentChannel = null;
         this.sources = [];
+        this.sourceCatalogueCache = new Map();
         this.isLoading = false;
         this.renderedChannels = [];
 
@@ -744,9 +745,6 @@ class ChannelList {
      * Load channels from all enabled sources
      */
     async loadAllChannels() {
-        this.channels = [];
-        this.groups = [];
-
         try {
             this.container.innerHTML = '<div class="loading"></div>';
 
@@ -782,25 +780,38 @@ class ChannelList {
                 });
             }
 
-            let successfulSources = 0;
+            const nextCatalogue = { groups: [], channels: [] };
+            let availableSources = 0;
             sourceResults.forEach((result, index) => {
+                const descriptor = sourceDescriptors[index];
                 if (result.status === 'fulfilled') {
-                    this._applySourceChannels(result.value);
-                    successfulSources += 1;
+                    this._cacheSourceChannels(descriptor.source.id, descriptor.type, result.value);
+                    this._appendSourceChannels(nextCatalogue, result.value);
+                    availableSources += 1;
                     return;
                 }
 
-                const source = sourceDescriptors[index]?.source;
+                const source = descriptor?.source;
                 console.error(`Error loading source ${source?.id}:`, result.reason);
+
+                const cached = this._getCachedSourceChannels(source?.id, descriptor?.type);
+                if (cached) {
+                    console.warn(`Using last known channel catalogue for source ${source?.id}`);
+                    this._appendSourceChannels(nextCatalogue, cached);
+                    availableSources += 1;
+                }
             });
 
-            if (sourceDescriptors.length > 0 && successfulSources === 0) {
+            if (sourceDescriptors.length > 0 && availableSources === 0) {
                 throw new Error('Unable to load channels from any enabled source');
             }
 
+            this.groups = nextCatalogue.groups;
+            this.channels = nextCatalogue.channels;
             this.render();
         } catch (err) {
             console.error('Error loading all channels:', err);
+            this.render();
         }
     }
 
@@ -813,7 +824,9 @@ class ChannelList {
             this.groups = [];
         }
 
-        this._applySourceChannels(await this.fetchSourceChannels(sourceId, 'xtream'));
+        const result = await this.fetchSourceChannels(sourceId, 'xtream');
+        this._cacheSourceChannels(sourceId, 'xtream', result);
+        this._applySourceChannels(result);
     }
 
     /**
@@ -826,7 +839,9 @@ class ChannelList {
             this.groups = [];
         }
 
-        this._applySourceChannels(await this.fetchSourceChannels(sourceId, 'm3u'));
+        const result = await this.fetchSourceChannels(sourceId, 'm3u');
+        this._cacheSourceChannels(sourceId, 'm3u', result);
+        this._applySourceChannels(result);
     }
 
     /**
@@ -868,6 +883,32 @@ class ChannelList {
     _applySourceChannels(result) {
         this.groups = this.groups.concat(result.groups);
         this.channels = this.channels.concat(result.channels);
+    }
+
+    _appendSourceChannels(target, result) {
+        target.groups.push(...result.groups);
+        target.channels.push(...result.channels);
+    }
+
+    _sourceCatalogueCacheKey(sourceId, sourceType) {
+        return `${sourceType}:${sourceId}`;
+    }
+
+    _cacheSourceChannels(sourceId, sourceType, result) {
+        this.sourceCatalogueCache.set(
+            this._sourceCatalogueCacheKey(sourceId, sourceType),
+            {
+                groups: [...result.groups],
+                channels: [...result.channels]
+            }
+        );
+    }
+
+    _getCachedSourceChannels(sourceId, sourceType) {
+        if (sourceId === undefined || !sourceType) return null;
+        return this.sourceCatalogueCache.get(
+            this._sourceCatalogueCacheKey(sourceId, sourceType)
+        ) || null;
     }
 
     /**
