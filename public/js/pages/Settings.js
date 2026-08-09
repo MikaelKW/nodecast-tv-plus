@@ -7,6 +7,9 @@ class SettingsPage {
         this.app = app;
         this.tabs = document.querySelectorAll('.tabs .tab');
         this.tabContents = document.querySelectorAll('.tab-content');
+        this.isVisible = false;
+        this.visibilityGeneration = 0;
+        this.syncStatusRequest = null;
 
         this.init();
     }
@@ -214,8 +217,6 @@ class SettingsPage {
             });
         }
 
-        // Update last refreshed display
-        this.updateEpgLastRefreshed();
     }
 
     async initTranscodingSettings() {
@@ -903,6 +904,10 @@ class SettingsPage {
     }
 
     async show() {
+        this.isVisible = true;
+        const visibilityGeneration = ++this.visibilityGeneration;
+        this.cancelSyncStatusRequest();
+
         // Show users tab for admin
         if (this.app.currentUser && this.app.currentUser.role === 'admin') {
             const usersTab = document.getElementById('users-tab');
@@ -913,6 +918,7 @@ class SettingsPage {
 
         // Load sources when page is shown
         await this.app.sourceManager.loadSources();
+        if (!this.isVisible || visibilityGeneration !== this.visibilityGeneration) return;
         this.renderInterfaceSettings(this.app.navigationSettings);
 
         // Refresh ALL player settings from server
@@ -968,13 +974,20 @@ class SettingsPage {
      */
     async updateEpgLastRefreshed() {
         const display = document.getElementById('epg-last-refreshed');
-        if (!display) return;
+        if (!display || !this.isVisible) return;
+
+        this.cancelSyncStatusRequest();
+        const controller = new AbortController();
+        this.syncStatusRequest = controller;
 
         try {
             // Fetch last sync time from server
-            const response = await fetch(NodeCastUrl.resolve('/api/settings/sync-status'));
+            const response = await fetch(NodeCastUrl.resolve('/api/settings/sync-status'), {
+                signal: controller.signal
+            });
             if (!response.ok) throw new Error('Failed to fetch sync status');
             const data = await response.json();
+            if (!this.isVisible || this.syncStatusRequest !== controller) return;
 
             if (data.lastSyncTime) {
                 const lastRefreshTime = new Date(data.lastSyncTime);
@@ -1004,19 +1017,34 @@ class SettingsPage {
                 display.title = 'Sync has not run yet since server started';
             }
         } catch (err) {
-            // Navigating away can cancel the request after the Settings DOM has
-            // already been replaced. That is expected and should not surface as
-            // an application error; genuine failures while Settings remains open
-            // still use the fallback state and console error below.
-            if (!display.isConnected) return;
+            // Leaving Settings intentionally cancels this request. Some browsers
+            // report an AbortError while others surface a generic fetch failure,
+            // so lifecycle state is the authoritative signal. Genuine failures
+            // from the active request still use the fallback state below.
+            if (controller.signal.aborted
+                || !this.isVisible
+                || this.syncStatusRequest !== controller
+                || !display.isConnected) return;
             console.error('Error fetching sync status:', err);
             display.textContent = 'Unknown';
             display.title = 'Could not fetch sync status';
+        } finally {
+            if (this.syncStatusRequest === controller) {
+                this.syncStatusRequest = null;
+            }
         }
     }
 
+    cancelSyncStatusRequest() {
+        if (!this.syncStatusRequest) return;
+        this.syncStatusRequest.abort();
+        this.syncStatusRequest = null;
+    }
+
     hide() {
-        // Page is hidden
+        this.isVisible = false;
+        this.visibilityGeneration += 1;
+        this.cancelSyncStatusRequest();
     }
 }
 
