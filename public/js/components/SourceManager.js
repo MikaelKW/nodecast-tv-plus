@@ -16,6 +16,7 @@ class SourceManager {
         this.originalHiddenSet = new Set(); // Set of hidden item keys (state when loaded)
         this.expandedGroups = new Set(); // Set of expanded group IDs
         this.searchQuery = ''; // Search filter for content browser
+        this.pendingAllVisibility = null; // Whole-source action staged until Save Changes
         this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
         this.sourceSubmissionInProgress = false;
 
@@ -814,6 +815,8 @@ class SourceManager {
         // Show All / Hide All buttons
         document.getElementById('content-show-all')?.addEventListener('click', () => this.setAllVisibility(true));
         document.getElementById('content-hide-all')?.addEventListener('click', () => this.setAllVisibility(false));
+        document.getElementById('content-show-results')?.addEventListener('click', () => this.setFilteredVisibility(true));
+        document.getElementById('content-hide-results')?.addEventListener('click', () => this.setFilteredVisibility(false));
 
         // Save Changes button
         document.getElementById('content-save')?.addEventListener('click', () => this.saveContentChanges());
@@ -825,6 +828,7 @@ class SourceManager {
         searchInput?.addEventListener('input', (e) => {
             this.searchQuery = e.target.value.toLowerCase().trim();
             this.renderTree();
+            this.updateFilteredActionState();
         });
 
         searchClear?.addEventListener('click', () => {
@@ -832,8 +836,11 @@ class SourceManager {
                 searchInput.value = '';
                 this.searchQuery = '';
                 this.renderTree();
+                this.updateFilteredActionState();
             }
         });
+
+        this.updateFilteredActionState();
     }
 
     /**
@@ -889,6 +896,7 @@ class SourceManager {
     async loadContentTree(sourceId) {
         this.contentTree.innerHTML = '<p class="hint">Loading...</p>';
         this.treeData = { type: 'channels', sourceId, groups: [] };
+        this.pendingAllVisibility = null;
         this.expandedGroups.clear();
 
         try {
@@ -1003,6 +1011,7 @@ class SourceManager {
         if (!groups.length) {
             const msg = this.searchQuery ? 'No matches found' : 'No content found';
             this.contentTree.innerHTML = `<p class="hint">${msg}</p>`;
+            this.updateFilteredActionState();
             return;
         }
 
@@ -1011,6 +1020,64 @@ class SourceManager {
 
         // Attach event listeners
         this.attachTreeListeners(this.contentTree);
+        this.updateFilteredActionState();
+    }
+
+    /**
+     * Enable search-scoped actions only when a search has visible results.
+     */
+    updateFilteredActionState() {
+        const hasResults = Boolean(this.searchQuery) && this.getFilteredGroups().some(group => group.items.length > 0);
+        const showResultsBtn = document.getElementById('content-show-results');
+        const hideResultsBtn = document.getElementById('content-hide-results');
+
+        if (showResultsBtn) showResultsBtn.disabled = !hasResults;
+        if (hideResultsBtn) hideResultsBtn.disabled = !hasResults;
+    }
+
+    /**
+     * Preserve a staged whole-source item state while restoring category keys
+     * before a more specific item or group edit is made.
+     */
+    clearPendingAllVisibility() {
+        if (this.pendingAllVisibility === null || !this.treeData?.groups) return;
+
+        const groupItemType = this.treeData.type === 'movies'
+            ? 'vod_category'
+            : this.treeData.type === 'series'
+                ? 'series_category'
+                : 'group';
+
+        this.treeData.groups.forEach(group => {
+            if (!group.categoryId) return;
+            const groupKey = `${groupItemType}:${group.categoryId}`;
+            if (this.originalHiddenSet.has(groupKey)) this.hiddenSet.add(groupKey);
+            else this.hiddenSet.delete(groupKey);
+        });
+
+        this.pendingAllVisibility = null;
+    }
+
+    /**
+     * Stage a visibility change for every item in the current search results.
+     * The existing Save Changes action persists the result.
+     */
+    setFilteredVisibility(visible) {
+        if (!this.treeData?.groups || !this.searchQuery) return;
+
+        this.clearPendingAllVisibility();
+        this.getFilteredGroups().forEach(group => {
+            group.items.forEach(item => {
+                const key = `${item.type}:${item.id}`;
+                if (visible) {
+                    this.hiddenSet.delete(key);
+                } else {
+                    this.hiddenSet.add(key);
+                }
+            });
+        });
+
+        this.renderTree();
     }
 
     /**
@@ -1123,6 +1190,7 @@ class SourceManager {
     async loadMovieCategoriesTree(sourceId) {
         this.contentTree.innerHTML = '<p class="hint">Loading movie categories...</p>';
         this.treeData = { type: 'movies', sourceId, groups: [] };
+        this.pendingAllVisibility = null;
 
         try {
             const source = await API.sources.getById(sourceId);
@@ -1180,6 +1248,7 @@ class SourceManager {
     async loadSeriesCategoriesTree(sourceId) {
         this.contentTree.innerHTML = '<p class="hint">Loading series categories...</p>';
         this.treeData = { type: 'series', sourceId, groups: [] };
+        this.pendingAllVisibility = null;
 
         try {
             const source = await API.sources.getById(sourceId);
@@ -1230,6 +1299,9 @@ class SourceManager {
         const itemId = checkbox.dataset.id;
         const isVisible = checkbox.checked;
 
+        // A more specific edit supersedes a staged whole-source operation.
+        this.clearPendingAllVisibility();
+
         // Update local state only (will be persisted when Save is clicked)
         const key = `${itemType}:${itemId}`;
         if (isVisible) {
@@ -1262,6 +1334,7 @@ class SourceManager {
         if (!group) return;
 
         const isChecked = groupCb.checked;
+        this.clearPendingAllVisibility();
 
         // Determine the correct item type for the group based on content type
         let groupItemType = 'group'; // default for live channels
@@ -1301,82 +1374,34 @@ class SourceManager {
     }
 
     /**
-     * Set visibility for all items and IMMEDIATELY persist to server
-     * Uses fast bulk API endpoint (single SQL statement) instead of item-by-item
+     * Stage visibility for all items. Save Changes persists the operation using
+     * the fast whole-source API endpoint.
      */
-    async setAllVisibility(visible) {
+    setAllVisibility(visible) {
         if (!this.treeData || !this.treeData.groups) return;
 
-        const saveBtn = document.getElementById('content-save');
-        const showAllBtn = document.querySelector('.content-actions button:first-child');
-        const hideAllBtn = document.querySelector('.content-actions button:nth-child(2)');
+        this.pendingAllVisibility = visible;
+        const groupItemType = this.treeData.type === 'movies'
+            ? 'vod_category'
+            : this.treeData.type === 'series'
+                ? 'series_category'
+                : 'group';
 
-        // Disable buttons during operation
-        if (showAllBtn) showAllBtn.disabled = true;
-        if (hideAllBtn) hideAllBtn.disabled = true;
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = visible ? '⏳ Showing all...' : '⏳ Hiding all...';
-        }
-
-        try {
-            const sourceId = this.treeData.sourceId;
-            const contentType = this.treeData.type; // 'channels', 'movies', or 'series'
-
-            // Use fast API endpoint (single SQL UPDATE statement)
-            if (visible) {
-                await API.channels.showAll(sourceId, contentType);
-            } else {
-                await API.channels.hideAll(sourceId, contentType);
+        this.treeData.groups.forEach(group => {
+            if (group.categoryId) {
+                const groupKey = `${groupItemType}:${group.categoryId}`;
+                if (visible) this.hiddenSet.delete(groupKey);
+                else this.hiddenSet.add(groupKey);
             }
 
-            // Update local state to match
-            this.treeData.groups.forEach(group => {
-                group.items.forEach(item => {
-                    const key = `${item.type}:${item.id}`;
-                    if (visible) {
-                        this.hiddenSet.delete(key);
-                    } else {
-                        this.hiddenSet.add(key);
-                    }
-                });
+            group.items.forEach(item => {
+                const key = `${item.type}:${item.id}`;
+                if (visible) this.hiddenSet.delete(key);
+                else this.hiddenSet.add(key);
             });
+        });
 
-            // Update originalHiddenSet to match current state
-            this.originalHiddenSet = new Set(this.hiddenSet);
-
-            // Sync Channel List
-            try {
-                if (window.app?.channelList?.loadHiddenItems) {
-                    await window.app.channelList.loadHiddenItems();
-                    window.app.channelList.render();
-                }
-            } catch (e) {
-                console.warn('[SourceManager] Channel list sync failed:', e);
-            }
-
-            // Re-render to reflect changes
-            this.renderTree();
-
-            if (saveBtn) {
-                saveBtn.textContent = '✓ Done!';
-                setTimeout(() => {
-                    saveBtn.textContent = '💾 Save Changes';
-                    saveBtn.disabled = false;
-                }, 1500);
-            }
-
-        } catch (err) {
-            console.error('Error setting all visibility:', err);
-            alert('Failed: ' + err.message);
-            if (saveBtn) {
-                saveBtn.textContent = '💾 Save Changes';
-                saveBtn.disabled = false;
-            }
-        } finally {
-            if (showAllBtn) showAllBtn.disabled = false;
-            if (hideAllBtn) hideAllBtn.disabled = false;
-        }
+        this.renderTree();
     }
 
     /**
@@ -1396,6 +1421,19 @@ class SourceManager {
 
         try {
             const sourceId = this.treeData.sourceId;
+            let wholeSourceSaved = false;
+
+            if (this.pendingAllVisibility !== null) {
+                if (this.pendingAllVisibility) {
+                    await API.channels.showAll(sourceId, this.treeData.type);
+                } else {
+                    await API.channels.hideAll(sourceId, this.treeData.type);
+                }
+                this.pendingAllVisibility = null;
+                this.originalHiddenSet = new Set(this.hiddenSet);
+                wholeSourceSaved = true;
+            }
+
             const itemsToShow = [];
             const itemsToHide = [];
 
@@ -1454,7 +1492,7 @@ class SourceManager {
             });
 
             // Check if there are any changes
-            if (itemsToShow.length === 0 && itemsToHide.length === 0) {
+            if (!wholeSourceSaved && itemsToShow.length === 0 && itemsToHide.length === 0) {
                 if (saveBtn) {
                     saveBtn.textContent = 'No changes';
                     setTimeout(() => {

@@ -285,6 +285,100 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, `${fixtureBaseUrl}/variant-playlist.m3u`);
     await waitForSync(page, variantSource.id);
 
+    // Search-scoped visibility changes affect only the filtered results and
+    // remain staged until the existing Save Changes action is used.
+    await page.locator('.tab[data-tab="content"]').click();
+    await expect(page.locator('#tab-content')).toHaveClass(/active/);
+    await page.locator('#content-source-select').selectOption(String(variantSource.id));
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await page.locator('.content-group-header').click();
+    await expect(page.locator('#content-show-results')).toBeDisabled();
+    await expect(page.locator('#content-hide-results')).toBeDisabled();
+
+    await page.locator('#content-search').fill('FHD');
+    await expect(page.locator('#content-show-results')).toBeEnabled();
+    await expect(page.locator('#content-hide-results')).toBeEnabled();
+    await expect(page.locator('.channel-checkbox')).toHaveCount(1);
+    await expect(page.locator('.channel-checkbox')).toBeChecked();
+    await page.locator('#content-hide-results').click();
+    await expect(page.locator('.channel-checkbox')).not.toBeChecked();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(1);
+
+    await page.locator('#content-search').fill('Quality Variant');
+    await expect(page.locator('.channel-checkbox')).toHaveCount(4);
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(3);
+    await page.locator('#content-show-results').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    await page.locator('#content-search').locator('..').locator('.search-clear').click();
+    await expect(page.locator('#content-show-results')).toBeDisabled();
+    await expect(page.locator('#content-hide-results')).toBeDisabled();
+
+    // Whole-source actions follow the same staged workflow: the UI changes
+    // immediately, but the server is unchanged until Save Changes is clicked.
+    await page.locator('#content-hide-all').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(0);
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+
+    await page.locator('#content-show-all').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    // A specific checkbox edit after Hide All cancels the whole-source shortcut
+    // and preserves the visible exception when the staged changes are saved.
+    await page.locator('#content-hide-all').click();
+    await page.locator('.channel-checkbox').first().check();
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(3);
+
+    await page.locator('#content-show-all').click();
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    await page.locator('.tab[data-tab="sources"]').click();
+
     // One unavailable provider must not prevent later healthy providers from
     // appearing in Live TV. This protects fresh sessions from retaining a
     // partially loaded channel list when an earlier source fails.
