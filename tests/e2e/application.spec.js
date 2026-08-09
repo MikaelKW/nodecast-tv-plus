@@ -684,6 +684,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(controlledSeries).toBeVisible();
     await expect(seriesDetails).toBeHidden();
 
+    // Leaving Settings while its sync-status request is pending must cancel
+    // the request without reporting an application error during navigation.
+    const syncStatusErrorsBefore = browserErrors.length;
+    let releaseSyncStatusRequest;
+    let markSyncStatusStarted;
+    const syncStatusStarted = new Promise(resolve => {
+        markSyncStatusStarted = resolve;
+    });
+    await page.route('**/api/settings/sync-status', async route => {
+        markSyncStatusStarted();
+        await new Promise(resolve => {
+            releaseSyncStatusRequest = resolve;
+        });
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ lastSyncTime: null })
+        }).catch(() => {});
+    });
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await syncStatusStarted;
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('#page-series')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(
+        () => window.app.pages.settings.syncStatusRequest === null
+    )).toBe(true);
+    releaseSyncStatusRequest();
+    await page.unroute('**/api/settings/sync-status');
+    await page.waitForTimeout(100);
+    expect(browserErrors.slice(syncStatusErrorsBefore)).toEqual([]);
+
     // Invert the choices to prove Series can be hidden independently while
     // the same source remains available in Live TV and Movies.
     await page.locator('.nav-link[data-page="settings"]').click();
