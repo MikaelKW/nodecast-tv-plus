@@ -26,6 +26,7 @@ class M3uXtreamAdapter {
                 category_id,
                 category_id as category_name,
                 NULL as parent_id,
+                CASE WHEN SUM(CASE WHEN is_hidden = 0 THEN 1 ELSE 0 END) > 0 THEN 0 ELSE 1 END as is_hidden,
                 COUNT(*) as channel_count
             FROM playlist_items 
             WHERE source_id = ? AND type = 'live'
@@ -40,6 +41,7 @@ class M3uXtreamAdapter {
             category_id: row.category_id || 'Uncategorized',
             category_name: row.category_id || 'Uncategorized',
             parent_id: null,
+            is_hidden: row.is_hidden,
             // Bonus: include count for lazy-loading UI
             channel_count: row.channel_count
         }));
@@ -59,6 +61,7 @@ class M3uXtreamAdapter {
                 stream_icon,
                 stream_url,
                 category_id,
+                is_hidden,
                 added_at,
                 data
             FROM playlist_items 
@@ -89,6 +92,7 @@ class M3uXtreamAdapter {
                 name: row.name,
                 stream_icon: row.stream_icon,
                 category_id: row.category_id,
+                is_hidden: row.is_hidden,
                 added: row.added_at,
                 // M3U-specific: direct stream URL (Xtream builds URLs from credentials)
                 stream_url: row.stream_url,

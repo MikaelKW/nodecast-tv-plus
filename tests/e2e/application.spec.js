@@ -356,8 +356,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(0);
 
-    // A specific checkbox edit after Hide All cancels the whole-source shortcut
-    // and preserves the visible exception when the staged changes are saved.
+    // A specific checkbox edit after Hide All remains a compact exception to
+    // the whole-source operation and preserves that exception when saved.
     await page.locator('#content-hide-all').click();
     await page.locator('.channel-checkbox').first().check();
     await expect(page.locator('#content-save')).toBeEnabled();

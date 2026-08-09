@@ -42,6 +42,8 @@ function initSchema() {
             data JSON -- Extra provider data
         );
         CREATE INDEX IF NOT EXISTS idx_categories_source_type ON categories(source_id, type);
+        CREATE INDEX IF NOT EXISTS idx_categories_source_type_category
+            ON categories(source_id, type, category_id);
     `);
 
     // Playlist Items (Channels, Movies, Series, Episodes)
@@ -73,6 +75,10 @@ function initSchema() {
         );
         CREATE INDEX IF NOT EXISTS idx_items_source_type ON playlist_items(source_id, type);
         CREATE INDEX IF NOT EXISTS idx_items_category ON playlist_items(source_id, category_id);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_item
+            ON playlist_items(source_id, type, item_id);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_category_hidden
+            ON playlist_items(source_id, type, category_id, is_hidden);
     `);
 
     // EPG Programs

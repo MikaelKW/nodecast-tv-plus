@@ -73,6 +73,11 @@ const API = {
         isHidden: (sourceId, itemType, itemId) => API.request('GET', `/channels/hidden/check?sourceId=${sourceId}&itemType=${itemType}&itemId=${itemId}`),
         bulkHide: (items) => API.request('POST', '/channels/hide/bulk', { items }),
         bulkShow: (items) => API.request('POST', '/channels/show/bulk', { items }),
+        applyVisibility: (sourceId, contentType, visible, overrides) => API.request(
+            'POST',
+            '/channels/visibility/apply',
+            { sourceId, contentType, visible, overrides }
+        ),
         // Fast bulk operations - single SQL statement
         showAll: (sourceId, contentType) => API.request('POST', '/channels/show/all', { sourceId, contentType }),
         hideAll: (sourceId, contentType) => API.request('POST', '/channels/hide/all', { sourceId, contentType })

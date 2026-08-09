@@ -902,14 +902,16 @@ class SourceManager {
         try {
             const source = await API.sources.getById(sourceId);
             let channels = [];
+            let categories = [];
+            let streams = [];
 
             let categoryMap = {};
 
             if (source.type === 'xtream' || source.type === 'm3u') {
                 // Use unified Xtream API endpoints - backend supports both source types
                 // Use includeHidden to show ALL items in the content manager
-                const categories = await API.proxy.xtream.liveCategories(sourceId, { includeHidden: true });
-                const streams = await API.proxy.xtream.liveStreams(sourceId, null, { includeHidden: true });
+                categories = await API.proxy.xtream.liveCategories(sourceId, { includeHidden: true });
+                streams = await API.proxy.xtream.liveStreams(sourceId, null, { includeHidden: true });
 
                 channels = streams;
                 categories.forEach(cat => {
@@ -917,9 +919,16 @@ class SourceManager {
                 });
             }
 
-            // Get currently hidden items
-            const hiddenItems = await API.channels.getHidden(sourceId);
-            this.hiddenSet = new Set(hiddenItems.map(h => `${h.item_type}:${h.item_id}`));
+            // Hidden state is included in the content response so very large
+            // providers do not require a second, equally large hidden-items
+            // response.
+            this.hiddenSet = new Set();
+            categories.forEach(category => {
+                if (category.is_hidden) this.hiddenSet.add(`group:${category.category_id}`);
+            });
+            streams.forEach(stream => {
+                if (stream.is_hidden) this.hiddenSet.add(`channel:${stream.stream_id}`);
+            });
             this.originalHiddenSet = new Set(this.hiddenSet); // Track original state for diffing
 
             // Group channels by category
@@ -1036,36 +1045,12 @@ class SourceManager {
     }
 
     /**
-     * Preserve a staged whole-source item state while restoring category keys
-     * before a more specific item or group edit is made.
-     */
-    clearPendingAllVisibility() {
-        if (this.pendingAllVisibility === null || !this.treeData?.groups) return;
-
-        const groupItemType = this.treeData.type === 'movies'
-            ? 'vod_category'
-            : this.treeData.type === 'series'
-                ? 'series_category'
-                : 'group';
-
-        this.treeData.groups.forEach(group => {
-            if (!group.categoryId) return;
-            const groupKey = `${groupItemType}:${group.categoryId}`;
-            if (this.originalHiddenSet.has(groupKey)) this.hiddenSet.add(groupKey);
-            else this.hiddenSet.delete(groupKey);
-        });
-
-        this.pendingAllVisibility = null;
-    }
-
-    /**
      * Stage a visibility change for every item in the current search results.
      * The existing Save Changes action persists the result.
      */
     setFilteredVisibility(visible) {
         if (!this.treeData?.groups || !this.searchQuery) return;
 
-        this.clearPendingAllVisibility();
         this.getFilteredGroups().forEach(group => {
             group.items.forEach(item => {
                 const key = `${item.type}:${item.id}`;
@@ -1207,8 +1192,11 @@ class SourceManager {
                 return;
             }
 
-            const hiddenItems = await API.channels.getHidden(sourceId);
-            this.hiddenSet = new Set(hiddenItems.map(h => `${h.item_type}:${h.item_id}`));
+            this.hiddenSet = new Set(
+                categories
+                    .filter(category => category.is_hidden)
+                    .map(category => `vod_category:${category.category_id}`)
+            );
             this.originalHiddenSet = new Set(this.hiddenSet); // Track original state
 
             // Create a single "Movies" group or flatten?
@@ -1265,8 +1253,11 @@ class SourceManager {
                 return;
             }
 
-            const hiddenItems = await API.channels.getHidden(sourceId);
-            this.hiddenSet = new Set(hiddenItems.map(h => `${h.item_type}:${h.item_id}`));
+            this.hiddenSet = new Set(
+                categories
+                    .filter(category => category.is_hidden)
+                    .map(category => `series_category:${category.category_id}`)
+            );
             this.originalHiddenSet = new Set(this.hiddenSet); // Track original state
 
             this.treeData.groups = [{
@@ -1299,9 +1290,7 @@ class SourceManager {
         const itemId = checkbox.dataset.id;
         const isVisible = checkbox.checked;
 
-        // A more specific edit supersedes a staged whole-source operation.
-        this.clearPendingAllVisibility();
-
+        // A more specific edit becomes an exception to any staged whole-source operation.
         // Update local state only (will be persisted when Save is clicked)
         const key = `${itemType}:${itemId}`;
         if (isVisible) {
@@ -1334,8 +1323,6 @@ class SourceManager {
         if (!group) return;
 
         const isChecked = groupCb.checked;
-        this.clearPendingAllVisibility();
-
         // Determine the correct item type for the group based on content type
         let groupItemType = 'group'; // default for live channels
         if (this.treeData.type === 'movies') {
@@ -1405,6 +1392,48 @@ class SourceManager {
     }
 
     /**
+     * Compress the exceptions to a staged whole-source visibility operation.
+     * Uniform live groups become one category override; mixed groups include
+     * only the channels whose state differs from the baseline.
+     */
+    getWholeSourceOverrides(visible) {
+        const baselineHidden = !visible;
+        const overrides = [];
+        const groupItemType = this.treeData.type === 'movies'
+            ? 'vod_category'
+            : this.treeData.type === 'series'
+                ? 'series_category'
+                : 'group';
+
+        this.treeData.groups.forEach(group => {
+            const exceptionalItems = group.items.filter(item => (
+                this.hiddenSet.has(`${item.type}:${item.id}`) !== baselineHidden
+            ));
+
+            if (group.categoryId
+                && group.items.length > 0
+                && exceptionalItems.length === group.items.length) {
+                overrides.push({
+                    itemType: groupItemType,
+                    itemId: String(group.categoryId),
+                    hidden: !baselineHidden
+                });
+                return;
+            }
+
+            exceptionalItems.forEach(item => {
+                overrides.push({
+                    itemType: item.type,
+                    itemId: String(item.id),
+                    hidden: !baselineHidden
+                });
+            });
+        });
+
+        return overrides;
+    }
+
+    /**
      * Save all content visibility changes to the server
      */
     async saveContentChanges() {
@@ -1421,17 +1450,25 @@ class SourceManager {
 
         try {
             const sourceId = this.treeData.sourceId;
-            let wholeSourceSaved = false;
-
             if (this.pendingAllVisibility !== null) {
-                if (this.pendingAllVisibility) {
-                    await API.channels.showAll(sourceId, this.treeData.type);
-                } else {
-                    await API.channels.hideAll(sourceId, this.treeData.type);
-                }
+                const visible = this.pendingAllVisibility;
+                const overrides = this.getWholeSourceOverrides(visible);
+                await API.channels.applyVisibility(sourceId, this.treeData.type, visible, overrides);
                 this.pendingAllVisibility = null;
                 this.originalHiddenSet = new Set(this.hiddenSet);
-                wholeSourceSaved = true;
+
+                if (window.app?.channelList) {
+                    await window.app.channelList.loadChannels();
+                }
+
+                if (saveBtn) {
+                    saveBtn.textContent = 'âœ“ Saved!';
+                    setTimeout(() => {
+                        saveBtn.textContent = 'ðŸ’¾ Save Changes';
+                        saveBtn.disabled = false;
+                    }, 1500);
+                }
+                return;
             }
 
             const itemsToShow = [];
@@ -1492,7 +1529,7 @@ class SourceManager {
             });
 
             // Check if there are any changes
-            if (!wholeSourceSaved && itemsToShow.length === 0 && itemsToHide.length === 0) {
+            if (itemsToShow.length === 0 && itemsToHide.length === 0) {
                 if (saveBtn) {
                     saveBtn.textContent = 'No changes';
                     setTimeout(() => {
@@ -1544,23 +1581,13 @@ class SourceManager {
             // Update originalHiddenSet to reflect saved state
             this.originalHiddenSet = new Set(this.hiddenSet);
 
-            // Sync Channel List (don't block on this)
+            // Refresh the server-filtered channel catalogue before reporting success.
             try {
                 if (window.app?.channelList) {
-                    // Start with hidden items sync which is fast
-                    if (window.app.channelList.loadHiddenItems) {
-                        await window.app.channelList.loadHiddenItems();
-                    }
-
-                    // If we modified the currently active source, reload it fully to get fresh categories
-                    if (window.app.channelList.currentSourceId &&
-                        String(window.app.channelList.currentSourceId) === String(this.contentSourceSelect.value)) {
-                        console.log('[SourceManager] Reloading active source in ChannelList...');
-                        await window.app.channelList.loadSource(window.app.channelList.currentSourceId);
-                    } else {
-                        // Otherwise just render to reflect hidden item changes
-                        window.app.channelList.render();
-                    }
+                    // Reload the server-filtered catalogue. Avoid fetching the
+                    // complete hidden-item set, which may contain hundreds of
+                    // thousands of entries.
+                    await window.app.channelList.loadChannels();
                 }
             } catch (e) {
                 console.warn('[SourceManager] Channel list sync failed:', e);
