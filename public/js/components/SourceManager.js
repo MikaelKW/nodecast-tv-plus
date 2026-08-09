@@ -17,6 +17,7 @@ class SourceManager {
         this.expandedGroups = new Set(); // Set of expanded group IDs
         this.searchQuery = ''; // Search filter for content browser
         this.pendingAllVisibility = null; // Whole-source action staged until Save Changes
+        this.contentLoadRequestId = 0; // Ignore stale async responses after tab/source changes
         this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
         this.sourceSubmissionInProgress = false;
 
@@ -847,6 +848,7 @@ class SourceManager {
      * Reload content tree based on current type and source
      */
     reloadContentTree() {
+        const requestId = ++this.contentLoadRequestId;
         const sourceId = this.contentSourceSelect?.value;
         if (!sourceId) {
             const typeLabel = this.contentType === 'movies' ? 'movie categories' :
@@ -856,11 +858,11 @@ class SourceManager {
         }
 
         if (this.contentType === 'movies') {
-            this.loadMovieCategoriesTree(parseInt(sourceId));
+            this.loadMovieCategoriesTree(parseInt(sourceId), requestId);
         } else if (this.contentType === 'series') {
-            this.loadSeriesCategoriesTree(parseInt(sourceId));
+            this.loadSeriesCategoriesTree(parseInt(sourceId), requestId);
         } else {
-            this.loadContentTree(parseInt(sourceId));
+            this.loadContentTree(parseInt(sourceId), requestId);
         }
     }
 
@@ -893,7 +895,7 @@ class SourceManager {
     /**
      * Load content tree for a source
      */
-    async loadContentTree(sourceId) {
+    async loadContentTree(sourceId, requestId = ++this.contentLoadRequestId) {
         this.contentTree.innerHTML = '<p class="hint">Loading...</p>';
         this.treeData = { type: 'channels', sourceId, groups: [] };
         this.pendingAllVisibility = null;
@@ -901,6 +903,7 @@ class SourceManager {
 
         try {
             const source = await API.sources.getById(sourceId);
+            if (requestId !== this.contentLoadRequestId) return;
             let channels = [];
             let categories = [];
             let streams = [];
@@ -911,7 +914,9 @@ class SourceManager {
                 // Use unified Xtream API endpoints - backend supports both source types
                 // Use includeHidden to show ALL items in the content manager
                 categories = await API.proxy.xtream.liveCategories(sourceId, { includeHidden: true });
+                if (requestId !== this.contentLoadRequestId) return;
                 streams = await API.proxy.xtream.liveStreams(sourceId, null, { includeHidden: true });
+                if (requestId !== this.contentLoadRequestId) return;
 
                 channels = streams;
                 categories.forEach(cat => {
@@ -980,6 +985,7 @@ class SourceManager {
             this.renderTree();
 
         } catch (err) {
+            if (requestId !== this.contentLoadRequestId) return;
             console.error('Error loading content tree:', err);
             this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading content</p>';
         }
@@ -1172,13 +1178,14 @@ class SourceManager {
     /**
      * Load movie categories tree for a source
      */
-    async loadMovieCategoriesTree(sourceId) {
+    async loadMovieCategoriesTree(sourceId, requestId = ++this.contentLoadRequestId) {
         this.contentTree.innerHTML = '<p class="hint">Loading movie categories...</p>';
         this.treeData = { type: 'movies', sourceId, groups: [] };
         this.pendingAllVisibility = null;
 
         try {
             const source = await API.sources.getById(sourceId);
+            if (requestId !== this.contentLoadRequestId) return;
 
             if (source.type !== 'xtream') {
                 this.contentTree.innerHTML = '<p class="hint">Movie categories are only available for Xtream sources</p>';
@@ -1186,6 +1193,7 @@ class SourceManager {
             }
 
             const categories = await API.proxy.xtream.vodCategories(sourceId, { includeHidden: true });
+            if (requestId !== this.contentLoadRequestId) return;
 
             if (!categories || categories.length === 0) {
                 this.contentTree.innerHTML = '<p class="hint">No movie categories found</p>';
@@ -1225,6 +1233,7 @@ class SourceManager {
             this.renderTree();
 
         } catch (err) {
+            if (requestId !== this.contentLoadRequestId) return;
             console.error('Error loading movie categories:', err);
             this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading movie categories</p>';
         }
@@ -1233,13 +1242,14 @@ class SourceManager {
     /**
      * Load series categories tree for a source
      */
-    async loadSeriesCategoriesTree(sourceId) {
+    async loadSeriesCategoriesTree(sourceId, requestId = ++this.contentLoadRequestId) {
         this.contentTree.innerHTML = '<p class="hint">Loading series categories...</p>';
         this.treeData = { type: 'series', sourceId, groups: [] };
         this.pendingAllVisibility = null;
 
         try {
             const source = await API.sources.getById(sourceId);
+            if (requestId !== this.contentLoadRequestId) return;
 
             if (source.type !== 'xtream') {
                 this.contentTree.innerHTML = '<p class="hint">Series categories are only available for Xtream sources</p>';
@@ -1247,6 +1257,7 @@ class SourceManager {
             }
 
             const categories = await API.proxy.xtream.seriesCategories(sourceId, { includeHidden: true });
+            if (requestId !== this.contentLoadRequestId) return;
 
             if (!categories || categories.length === 0) {
                 this.contentTree.innerHTML = '<p class="hint">No series categories found</p>';
@@ -1276,6 +1287,7 @@ class SourceManager {
             this.renderTree();
 
         } catch (err) {
+            if (requestId !== this.contentLoadRequestId) return;
             console.error('Error loading series categories:', err);
             this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading series categories</p>';
         }
@@ -1445,7 +1457,7 @@ class SourceManager {
         const saveBtn = document.getElementById('content-save');
         if (saveBtn) {
             saveBtn.disabled = true;
-            saveBtn.textContent = '⏳ Saving...';
+            saveBtn.textContent = 'Saving...';
         }
 
         try {
@@ -1462,9 +1474,9 @@ class SourceManager {
                 }
 
                 if (saveBtn) {
-                    saveBtn.textContent = 'âœ“ Saved!';
+                    saveBtn.textContent = 'Saved!';
                     setTimeout(() => {
-                        saveBtn.textContent = 'ðŸ’¾ Save Changes';
+                        saveBtn.textContent = 'Save Changes';
                         saveBtn.disabled = false;
                     }, 1500);
                 }
@@ -1533,7 +1545,7 @@ class SourceManager {
                 if (saveBtn) {
                     saveBtn.textContent = 'No changes';
                     setTimeout(() => {
-                        saveBtn.textContent = '💾 Save Changes';
+                        saveBtn.textContent = 'Save Changes';
                         saveBtn.disabled = false;
                     }, 1500);
                 }
@@ -1563,7 +1575,7 @@ class SourceManager {
                     // Update button with progress
                     if (saveBtn) {
                         const progress = Math.round(((i + batch.length) / items.length) * 100);
-                        saveBtn.textContent = `⏳ ${progress}%`;
+                        saveBtn.textContent = `Saving... ${progress}%`;
                     }
                 }
             };
@@ -1594,9 +1606,9 @@ class SourceManager {
             }
 
             if (saveBtn) {
-                saveBtn.textContent = '✓ Saved!';
+                saveBtn.textContent = 'Saved!';
                 setTimeout(() => {
-                    saveBtn.textContent = '💾 Save Changes';
+                    saveBtn.textContent = 'Save Changes';
                     saveBtn.disabled = false;
                 }, 1500);
             }
@@ -1605,7 +1617,7 @@ class SourceManager {
             console.error('Error saving content changes:', err);
             alert('Failed to save changes: ' + err.message);
             if (saveBtn) {
-                saveBtn.textContent = '💾 Save Changes';
+                saveBtn.textContent = 'Save Changes';
                 saveBtn.disabled = false;
             }
         }

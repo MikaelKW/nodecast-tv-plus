@@ -28,6 +28,14 @@ function contentTypes(value) {
     return null;
 }
 
+function setVisibilityDefault(db, sourceId, type, isHidden) {
+    db.prepare(`
+        INSERT INTO content_visibility_defaults (source_id, type, is_hidden)
+        VALUES (?, ?, ?)
+        ON CONFLICT(source_id, type) DO UPDATE SET is_hidden = excluded.is_hidden
+    `).run(sourceId, type, isHidden ? 1 : 0);
+}
+
 // Helper to map API item types to DB types and tables
 function mapItemType(apiType) {
     switch (apiType) {
@@ -267,13 +275,15 @@ router.post('/show/all', auth.requireAdmin, async (req, res) => {
         let catCount = 0;
         let itemCount = 0;
 
-        // Determine which types to update based on contentType
-        for (const type of types) {
-            const catResult = db.prepare(`UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            catCount += catResult.changes;
-            itemCount += itemResult.changes;
-        }
+        db.transaction(() => {
+            for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, false);
+                const catResult = db.prepare(`UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                catCount += catResult.changes;
+                itemCount += itemResult.changes;
+            }
+        })();
 
         console.log('[Channels] Show all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
@@ -296,13 +306,15 @@ router.post('/hide/all', auth.requireAdmin, async (req, res) => {
         let catCount = 0;
         let itemCount = 0;
 
-        // Determine which types to update based on contentType
-        for (const type of types) {
-            const catResult = db.prepare(`UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            catCount += catResult.changes;
-            itemCount += itemResult.changes;
-        }
+        db.transaction(() => {
+            for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, true);
+                const catResult = db.prepare(`UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                catCount += catResult.changes;
+                itemCount += itemResult.changes;
+            }
+        })();
 
         console.log('[Channels] Hide all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
@@ -348,6 +360,7 @@ router.post('/visibility/apply', auth.requireAdmin, async (req, res) => {
             let itemsUpdated = 0;
 
             for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, baselineHidden);
                 categoriesUpdated += db.prepare(
                     'UPDATE categories SET is_hidden = ? WHERE source_id = ? AND type = ?'
                 ).run(baselineHidden, sourceId, type).changes;

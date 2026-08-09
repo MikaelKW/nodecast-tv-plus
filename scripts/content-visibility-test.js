@@ -51,6 +51,54 @@ async function stopServer(child) {
     if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+async function startServer(dataDirectory, port, secrets) {
+    const child = spawn(process.execPath, ['server/index.js'], {
+        cwd: projectRoot,
+        env: {
+            ...process.env,
+            NODE_ENV: 'test',
+            NODECAST_DATA_DIR: dataDirectory,
+            PORT: String(port),
+            ...secrets,
+            OIDC_ISSUER_URL: '',
+            OIDC_CLIENT_ID: '',
+            OIDC_CLIENT_SECRET: ''
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    await waitForServer(`http://127.0.0.1:${port}`, child);
+    return child;
+}
+
+async function syncNewProviderItems(dataDirectory) {
+    const script = `
+        const syncService = require('./server/services/syncService');
+        (async () => {
+            await syncService.saveCategories(1, 'live', [
+                { category_id: 'category-new', category_name: 'New Category' }
+            ]);
+            await syncService.saveStreams(1, 'live', [
+                { stream_id: 'new-existing-category', name: 'New Existing Category Channel', category_id: 'category-0' },
+                { stream_id: 'new-category-channel', name: 'New Category Channel', category_id: 'category-new' }
+            ], { skipPurge: true });
+        })().then(() => process.exit(0)).catch(error => {
+            console.error(error);
+            process.exit(1);
+        });
+    `;
+    const child = spawn(process.execPath, ['-e', script], {
+        cwd: projectRoot,
+        env: { ...process.env, NODECAST_DATA_DIR: dataDirectory },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    const exitCode = await new Promise(resolve => child.once('exit', resolve));
+    assert.equal(exitCode, 0, stderr);
+}
+
 function seedCatalogue(dataDirectory) {
     process.env.NODECAST_DATA_DIR = dataDirectory;
     const { getDb } = require('../server/db/sqlite');
@@ -108,24 +156,12 @@ async function run() {
         seedCatalogue(dataDirectory);
         const port = await getFreePort();
         const baseUrl = `http://127.0.0.1:${port}`;
-        child = spawn(process.execPath, ['server/index.js'], {
-            cwd: projectRoot,
-            env: {
-                ...process.env,
-                NODE_ENV: 'test',
-                NODECAST_DATA_DIR: dataDirectory,
-                PORT: String(port),
-                JWT_SECRET: crypto.randomBytes(48).toString('hex'),
-                SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
-                TOTP_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex'),
-                OIDC_ISSUER_URL: '',
-                OIDC_CLIENT_ID: '',
-                OIDC_CLIENT_SECRET: ''
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true
-        });
-        await waitForServer(baseUrl, child);
+        const secrets = {
+            JWT_SECRET: crypto.randomBytes(48).toString('hex'),
+            SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
+            TOTP_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex')
+        };
+        child = await startServer(dataDirectory, port, secrets);
 
         const password = crypto.randomBytes(24).toString('base64url');
         const setup = await fetch(`${baseUrl}/api/auth/setup`, {
@@ -172,8 +208,50 @@ async function run() {
         assert.equal(db.prepare("SELECT is_hidden FROM categories WHERE category_id = 'category-0'").get().is_hidden, 1);
         db.close();
 
+        // Reapply the real production pattern, then simulate a restart sync
+        // that discovers provider items which were not present at save time.
+        await applyVisibility(baseUrl, cookie, {
+            sourceId,
+            contentType: 'channels',
+            visible: false,
+            overrides: [{ itemType: 'channel', itemId: '0-0', hidden: false }]
+        });
+        await stopServer(child);
+        child = null;
+        await syncNewProviderItems(dataDirectory);
+
+        db = new Database(path.join(dataDirectory, 'content.db'), { readonly: true });
+        assert.equal(
+            db.prepare("SELECT is_hidden FROM playlist_items WHERE item_id = 'new-existing-category'").get().is_hidden,
+            1
+        );
+        assert.equal(
+            db.prepare("SELECT is_hidden FROM playlist_items WHERE item_id = 'new-category-channel'").get().is_hidden,
+            1
+        );
+        assert.equal(
+            db.prepare("SELECT is_hidden FROM categories WHERE category_id = 'category-new'").get().is_hidden,
+            1
+        );
+        assert.equal(
+            db.prepare("SELECT COUNT(*) AS count FROM playlist_items WHERE type = 'live' AND is_hidden = 0").get().count,
+            1
+        );
+        db.close();
+
+        child = await startServer(dataDirectory, port, secrets);
+        const streamsResponse = await fetch(
+            `${baseUrl}/api/proxy/xtream/${sourceId}/live_streams?includeHidden=true`,
+            { headers: { Cookie: cookie } }
+        );
+        assert.equal(streamsResponse.status, 200);
+        const streams = await streamsResponse.json();
+        assert.equal(streams.filter(stream => !stream.is_hidden).length, 1);
+        assert.equal(streams.find(stream => stream.stream_id === '0-0')?.is_hidden, 0);
+        assert.equal(streams.find(stream => stream.stream_id === 'new-existing-category')?.is_hidden, 1);
+
         console.log(
-            `Content visibility test passed: ${channelCount} channels; `
+            `Content visibility test passed: ${channelCount} channels plus restart-sync additions; `
             + `hide ${hideResult.elapsedMs.toFixed(1)}ms, show ${showResult.elapsedMs.toFixed(1)}ms.`
         );
     } finally {

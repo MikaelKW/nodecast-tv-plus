@@ -112,6 +112,18 @@ function initSchema() {
         );
     `);
 
+    // Default visibility for content discovered during later provider syncs.
+    // This preserves a staged "hide all" or "show all" choice when a large
+    // playlist adds or renumbers items after the choice was saved.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS content_visibility_defaults (
+            source_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1)),
+            PRIMARY KEY (source_id, type)
+        );
+    `);
+
     // User Favorites (per-user)
     db.exec(`
         CREATE TABLE IF NOT EXISTS favorites (

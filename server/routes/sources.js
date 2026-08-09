@@ -167,11 +167,13 @@ router.delete('/:id', auth.requireAdmin, async (req, res) => {
         const deleteItems = db.prepare('DELETE FROM playlist_items WHERE source_id = ?');
         const deleteEpg = db.prepare('DELETE FROM epg_programs WHERE source_id = ?');
         const deleteSyncStatus = db.prepare('DELETE FROM sync_status WHERE source_id = ?');
+        const deleteVisibilityDefaults = db.prepare('DELETE FROM content_visibility_defaults WHERE source_id = ?');
 
         const catResult = deleteCategories.run(sourceId);
         const itemResult = deleteItems.run(sourceId);
         const epgResult = deleteEpg.run(sourceId);
         deleteSyncStatus.run(sourceId);
+        deleteVisibilityDefaults.run(sourceId);
 
         console.log(`[Source] Cascade delete for source ${sourceId}: ${catResult.changes} categories, ${itemResult.changes} items, ${epgResult.changes} EPG programs`);
 
