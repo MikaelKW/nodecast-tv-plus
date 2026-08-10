@@ -270,6 +270,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    // A slow large-playlist estimate must keep the refresh action locked even
+    // while the three-second status poll reports no backend sync yet.
+    let refreshEstimateRequests = 0;
+    await page.route(`**/api/sources/${m3uSource.id}/estimate`, async route => {
+        refreshEstimateRequests += 1;
+        await new Promise(resolve => setTimeout(resolve, 3500));
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ count: 120000, needsWarning: true })
+        });
+    });
+    const m3uRefreshButton = m3uRow.locator('[data-action="refresh"]');
+    await m3uRefreshButton.click();
+    await expect(m3uRefreshButton).toBeDisabled();
+    await page.waitForTimeout(3200);
+    await expect(m3uRefreshButton).toBeDisabled();
+    await expect(m3uRefreshButton).toHaveAttribute('title', 'Preparing refresh...');
+    await page.evaluate(id => window.app.sourceManager.refreshSource(id, 'm3u'), m3uSource.id);
+    await expect(page.locator('#modal-title')).toHaveText(/Large Playlist Warning/);
+    expect(refreshEstimateRequests).toBe(1);
+    await page.locator('#warning-cancel').click();
+    await expect(m3uRefreshButton).toBeEnabled();
+    await page.unroute(`**/api/sources/${m3uSource.id}/estimate`);
+
     const variantSource = await page.evaluate(async url => {
         const response = await fetch('/api/sources', {
             method: 'POST',
@@ -367,6 +392,23 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const hidden = await response.json();
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(3);
+
+    // A later, separate Save that enables one channel after Hide All must also
+    // restore its parent category so the channel is available in Live TV.
+    await page.locator('#content-hide-all').click();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+    await page.locator('.channel-checkbox').first().check();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/proxy/xtream/${id}/live_streams`);
+        const streams = await response.json();
+        return streams.length;
+    }, variantSource.id)).toBe(1);
 
     await page.locator('#content-show-all').click();
     await expect(page.locator('#content-save')).toBeEnabled();

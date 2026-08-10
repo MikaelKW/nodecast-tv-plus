@@ -49,6 +49,34 @@ function mapItemType(apiType) {
     }
 }
 
+function createCategoryVisibilityReconciler(db) {
+    const getItemCategory = db.prepare(`
+        SELECT category_id FROM playlist_items
+        WHERE source_id = ? AND type = ? AND item_id = ?
+    `);
+    const categoryHasVisibleItems = db.prepare(`
+        SELECT 1 FROM playlist_items
+        WHERE source_id = ? AND type = ? AND category_id = ? AND is_hidden = 0
+        LIMIT 1
+    `);
+    const updateCategory = db.prepare(`
+        UPDATE categories SET is_hidden = ?
+        WHERE source_id = ? AND type = ? AND category_id = ?
+    `);
+
+    return (sourceId, type, itemIds) => {
+        const categories = new Set();
+        for (const itemId of itemIds) {
+            const category = getItemCategory.get(sourceId, type, itemId);
+            if (category?.category_id) categories.add(String(category.category_id));
+        }
+        for (const categoryId of categories) {
+            const hasVisibleItems = Boolean(categoryHasVisibleItems.get(sourceId, type, categoryId));
+            updateCategory.run(hasVisibleItems ? 0 : 1, sourceId, type, categoryId);
+        }
+    };
+}
+
 // Get all hidden items (formatted like db.json for frontend compatibility)
 router.get('/hidden', async (req, res) => {
     try {
@@ -111,6 +139,7 @@ router.post('/hide', auth.requireAdmin, async (req, res) => {
         if (!mapping) return res.status(400).json({ error: 'Invalid item type' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
         const idCol = mapping.table === 'categories' ? 'category_id' : 'item_id';
 
         const stmt = db.prepare(`
@@ -120,6 +149,9 @@ router.post('/hide', auth.requireAdmin, async (req, res) => {
         `);
 
         stmt.run(sourceId, mapping.type, itemId);
+        if (mapping.table === 'playlist_items') {
+            reconcileCategories(sourceId, mapping.type, [itemId]);
+        }
 
         res.json({ success: true });
     } catch (err) {
@@ -137,6 +169,7 @@ router.post('/show', auth.requireAdmin, async (req, res) => {
         if (!mapping) return res.status(400).json({ error: 'Invalid item type' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
         const idCol = mapping.table === 'categories' ? 'category_id' : 'item_id';
 
         const stmt = db.prepare(`
@@ -146,6 +179,9 @@ router.post('/show', auth.requireAdmin, async (req, res) => {
         `);
 
         stmt.run(sourceId, mapping.type, itemId);
+        if (mapping.table === 'playlist_items') {
+            reconcileCategories(sourceId, mapping.type, [itemId]);
+        }
 
         res.json({ success: true });
     } catch (err) {
@@ -183,6 +219,7 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
 
         // Prepare statements once
         const hideCat = db.prepare('UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ? AND category_id = ?');
@@ -192,6 +229,7 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
         const hideCatChildren = db.prepare('UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ? AND category_id = ?');
 
         const runBulk = db.transaction((list) => {
+            const touchedItems = new Map();
             for (const item of list) {
                 const mapping = mapItemType(item.itemType);
                 if (mapping) {
@@ -203,8 +241,16 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
                     } else {
                         // Hide individual item
                         hideItem.run(item.sourceId, mapping.type, item.itemId);
+                        const key = `${item.sourceId}:${mapping.type}`;
+                        if (!touchedItems.has(key)) {
+                            touchedItems.set(key, { sourceId: item.sourceId, type: mapping.type, itemIds: [] });
+                        }
+                        touchedItems.get(key).itemIds.push(item.itemId);
                     }
                 }
+            }
+            for (const entry of touchedItems.values()) {
+                reconcileCategories(entry.sourceId, entry.type, entry.itemIds);
             }
         });
 
@@ -226,6 +272,7 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
 
         // Prepare statements once
         const showCat = db.prepare('UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ? AND category_id = ?');
@@ -235,6 +282,7 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
         const showCatChildren = db.prepare('UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ? AND category_id = ?');
 
         const runBulk = db.transaction((list) => {
+            const touchedItems = new Map();
             for (const item of list) {
                 const mapping = mapItemType(item.itemType);
                 if (mapping) {
@@ -246,8 +294,16 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
                     } else {
                         // Show individual item
                         showItem.run(item.sourceId, mapping.type, item.itemId);
+                        const key = `${item.sourceId}:${mapping.type}`;
+                        if (!touchedItems.has(key)) {
+                            touchedItems.set(key, { sourceId: item.sourceId, type: mapping.type, itemIds: [] });
+                        }
+                        touchedItems.get(key).itemIds.push(item.itemId);
                     }
                 }
+            }
+            for (const entry of touchedItems.values()) {
+                reconcileCategories(entry.sourceId, entry.type, entry.itemIds);
             }
         });
 
