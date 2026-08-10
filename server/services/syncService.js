@@ -231,20 +231,25 @@ class SyncService {
         if (!categories || categories.length === 0) return;
         console.log(`[Sync] Saving ${categories.length} ${type} categories for source ${sourceId}...`);
         const db = getDb();
+        const getVisibilityDefault = db.prepare(`
+            SELECT is_hidden FROM content_visibility_defaults
+            WHERE source_id = ? AND type = ?
+        `);
         const stmt = db.prepare(`
-            INSERT INTO categories (id, source_id, category_id, type, name, parent_id, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO categories (id, source_id, category_id, type, name, parent_id, is_hidden, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 data = excluded.data
         `);
 
         const insertBatch = db.transaction((batch) => {
+            const visibilityDefault = getVisibilityDefault.get(sourceId, type)?.is_hidden || 0;
             for (const cat of batch) {
                 const catId = cat.category_id; // standard xtream field
                 const name = cat.category_name;
                 const id = `${sourceId}:${catId}`;
-                stmt.run(id, sourceId, String(catId), type, name, cat.parent_id || null, JSON.stringify(cat));
+                stmt.run(id, sourceId, String(catId), type, name, cat.parent_id || null, visibilityDefault, JSON.stringify(cat));
             }
         });
 
@@ -272,6 +277,10 @@ class SyncService {
         if (!items || items.length === 0) return new Set();
         const db = getDb();
         const { skipPurge = false } = options;
+        const getVisibilityDefault = db.prepare(`
+            SELECT is_hidden FROM content_visibility_defaults
+            WHERE source_id = ? AND type = ?
+        `);
 
         // Collect all IDs we're syncing
         const syncedIds = new Set();
@@ -280,9 +289,9 @@ class SyncService {
             INSERT INTO playlist_items (
                 id, source_id, item_id, type, name, category_id, 
                 stream_icon, stream_url, container_extension, 
-                rating, year, added_at, data
+                rating, year, added_at, is_hidden, data
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 category_id = excluded.category_id,
@@ -292,6 +301,7 @@ class SyncService {
         `);
 
         const insertBatch = db.transaction((batch) => {
+            const visibilityDefault = getVisibilityDefault.get(sourceId, type)?.is_hidden || 0;
             for (const item of batch) {
                 // Map fields based on type
                 let itemId, name, catId, icon, container;
@@ -337,6 +347,7 @@ class SyncService {
                     rating,
                     year,
                     added,
+                    visibilityDefault,
                     JSON.stringify(item)
                 );
             }

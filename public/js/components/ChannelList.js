@@ -327,7 +327,11 @@ class ChannelList {
         });
 
         // 3. Add Favorites
-        const favoritedChannels = this.channels.filter(ch => this.isFavorite(ch.sourceId, ch.id));
+        const favoritedChannels = this.channels.filter(ch => {
+            const rawChannelId = ch.streamId || ch.id;
+            return this.isFavorite(ch.sourceId, ch.id)
+                && !this.isHidden('channel', ch.sourceId, rawChannelId);
+        });
         if (favoritedChannels.length > 0) {
             favoritedChannels.sort((a, b) => a.name.localeCompare(b.name));
             groupedChannels['Favorites'] = favoritedChannels;
@@ -726,11 +730,11 @@ class ChannelList {
                 await this.loadM3uChannels(parseInt(id));
             }
 
-            // Load hidden items and favorites
-            await Promise.all([
-                this.loadHiddenItems(),
-                this.loadFavorites()
-            ]);
+            // Provider endpoints already return visible content only. Loading
+            // every hidden item separately can be enormous for providers where
+            // most of the catalogue is hidden.
+            this.hiddenItems = new Set();
+            await this.loadFavorites();
 
             this.render();
         } catch (err) {
@@ -761,9 +765,9 @@ class ChannelList {
 
             const [initialResults] = await Promise.all([
                 Promise.allSettled(sourceDescriptors.map(fetchSource)),
-                this.loadHiddenItems(),
                 this.loadFavorites()
             ]);
+            this.hiddenItems = new Set();
             const sourceResults = [...initialResults];
             const failedIndexes = sourceResults
                 .map((result, index) => result.status === 'rejected' ? index : -1)

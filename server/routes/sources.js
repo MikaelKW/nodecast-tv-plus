@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { sources } = require('../db');
 const { getDb } = require('../db/sqlite');
@@ -10,6 +11,15 @@ const { redactText, validateHttpUrl } = require('../services/urlSecurity');
 const { fetchWithPolicy } = require('../services/outboundSecurity');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
+
+const limitSourceDeletion = rateLimit({
+    limit: 30,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many source deletion requests. Try again shortly.' }
+});
 
 const maskSource = source => ({
     ...source,
@@ -153,7 +163,7 @@ router.put('/:id', auth.requireAdmin, async (req, res) => {
 });
 
 // Delete source
-router.delete('/:id', auth.requireAdmin, async (req, res) => {
+router.delete('/:id', auth.requireAdmin, limitSourceDeletion, async (req, res) => {
     try {
         const sourceId = parseInt(req.params.id);
         const existing = await sources.getById(sourceId);
@@ -167,11 +177,13 @@ router.delete('/:id', auth.requireAdmin, async (req, res) => {
         const deleteItems = db.prepare('DELETE FROM playlist_items WHERE source_id = ?');
         const deleteEpg = db.prepare('DELETE FROM epg_programs WHERE source_id = ?');
         const deleteSyncStatus = db.prepare('DELETE FROM sync_status WHERE source_id = ?');
+        const deleteVisibilityDefaults = db.prepare('DELETE FROM content_visibility_defaults WHERE source_id = ?');
 
         const catResult = deleteCategories.run(sourceId);
         const itemResult = deleteItems.run(sourceId);
         const epgResult = deleteEpg.run(sourceId);
         deleteSyncStatus.run(sourceId);
+        deleteVisibilityDefaults.run(sourceId);
 
         console.log(`[Source] Cascade delete for source ${sourceId}: ${catResult.changes} categories, ${itemResult.changes} items, ${epgResult.changes} EPG programs`);
 
