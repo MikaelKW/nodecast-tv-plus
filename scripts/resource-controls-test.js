@@ -138,6 +138,41 @@ async function run() {
         });
         assert.equal(oversizedMetadata.status, 400);
 
+        const createSource = await fetch(`${baseUrl}/api/sources`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Controlled deletion limit source',
+                url: 'https://source-control.example.invalid/controlled-source.m3u'
+            })
+        });
+        assert.equal(createSource.status, 201);
+        const source = await createSource.json();
+
+        const deleteSource = await fetch(`${baseUrl}/api/sources/${source.id}`, {
+            method: 'DELETE',
+            headers
+        });
+        assert.equal(deleteSource.status, 200);
+
+        for (let attempt = 1; attempt < 30; attempt += 1) {
+            const missingSource = await fetch(`${baseUrl}/api/sources/999999`, {
+                method: 'DELETE',
+                headers
+            });
+            assert.equal(missingSource.status, 404, `Source deletion attempt ${attempt} was limited early`);
+        }
+
+        const limitedDeletion = await fetch(`${baseUrl}/api/sources/999999`, {
+            method: 'DELETE',
+            headers
+        });
+        assert.equal(limitedDeletion.status, 429);
+        assert.deepEqual(await limitedDeletion.json(), {
+            error: 'Too many source deletion requests. Try again shortly.'
+        });
+
         console.log('Resource-control regression tests passed.');
     } catch (error) {
         console.error(output);
