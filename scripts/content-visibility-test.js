@@ -146,6 +146,16 @@ async function applyVisibility(baseUrl, cookie, body) {
     return { elapsedMs, payload: JSON.parse(responseText) };
 }
 
+async function applyBulkVisibility(baseUrl, cookie, action, items) {
+    const response = await fetch(`${baseUrl}/api/channels/${action}/bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ items })
+    });
+    const responseText = await response.text();
+    assert.equal(response.status, 200, responseText);
+}
+
 async function run() {
     const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-content-visibility-'));
     const dataDirectory = path.join(testRoot, 'data');
@@ -189,6 +199,44 @@ async function run() {
         let db = new Database(path.join(dataDirectory, 'content.db'), { readonly: true });
         assert.equal(db.prepare("SELECT COUNT(*) AS count FROM playlist_items WHERE type = 'live' AND is_hidden = 0").get().count, 1);
         assert.equal(db.prepare("SELECT COUNT(*) AS count FROM categories WHERE type = 'live' AND is_hidden = 0").get().count, 1);
+        db.close();
+
+        // Recreate the separate-save path used when one channel is enabled
+        // after a previous Hide All operation. The parent category must be
+        // restored too or Live TV will filter out the checked channel.
+        await applyVisibility(baseUrl, cookie, {
+            sourceId,
+            contentType: 'channels',
+            visible: false,
+            overrides: []
+        });
+        await applyBulkVisibility(baseUrl, cookie, 'show', [{
+            sourceId,
+            itemType: 'channel',
+            itemId: '0-0'
+        }]);
+
+        db = new Database(path.join(dataDirectory, 'content.db'), { readonly: true });
+        assert.equal(db.prepare("SELECT is_hidden FROM playlist_items WHERE item_id = '0-0'").get().is_hidden, 0);
+        assert.equal(db.prepare("SELECT is_hidden FROM categories WHERE category_id = 'category-0'").get().is_hidden, 0);
+        db.close();
+
+        const visibleStreamsResponse = await fetch(
+            `${baseUrl}/api/proxy/xtream/${sourceId}/live_streams`,
+            { headers: { Cookie: cookie } }
+        );
+        assert.equal(visibleStreamsResponse.status, 200);
+        const visibleStreams = await visibleStreamsResponse.json();
+        assert.equal(visibleStreams.length, 1);
+        assert.equal(visibleStreams[0].stream_id, '0-0');
+
+        await applyBulkVisibility(baseUrl, cookie, 'hide', [{
+            sourceId,
+            itemType: 'channel',
+            itemId: '0-0'
+        }]);
+        db = new Database(path.join(dataDirectory, 'content.db'), { readonly: true });
+        assert.equal(db.prepare("SELECT is_hidden FROM categories WHERE category_id = 'category-0'").get().is_hidden, 1);
         db.close();
 
         const showResult = await applyVisibility(baseUrl, cookie, {

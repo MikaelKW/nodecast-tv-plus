@@ -20,6 +20,7 @@ class SourceManager {
         this.contentLoadRequestId = 0; // Ignore stale async responses after tab/source changes
         this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
         this.sourceSubmissionInProgress = false;
+        this.sourceRefreshesInProgress = new Set();
 
         this.init();
     }
@@ -671,12 +672,17 @@ class SourceManager {
      * Refresh source data
      */
     async refreshSource(id, type) {
+        const refreshKey = String(id);
+        if (this.sourceRefreshesInProgress.has(refreshKey)) return;
+
+        this.sourceRefreshesInProgress.add(refreshKey);
         try {
             const btn = document.querySelector(`.source-item[data-id="${id}"] [data-action="refresh"]`);
             if (btn) {
                 btn.disabled = true;
-                const icon = btn.querySelector('.icon');
-                if (icon) icon.classList.add('spin');
+                btn.classList.add('syncing');
+                btn.innerHTML = `<span class="spin">${Icons.refresh}</span>`;
+                btn.title = 'Preparing refresh...';
             }
 
             // Check M3U size before syncing (large playlist warning)
@@ -692,12 +698,6 @@ class SourceManager {
                             cancelText: 'Cancel'
                         });
                         if (!proceed) {
-                            // Reset button state
-                            if (btn) {
-                                btn.disabled = false;
-                                const icon = btn.querySelector('.icon');
-                                if (icon) icon.classList.remove('spin');
-                            }
                             return;
                         }
                     }
@@ -764,14 +764,18 @@ class SourceManager {
                 alert('M3U playlist synced & refreshed!');
             }
 
-            if (btn) {
-                btn.disabled = false;
-                const icon = btn.querySelector('.icon');
-                if (icon) icon.classList.remove('spin');
-            }
         } catch (err) {
             console.error('Error refreshing source:', err);
             alert('Refresh failed: ' + err.message);
+        } finally {
+            this.sourceRefreshesInProgress.delete(refreshKey);
+            const currentBtn = document.querySelector(`.source-item[data-id="${id}"] [data-action="refresh"]`);
+            if (currentBtn) {
+                currentBtn.disabled = false;
+                currentBtn.innerHTML = Icons.refresh;
+                currentBtn.classList.remove('syncing');
+                currentBtn.title = 'Refresh Data';
+            }
         }
     }
 
@@ -1656,6 +1660,7 @@ class SourceManager {
             // Just check if ANY sync is active/failed for this source
             const sourceStatuses = statuses.filter(s => s.source_id === id);
             const isSyncing = sourceStatuses.some(s => s.status === 'syncing');
+            const isPreparingRefresh = this.sourceRefreshesInProgress.has(String(id));
             const hasError = sourceStatuses.some(s => s.status === 'error');
             const lastSync = sourceStatuses.map(s => s.last_sync).sort().pop();
 
@@ -1663,14 +1668,14 @@ class SourceManager {
             if (btn) {
                 const icon = btn.querySelector('.icon') || btn; // icon inside button or button content
                 // If syncing, spin the refresh icon
-                if (isSyncing) {
+                if (isSyncing || isPreparingRefresh) {
                     btn.disabled = true;
                     btn.classList.add('syncing'); // Custom style?
                     // Ensure spin class is added (font awesome or similar)
                     // The icon is usually SVH in `Icons.refresh`.
                     // We can add a class to the SVG parent or button
                     btn.innerHTML = `<span class="spin">${Icons.refresh}</span>`;
-                    btn.title = "Syncing...";
+                    btn.title = isSyncing ? 'Syncing...' : 'Preparing refresh...';
                 } else if (hasError) {
                     btn.disabled = false;
                     btn.innerHTML = Icons.refresh;
