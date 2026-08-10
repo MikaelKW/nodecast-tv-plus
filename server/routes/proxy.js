@@ -81,7 +81,7 @@ const upstreamSingleFlight = new SingleFlight();
 function getCategoriesFromDb(sourceId, type, includeHidden = false) {
     const db = getDb();
     let query = `
-        SELECT category_id, name as category_name, parent_id 
+        SELECT category_id, name as category_name, parent_id, is_hidden
         FROM categories 
         WHERE source_id = ? AND type = ?
     `;
@@ -97,12 +97,19 @@ function getCategoriesFromDb(sourceId, type, includeHidden = false) {
 function getStreamsFromDb(sourceId, type, categoryId = null, includeHidden = false) {
     const db = getDb();
     let query = `
-        SELECT item_id, name, stream_icon, added_at, rating, container_extension, year, category_id, data
+        SELECT item_id, name, stream_icon, added_at, rating, container_extension, year, category_id, is_hidden, data
         FROM playlist_items 
         WHERE source_id = ? AND type = ?
     `;
     if (!includeHidden) {
         query += ` AND is_hidden = 0`;
+        query += ` AND NOT EXISTS (
+            SELECT 1 FROM categories c
+            WHERE c.source_id = playlist_items.source_id
+              AND c.type = playlist_items.type
+              AND c.category_id = playlist_items.category_id
+              AND c.is_hidden = 1
+        )`;
     }
     const params = [sourceId, type];
 
@@ -132,6 +139,7 @@ function getStreamsFromDb(sourceId, type, categoryId = null, includeHidden = fal
             rating: item.rating,
             container_extension: item.container_extension,
             category_id: item.category_id,
+            is_hidden: item.is_hidden,
             // Normalize EPG channel ID: Xtream uses epg_channel_id, M3U uses tvgId
             epg_channel_id: data.epg_channel_id || data.tvgId || null
         };

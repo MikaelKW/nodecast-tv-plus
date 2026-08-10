@@ -356,8 +356,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(0);
 
-    // A specific checkbox edit after Hide All cancels the whole-source shortcut
-    // and preserves the visible exception when the staged changes are saved.
+    // A specific checkbox edit after Hide All remains a compact exception to
+    // the whole-source operation and preserves that exception when saved.
     await page.locator('#content-hide-all').click();
     await page.locator('.channel-checkbox').first().check();
     await expect(page.locator('#content-save')).toBeEnabled();
@@ -376,6 +376,29 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const hidden = await response.json();
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(0);
+
+    // A slower response from a previously selected content type must not
+    // replace the current Channels view with an obsolete Movies message.
+    let sourceRequestCount = 0;
+    let firstSourceRequestSeen;
+    const firstSourceRequest = new Promise(resolve => { firstSourceRequestSeen = resolve; });
+    await page.route(`**/api/sources/${variantSource.id}`, async route => {
+        sourceRequestCount += 1;
+        const requestNumber = sourceRequestCount;
+        if (requestNumber === 1) firstSourceRequestSeen();
+        const response = await route.fetch();
+        if (requestNumber === 1) await new Promise(resolve => setTimeout(resolve, 500));
+        await route.fulfill({ response });
+    });
+    await page.locator('#content-type-movies').click();
+    await firstSourceRequest;
+    await page.locator('#content-type-channels').click();
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await page.waitForTimeout(600);
+    await expect(page.locator('#content-type-channels')).toHaveClass(/active/);
+    await expect(page.locator('#content-tree')).not.toContainText('Movie categories are only available');
+    await page.unroute(`**/api/sources/${variantSource.id}`);
+    await expect(page.locator('#content-save')).toHaveText('Save Changes');
 
     await page.locator('.tab[data-tab="sources"]').click();
 
