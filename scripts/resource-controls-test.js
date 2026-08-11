@@ -49,6 +49,27 @@ async function stopServer(child) {
     if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+async function assertRateLimit({
+    url,
+    attempts,
+    options,
+    expectedStatuses,
+    expectedError
+}) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const response = await fetch(url, options);
+        assert.ok(
+            expectedStatuses.includes(response.status),
+            `Request ${attempt} to ${url} returned ${response.status}`
+        );
+    }
+
+    const limited = await fetch(url, options);
+    assert.equal(limited.status, 429, `Rate limit did not activate for ${url}`);
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1);
+    assert.deepEqual(await limited.json(), { error: expectedError });
+}
+
 async function run() {
     const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-resource-controls-'));
     const port = await getFreePort();
@@ -171,6 +192,49 @@ async function run() {
         assert.equal(limitedDeletion.status, 429);
         assert.deepEqual(await limitedDeletion.json(), {
             error: 'Too many source deletion requests. Try again shortly.'
+        });
+
+        await assertRateLimit({
+            url: `${baseUrl}/api/sources/status`,
+            attempts: 120,
+            options: { headers },
+            expectedStatuses: [200],
+            expectedError: 'Too many source-status requests. Try again shortly.'
+        });
+
+        await assertRateLimit({
+            url: `${baseUrl}/api/sources/999999/test`,
+            attempts: 20,
+            options: { method: 'POST', headers, body: '{}' },
+            expectedStatuses: [404],
+            expectedError: 'Too many source connection tests. Try again shortly.'
+        });
+
+        await assertRateLimit({
+            url: `${baseUrl}/api/channels/hidden`,
+            attempts: 300,
+            options: { headers },
+            expectedStatuses: [200],
+            expectedError: 'Too many content-visibility requests. Try again shortly.'
+        });
+
+        await assertRateLimit({
+            url: `${baseUrl}/api/channels/hide`,
+            attempts: 120,
+            options: {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ sourceId: 999999, itemType: 'group', itemId: 'controlled' })
+            },
+            expectedStatuses: [200],
+            expectedError: 'Too many content-visibility changes. Try again shortly.'
+        });
+
+        await assertRateLimit({
+            url: `${baseUrl}/api/auth/oidc/login`,
+            attempts: 60,
+            expectedStatuses: [503],
+            expectedError: 'Too many single sign-on requests. Try again shortly.'
         });
 
         console.log('Resource-control regression tests passed.');
