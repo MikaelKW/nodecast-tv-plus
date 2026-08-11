@@ -4,6 +4,42 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.5.3] - 2026-08-11
+
+This maintenance release improves large-provider reliability, preserves distinct channel variants, adds release-update visibility, and reduces the production container footprint.
+
+### Added
+
+- Add a dedicated About tab with the installed version, privacy-preserving stable-release checks, a manual update action, and official repository and release links ([#4]).
+- Add Show Results and Hide Results controls so filtered Manage Content matches can be staged together before explicitly saving the changes ([#3]).
+
+### Changed
+
+- Reduce the production container's runtime package and development-tool footprint while retaining Node.js, FFmpeg, Python, hardware detection, and health checks ([#283]).
+- Refresh runtime base packages during release builds and keep the final image subject to the fixable High/Critical vulnerability gate ([#283]).
+- Preserve source-wide Manage Content visibility choices as later synchronization adds or updates categories and channels ([#3]).
+
+### Fixed
+
+- Preserve independent 4K, FHD, HD, and SD Live TV streams when provider naming differs only by common quality suffixes ([#266]).
+- Retain each source's last-known-good Live TV and EPG catalogue when a transient provider refresh still fails after its bounded retry ([#273]).
+- Keep large-playlist manual refresh controls locked throughout estimation, warning confirmation or cancellation, synchronization, and cleanup so overlapping requests and duplicate dialogs cannot start ([#298]).
+- Keep Manage Content response state consistent during rapid tab changes and preserve individually selected channels after source-wide visibility changes, synchronization, and container restart ([#3]).
+- Cancel hidden Settings synchronization-status requests cleanly during navigation without reporting expected cancellations as application errors.
+
+### Security
+
+- Minimize unnecessary production-image packages and tools, refresh operating-system packages during release builds, and retain automated dependency, container, CodeQL, and runtime vulnerability checks ([#283]).
+- Apply a dedicated per-account limit to administrative source deletion.
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.5.3`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Migration from the published 2.5.2 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Stable images are available from both `ghcr.io/mikaelkw/nodecast-tv-plus` and `mikaelkw/nodecast-tv-plus`; GHCR remains the canonical registry.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.5.2` and the existing deployment secrets.
+
 ## [2.5.2] - 2026-07-30
 
 This focused patch release bounds authenticated history and provider-metadata work and makes Continue Watching preserve manually selected playback positions.
@@ -302,6 +338,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.5.3]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.4.0...v2.5.0
@@ -370,3 +407,9 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#258]: https://github.com/MikaelKW/nodecast-tv-plus/issues/258
 [#261]: https://github.com/MikaelKW/nodecast-tv-plus/pull/261
 [#272]: https://github.com/MikaelKW/nodecast-tv-plus/issues/272
+[#3]: https://github.com/MikaelKW/nodecast-tv-plus/issues/3
+[#4]: https://github.com/MikaelKW/nodecast-tv-plus/issues/4
+[#266]: https://github.com/MikaelKW/nodecast-tv-plus/issues/266
+[#273]: https://github.com/MikaelKW/nodecast-tv-plus/issues/273
+[#283]: https://github.com/MikaelKW/nodecast-tv-plus/issues/283
+[#298]: https://github.com/MikaelKW/nodecast-tv-plus/issues/298

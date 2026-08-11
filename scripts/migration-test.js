@@ -29,8 +29,8 @@ const baselines = [
         context: 'https://github.com/technomancer702/nodecast-tv.git#0e26a90dae211cf9ed4c7adc8941ec9fbddec972'
     },
     {
-        version: '2.5.1',
-        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.5.1',
+        version: '2.5.2',
+        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.5.2',
         kind: 'plus'
     }
 ];
