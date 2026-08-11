@@ -184,6 +184,64 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
         .toHaveAttribute('aria-label', 'Show password');
 
+    // About uses a fixed server-side GitHub endpoint. Keep the browser test
+    // deterministic while covering current, update-available, and disabled UI states.
+    let automaticUpdateChecks = true;
+    let manualUpdateChecks = 0;
+    page.on('request', request => {
+        if (request.method() !== 'PUT' || !request.url().endsWith('/api/settings')) return;
+        const requested = request.postDataJSON()?.automaticUpdateChecks;
+        if (typeof requested === 'boolean') automaticUpdateChecks = requested;
+    });
+    await page.route('**/api/settings/about**', async route => {
+        const manual = route.request().method() === 'POST';
+        if (manual) manualUpdateChecks += 1;
+        const latestVersion = manual ? '2.5.3' : '2.5.2';
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                currentVersion: '2.5.2',
+                latestVersion,
+                releaseUrl: `https://github.com/MikaelKW/nodecast-tv-plus/releases/tag/v${latestVersion}`,
+                publishedAt: '2026-08-01T08:00:00.000Z',
+                lastCheckedAt: '2026-08-01T09:00:00.000Z',
+                lastErrorAt: null,
+                automaticChecksEnabled: automaticUpdateChecks,
+                updateAvailable: manual,
+                state: automaticUpdateChecks || manual
+                    ? (manual ? 'update-available' : 'up-to-date')
+                    : 'disabled'
+            })
+        });
+    });
+
+    await page.locator('#about-tab').click();
+    await expect(page.locator('#tab-about')).toHaveClass(/active/);
+    await expect(page.locator('#about-current-version')).toHaveText('2.5.2');
+    await expect(page.locator('#about-update-badge')).toHaveText('Up to date');
+    await expect(page.locator('#about-latest-version')).toHaveText('2.5.2');
+    await expect(page.locator('#about-release-link'))
+        .toHaveAttribute('href', 'https://github.com/MikaelKW/nodecast-tv-plus/releases/tag/v2.5.2');
+
+    await page.locator('#about-check-updates').click();
+    await expect(page.locator('#about-update-badge')).toHaveText('Update available');
+    await expect(page.locator('#about-latest-version')).toHaveText('2.5.3');
+    await expect(page.locator('#about-release-link')).toHaveText('View release');
+    expect(manualUpdateChecks).toBe(1);
+
+    await page.locator('#setting-automatic-update-checks + .toggle-slider').click();
+    await expect(page.locator('#setting-automatic-update-checks')).not.toBeChecked();
+    await expect(page.locator('#about-update-badge')).toHaveText('Automatic checks off');
+    await expect(page.locator('#about-preference-status')).toHaveText(
+        'Automatic update checks disabled. Manual checks remain available.'
+    );
+    expect(await page.evaluate(async () => (await API.settings.get()).automaticUpdateChecks)).toBe(false);
+    await page.locator('#setting-automatic-update-checks + .toggle-slider').click();
+    await expect(page.locator('#setting-automatic-update-checks')).toBeChecked();
+    await expect(page.locator('#about-preference-status')).toHaveText('Automatic update checks enabled.');
+    expect(await page.evaluate(async () => (await API.settings.get()).automaticUpdateChecks)).toBe(true);
+
     await page.locator('.tab[data-tab="sources"]').click();
     await expect(page.locator('#tab-sources')).toHaveClass(/active/);
     await page.locator('#add-m3u').click();
@@ -212,6 +270,180 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    // A slow large-playlist estimate must keep the refresh action locked even
+    // while the three-second status poll reports no backend sync yet.
+    let refreshEstimateRequests = 0;
+    await page.route(`**/api/sources/${m3uSource.id}/estimate`, async route => {
+        refreshEstimateRequests += 1;
+        await new Promise(resolve => setTimeout(resolve, 3500));
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ count: 120000, needsWarning: true })
+        });
+    });
+    const m3uRefreshButton = m3uRow.locator('[data-action="refresh"]');
+    await m3uRefreshButton.click();
+    await expect(m3uRefreshButton).toBeDisabled();
+    await page.waitForTimeout(3200);
+    await expect(m3uRefreshButton).toBeDisabled();
+    await expect(m3uRefreshButton).toHaveAttribute('title', 'Preparing refresh...');
+    await page.evaluate(id => window.app.sourceManager.refreshSource(id, 'm3u'), m3uSource.id);
+    await expect(page.locator('#modal-title')).toHaveText(/Large Playlist Warning/);
+    expect(refreshEstimateRequests).toBe(1);
+    await page.locator('#warning-cancel').click();
+    await expect(m3uRefreshButton).toBeEnabled();
+    await page.unroute(`**/api/sources/${m3uSource.id}/estimate`);
+
+    const variantSource = await page.evaluate(async url => {
+        const response = await fetch('/api/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'm3u',
+                name: 'Controlled Quality Variants',
+                url
+            })
+        });
+        if (!response.ok) throw new Error(`Variant source creation failed: ${response.status}`);
+        return response.json();
+    }, `${fixtureBaseUrl}/variant-playlist.m3u`);
+    await waitForSync(page, variantSource.id);
+
+    // Search-scoped visibility changes affect only the filtered results and
+    // remain staged until the existing Save Changes action is used.
+    await page.locator('.tab[data-tab="content"]').click();
+    await expect(page.locator('#tab-content')).toHaveClass(/active/);
+    await page.locator('#content-source-select').selectOption(String(variantSource.id));
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await page.locator('.content-group-header').click();
+    await expect(page.locator('#content-show-results')).toBeDisabled();
+    await expect(page.locator('#content-hide-results')).toBeDisabled();
+
+    await page.locator('#content-search').fill('FHD');
+    await expect(page.locator('#content-show-results')).toBeEnabled();
+    await expect(page.locator('#content-hide-results')).toBeEnabled();
+    await expect(page.locator('.channel-checkbox')).toHaveCount(1);
+    await expect(page.locator('.channel-checkbox')).toBeChecked();
+    await page.locator('#content-hide-results').click();
+    await expect(page.locator('.channel-checkbox')).not.toBeChecked();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(1);
+
+    await page.locator('#content-search').fill('Quality Variant');
+    await expect(page.locator('.channel-checkbox')).toHaveCount(4);
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(3);
+    await page.locator('#content-show-results').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    await page.locator('#content-search').locator('..').locator('.search-clear').click();
+    await expect(page.locator('#content-show-results')).toBeDisabled();
+    await expect(page.locator('#content-hide-results')).toBeDisabled();
+
+    // Whole-source actions follow the same staged workflow: the UI changes
+    // immediately, but the server is unchanged until Save Changes is clicked.
+    await page.locator('#content-hide-all').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(0);
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+
+    await page.locator('#content-show-all').click();
+    await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    // A specific checkbox edit after Hide All remains a compact exception to
+    // the whole-source operation and preserves that exception when saved.
+    await page.locator('#content-hide-all').click();
+    await page.locator('.channel-checkbox').first().check();
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(3);
+
+    // A later, separate Save that enables one channel after Hide All must also
+    // restore its parent category so the channel is available in Live TV.
+    await page.locator('#content-hide-all').click();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(4);
+    await page.locator('.channel-checkbox').first().check();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/proxy/xtream/${id}/live_streams`);
+        const streams = await response.json();
+        return streams.length;
+    }, variantSource.id)).toBe(1);
+
+    await page.locator('#content-show-all').click();
+    await expect(page.locator('#content-save')).toBeEnabled();
+    await page.locator('#content-save').click();
+    await expect.poll(async () => page.evaluate(async id => {
+        const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
+        const hidden = await response.json();
+        return hidden.filter(item => item.item_type === 'channel').length;
+    }, variantSource.id)).toBe(0);
+
+    // A slower response from a previously selected content type must not
+    // replace the current Channels view with an obsolete Movies message.
+    let sourceRequestCount = 0;
+    let firstSourceRequestSeen;
+    const firstSourceRequest = new Promise(resolve => { firstSourceRequestSeen = resolve; });
+    await page.route(`**/api/sources/${variantSource.id}`, async route => {
+        sourceRequestCount += 1;
+        const requestNumber = sourceRequestCount;
+        if (requestNumber === 1) firstSourceRequestSeen();
+        const response = await route.fetch();
+        if (requestNumber === 1) await new Promise(resolve => setTimeout(resolve, 500));
+        await route.fulfill({ response });
+    });
+    await page.locator('#content-type-movies').click();
+    await firstSourceRequest;
+    await page.locator('#content-type-channels').click();
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await page.waitForTimeout(600);
+    await expect(page.locator('#content-type-channels')).toHaveClass(/active/);
+    await expect(page.locator('#content-tree')).not.toContainText('Movie categories are only available');
+    await page.unroute(`**/api/sources/${variantSource.id}`);
+    await expect(page.locator('#content-save')).toHaveText('Save Changes');
+
+    await page.locator('.tab[data-tab="sources"]').click();
+
     // One unavailable provider must not prevent later healthy providers from
     // appearing in Live TV. This protects fresh sessions from retaining a
     // partially loaded channel list when an earlier source fails.
@@ -230,11 +462,14 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, `${fixtureBaseUrl}/playlist.m3u`);
     await waitForSync(page, healthyAfterFailureSource.id);
 
-    const partialSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
+    const retainedSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
         const originalCategories = API.proxy.xtream.liveCategories;
         const originalStreams = API.proxy.xtream.liveStreams;
         const originalConsoleError = console.error;
         const errors = [];
+        const failedChannelsBefore = window.app.channelList.channels.filter(channel =>
+            String(channel.sourceId) === String(failedId)
+        ).length;
 
         API.proxy.xtream.liveCategories = (sourceId, options) => (
             String(sourceId) === String(failedId)
@@ -253,6 +488,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
             return {
+                failedChannelsBefore,
                 failedChannels: window.app.channelList.channels.filter(channel =>
                     String(channel.sourceId) === String(failedId)
                 ).length,
@@ -268,9 +504,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         }
     }, { failedId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(partialSourceLoad.failedChannels).toBe(0);
-    expect(partialSourceLoad.healthyChannels).toBeGreaterThan(0);
-    expect(partialSourceLoad.errors.some(message =>
+    expect(retainedSourceLoad.failedChannelsBefore).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedChannels).toBe(retainedSourceLoad.failedChannelsBefore);
+    expect(retainedSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(retainedSourceLoad.errors.some(message =>
         message.includes(`Error loading source ${m3uSource.id}`)
     )).toBe(true);
 
@@ -512,6 +749,37 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(controlledSeries).toBeVisible();
     await expect(seriesDetails).toBeHidden();
 
+    // Leaving Settings while its sync-status request is pending must cancel
+    // the request without reporting an application error during navigation.
+    const syncStatusErrorsBefore = browserErrors.length;
+    let releaseSyncStatusRequest;
+    let markSyncStatusStarted;
+    const syncStatusStarted = new Promise(resolve => {
+        markSyncStatusStarted = resolve;
+    });
+    await page.route('**/api/settings/sync-status', async route => {
+        markSyncStatusStarted();
+        await new Promise(resolve => {
+            releaseSyncStatusRequest = resolve;
+        });
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ lastSyncTime: null })
+        }).catch(() => {});
+    });
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await syncStatusStarted;
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await expect(page.locator('#page-series')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(
+        () => window.app.pages.settings.syncStatusRequest === null
+    )).toBe(true);
+    releaseSyncStatusRequest();
+    await page.unroute('**/api/settings/sync-status');
+    await page.waitForTimeout(100);
+    expect(browserErrors.slice(syncStatusErrorsBefore)).toEqual([]);
+
     // Invert the choices to prove Series can be hidden independently while
     // the same source remains available in Live TV and Movies.
     await page.locator('.nav-link[data-page="settings"]').click();
@@ -652,6 +920,17 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await page.locator('#source-select').selectOption(`m3u:${variantSource.id}`);
+    const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(variantGroup).toContainText('4');
+    await variantGroup.click();
+    for (const name of ['Quality Variant 4K', 'Quality Variant FHD', 'Quality Variant HD', 'Quality Variant SD']) {
+        await expect(page.locator('.channel-name', { hasText: name, exact: true })).toBeVisible();
+    }
+    await page.locator('#channel-search').fill('Quality Variant');
+    await expect(page.locator('.channel-item')).toHaveCount(4);
+    await page.locator('#channel-search').fill('');
+    await page.locator('#source-select').selectOption('');
     await page.locator('.group-header', { hasText: 'Local Test' }).click();
     await expect(page.locator('.channel-name', { hasText: 'NodeCast Test Pattern' })).toBeVisible();
     await page.locator('.channel-item', { hasText: 'NodeCast Test Pattern' }).click();

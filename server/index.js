@@ -4,6 +4,7 @@ require('dotenv').config();
 const path = require('path');
 const passport = require('passport');
 const syncService = require('./services/syncService');
+const releaseUpdateService = require('./services/releaseUpdates');
 const securityConfig = require('./config/security');
 const basePathConfig = require('./config/basePath');
 const { configuredProxyTrust } = require('./config/proxyTrust');
@@ -212,6 +213,7 @@ async function shutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
     applicationReady = false;
+    releaseUpdateService.stop();
     console.log(`${signal} received, shutting down...`);
 
     for (const { name, plugin } of loadedPlugins) {
@@ -306,6 +308,8 @@ server = app.listen(PORT, async () => {
         console.log('[Test] Background sync and hardware detection disabled');
         return;
     }
+
+    releaseUpdateService.start();
 
     // Trigger background sync with delay to allow server to settle
     setTimeout(async () => {

@@ -42,6 +42,8 @@ function initSchema() {
             data JSON -- Extra provider data
         );
         CREATE INDEX IF NOT EXISTS idx_categories_source_type ON categories(source_id, type);
+        CREATE INDEX IF NOT EXISTS idx_categories_source_type_category
+            ON categories(source_id, type, category_id);
     `);
 
     // Playlist Items (Channels, Movies, Series, Episodes)
@@ -73,6 +75,10 @@ function initSchema() {
         );
         CREATE INDEX IF NOT EXISTS idx_items_source_type ON playlist_items(source_id, type);
         CREATE INDEX IF NOT EXISTS idx_items_category ON playlist_items(source_id, category_id);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_item
+            ON playlist_items(source_id, type, item_id);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_category_hidden
+            ON playlist_items(source_id, type, category_id, is_hidden);
     `);
 
     // EPG Programs
@@ -102,6 +108,18 @@ function initSchema() {
             last_sync INTEGER NOT NULL,
             status TEXT, -- 'success', 'error', 'syncing'
             error TEXT,
+            PRIMARY KEY (source_id, type)
+        );
+    `);
+
+    // Default visibility for content discovered during later provider syncs.
+    // This preserves a staged "hide all" or "show all" choice when a large
+    // playlist adds or renumbers items after the choice was saved.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS content_visibility_defaults (
+            source_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1)),
             PRIMARY KEY (source_id, type)
         );
     `);

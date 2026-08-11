@@ -1734,6 +1734,87 @@ video::cue {
   text-align: center;
 }
 
+.about-summary-card,
+.about-update-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.about-summary-card {
+  justify-content: flex-start;
+}
+
+.about-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+
+.about-version-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.about-version-list>div {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(140px, 2fr);
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.about-version-list dt {
+  color: var(--color-text-muted);
+}
+
+.about-version-list dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.about-status-badge {
+  display: inline-flex;
+  padding: 4px var(--space-sm);
+  margin-bottom: var(--space-xs);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.about-status-badge[data-state="up-to-date"] {
+  color: var(--color-success);
+}
+
+.about-status-badge[data-state="update-available"] {
+  color: var(--color-accent);
+}
+
+.about-status-badge[data-state="unavailable"] {
+  color: var(--color-error);
+}
+
+.about-update-actions,
+.about-project-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.about-privacy-note {
+  margin-top: var(--space-sm);
+}
+
 /* Toggle Switch */
 .setting-toggle {
   position: relative;
@@ -2239,6 +2320,7 @@ kbd {
 
 .content-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   margin-left: auto;
 }
@@ -2989,6 +3071,18 @@ kbd {
     align-items: stretch;
     padding: var(--space-sm);
     gap: var(--space-sm);
+  }
+
+  .about-summary-card,
+  .about-update-card {
+    align-items: stretch;
+    flex-direction: column;
+    padding: var(--space-md);
+  }
+
+  .about-version-list>div {
+    grid-template-columns: 1fr;
+    gap: var(--space-xs);
   }
 
   .setting-info {

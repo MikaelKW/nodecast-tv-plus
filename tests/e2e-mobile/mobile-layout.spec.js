@@ -220,8 +220,41 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await expectInsideScroller(page, '.interface-settings-actions', '.settings-container');
 
     await page.locator('.tab[data-tab="content"]').click();
+    await page.locator('#content-source-select').selectOption(String(seriesSource.id));
+    const contentActionLayout = await page.locator('.content-actions').evaluate(actions => ({
+        viewportWidth: window.innerWidth,
+        scrollWidth: actions.scrollWidth,
+        clientWidth: actions.clientWidth,
+        buttons: [...actions.querySelectorAll('button')].map(button => ({
+            left: button.getBoundingClientRect().left,
+            right: button.getBoundingClientRect().right
+        }))
+    }));
+    expect(contentActionLayout.scrollWidth).toBeLessThanOrEqual(contentActionLayout.clientWidth + 1);
+    expect(contentActionLayout.buttons.every(button => (
+        button.left >= 0 && button.right <= contentActionLayout.viewportWidth + 1
+    ))).toBe(true);
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#content-tree', '.settings-container');
+
+    await page.route('**/api/settings/about**', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+            currentVersion: '2.5.2',
+            latestVersion: null,
+            releaseUrl: null,
+            lastCheckedAt: null,
+            automaticChecksEnabled: false,
+            updateAvailable: null,
+            state: 'disabled'
+        })
+    }));
+    await page.locator('#about-tab').click();
+    await expect(page.locator('#tab-about')).toHaveClass(/active/);
+    await expect(page.locator('#about-update-badge')).toHaveText('Automatic checks off');
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.about-project-links', '.settings-container');
 
     await page.locator('#mobile-menu-toggle').click();
     await page.locator('#account-menu-trigger').click();

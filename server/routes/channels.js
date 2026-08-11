@@ -28,6 +28,14 @@ function contentTypes(value) {
     return null;
 }
 
+function setVisibilityDefault(db, sourceId, type, isHidden) {
+    db.prepare(`
+        INSERT INTO content_visibility_defaults (source_id, type, is_hidden)
+        VALUES (?, ?, ?)
+        ON CONFLICT(source_id, type) DO UPDATE SET is_hidden = excluded.is_hidden
+    `).run(sourceId, type, isHidden ? 1 : 0);
+}
+
 // Helper to map API item types to DB types and tables
 function mapItemType(apiType) {
     switch (apiType) {
@@ -39,6 +47,34 @@ function mapItemType(apiType) {
         case 'series': return { table: 'playlist_items', type: 'series' };
         default: return null;
     }
+}
+
+function createCategoryVisibilityReconciler(db) {
+    const getItemCategory = db.prepare(`
+        SELECT category_id FROM playlist_items
+        WHERE source_id = ? AND type = ? AND item_id = ?
+    `);
+    const categoryHasVisibleItems = db.prepare(`
+        SELECT 1 FROM playlist_items
+        WHERE source_id = ? AND type = ? AND category_id = ? AND is_hidden = 0
+        LIMIT 1
+    `);
+    const updateCategory = db.prepare(`
+        UPDATE categories SET is_hidden = ?
+        WHERE source_id = ? AND type = ? AND category_id = ?
+    `);
+
+    return (sourceId, type, itemIds) => {
+        const categories = new Set();
+        for (const itemId of itemIds) {
+            const category = getItemCategory.get(sourceId, type, itemId);
+            if (category?.category_id) categories.add(String(category.category_id));
+        }
+        for (const categoryId of categories) {
+            const hasVisibleItems = Boolean(categoryHasVisibleItems.get(sourceId, type, categoryId));
+            updateCategory.run(hasVisibleItems ? 0 : 1, sourceId, type, categoryId);
+        }
+    };
 }
 
 // Get all hidden items (formatted like db.json for frontend compatibility)
@@ -103,6 +139,7 @@ router.post('/hide', auth.requireAdmin, async (req, res) => {
         if (!mapping) return res.status(400).json({ error: 'Invalid item type' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
         const idCol = mapping.table === 'categories' ? 'category_id' : 'item_id';
 
         const stmt = db.prepare(`
@@ -112,6 +149,9 @@ router.post('/hide', auth.requireAdmin, async (req, res) => {
         `);
 
         stmt.run(sourceId, mapping.type, itemId);
+        if (mapping.table === 'playlist_items') {
+            reconcileCategories(sourceId, mapping.type, [itemId]);
+        }
 
         res.json({ success: true });
     } catch (err) {
@@ -129,6 +169,7 @@ router.post('/show', auth.requireAdmin, async (req, res) => {
         if (!mapping) return res.status(400).json({ error: 'Invalid item type' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
         const idCol = mapping.table === 'categories' ? 'category_id' : 'item_id';
 
         const stmt = db.prepare(`
@@ -138,6 +179,9 @@ router.post('/show', auth.requireAdmin, async (req, res) => {
         `);
 
         stmt.run(sourceId, mapping.type, itemId);
+        if (mapping.table === 'playlist_items') {
+            reconcileCategories(sourceId, mapping.type, [itemId]);
+        }
 
         res.json({ success: true });
     } catch (err) {
@@ -175,6 +219,7 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
 
         // Prepare statements once
         const hideCat = db.prepare('UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ? AND category_id = ?');
@@ -184,6 +229,7 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
         const hideCatChildren = db.prepare('UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ? AND category_id = ?');
 
         const runBulk = db.transaction((list) => {
+            const touchedItems = new Map();
             for (const item of list) {
                 const mapping = mapItemType(item.itemType);
                 if (mapping) {
@@ -195,8 +241,16 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
                     } else {
                         // Hide individual item
                         hideItem.run(item.sourceId, mapping.type, item.itemId);
+                        const key = `${item.sourceId}:${mapping.type}`;
+                        if (!touchedItems.has(key)) {
+                            touchedItems.set(key, { sourceId: item.sourceId, type: mapping.type, itemIds: [] });
+                        }
+                        touchedItems.get(key).itemIds.push(item.itemId);
                     }
                 }
+            }
+            for (const entry of touchedItems.values()) {
+                reconcileCategories(entry.sourceId, entry.type, entry.itemIds);
             }
         });
 
@@ -218,6 +272,7 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
 
         const db = getDb();
+        const reconcileCategories = createCategoryVisibilityReconciler(db);
 
         // Prepare statements once
         const showCat = db.prepare('UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ? AND category_id = ?');
@@ -227,6 +282,7 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
         const showCatChildren = db.prepare('UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ? AND category_id = ?');
 
         const runBulk = db.transaction((list) => {
+            const touchedItems = new Map();
             for (const item of list) {
                 const mapping = mapItemType(item.itemType);
                 if (mapping) {
@@ -238,8 +294,16 @@ router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
                     } else {
                         // Show individual item
                         showItem.run(item.sourceId, mapping.type, item.itemId);
+                        const key = `${item.sourceId}:${mapping.type}`;
+                        if (!touchedItems.has(key)) {
+                            touchedItems.set(key, { sourceId: item.sourceId, type: mapping.type, itemIds: [] });
+                        }
+                        touchedItems.get(key).itemIds.push(item.itemId);
                     }
                 }
+            }
+            for (const entry of touchedItems.values()) {
+                reconcileCategories(entry.sourceId, entry.type, entry.itemIds);
             }
         });
 
@@ -267,13 +331,15 @@ router.post('/show/all', auth.requireAdmin, async (req, res) => {
         let catCount = 0;
         let itemCount = 0;
 
-        // Determine which types to update based on contentType
-        for (const type of types) {
-            const catResult = db.prepare(`UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            catCount += catResult.changes;
-            itemCount += itemResult.changes;
-        }
+        db.transaction(() => {
+            for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, false);
+                const catResult = db.prepare(`UPDATE categories SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 0 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                catCount += catResult.changes;
+                itemCount += itemResult.changes;
+            }
+        })();
 
         console.log('[Channels] Show all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
@@ -296,19 +362,148 @@ router.post('/hide/all', auth.requireAdmin, async (req, res) => {
         let catCount = 0;
         let itemCount = 0;
 
-        // Determine which types to update based on contentType
-        for (const type of types) {
-            const catResult = db.prepare(`UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
-            catCount += catResult.changes;
-            itemCount += itemResult.changes;
-        }
+        db.transaction(() => {
+            for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, true);
+                const catResult = db.prepare(`UPDATE categories SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                const itemResult = db.prepare(`UPDATE playlist_items SET is_hidden = 1 WHERE source_id = ? AND type = ?`).run(sourceId, type);
+                catCount += catResult.changes;
+                itemCount += itemResult.changes;
+            }
+        })();
 
         console.log('[Channels] Hide all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
     } catch (err) {
         console.error('Error hide all:', err);
         res.status(500).json({ error: 'Failed to hide all' });
+    }
+});
+
+// Apply a whole-source visibility state with a bounded set of exceptions.
+// This keeps large providers on a constant-size database path instead of
+// issuing one update for every channel.
+router.post('/visibility/apply', auth.requireAdmin, async (req, res) => {
+    try {
+        const { contentType, visible, overrides = [] } = req.body;
+        const sourceId = requireSourceId(req.body.sourceId);
+        const types = contentTypes(contentType);
+
+        if (!sourceId) return res.status(400).json({ error: 'Valid sourceId required' });
+        if (!types) return res.status(400).json({ error: 'Invalid contentType' });
+        if (typeof visible !== 'boolean') return res.status(400).json({ error: 'visible must be true or false' });
+        if (!Array.isArray(overrides) || overrides.length > 10000) {
+            return res.status(400).json({ error: 'overrides must contain at most 10000 items' });
+        }
+
+        const normalizedOverrides = overrides.map(override => {
+            const mapping = mapItemType(override?.itemType);
+            const itemId = typeof override?.itemId === 'string' || Number.isSafeInteger(override?.itemId)
+                ? String(override.itemId)
+                : '';
+            if (!mapping || !types.includes(mapping.type) || !itemId || typeof override.hidden !== 'boolean') {
+                const error = new Error('Invalid visibility override');
+                error.statusCode = 400;
+                throw error;
+            }
+            return { mapping, itemId, hidden: override.hidden };
+        });
+
+        const db = getDb();
+        const apply = db.transaction(() => {
+            const baselineHidden = visible ? 0 : 1;
+            let categoriesUpdated = 0;
+            let itemsUpdated = 0;
+
+            for (const type of types) {
+                setVisibilityDefault(db, sourceId, type, baselineHidden);
+                categoriesUpdated += db.prepare(
+                    'UPDATE categories SET is_hidden = ? WHERE source_id = ? AND type = ?'
+                ).run(baselineHidden, sourceId, type).changes;
+                itemsUpdated += db.prepare(
+                    'UPDATE playlist_items SET is_hidden = ? WHERE source_id = ? AND type = ?'
+                ).run(baselineHidden, sourceId, type).changes;
+            }
+
+            const updateCategory = db.prepare(
+                'UPDATE categories SET is_hidden = ? WHERE source_id = ? AND type = ? AND category_id = ?'
+            );
+            const updateCategoryItems = db.prepare(
+                'UPDATE playlist_items SET is_hidden = ? WHERE source_id = ? AND type = ? AND category_id = ?'
+            );
+            const updateItem = db.prepare(
+                'UPDATE playlist_items SET is_hidden = ? WHERE source_id = ? AND type = ? AND item_id = ?'
+            );
+            const getItemCategory = db.prepare(
+                'SELECT category_id FROM playlist_items WHERE source_id = ? AND type = ? AND item_id = ?'
+            );
+            const categoryHasVisibleItems = db.prepare(`
+                SELECT 1 FROM playlist_items
+                WHERE source_id = ? AND type = ? AND category_id = ? AND is_hidden = 0
+                LIMIT 1
+            `);
+            const touchedCategories = new Map();
+
+            // Category overrides run first so a later item override can refine
+            // one channel inside an otherwise uniform category.
+            for (const override of normalizedOverrides.filter(value => value.mapping.table === 'categories')) {
+                const hidden = override.hidden ? 1 : 0;
+                categoriesUpdated += updateCategory.run(
+                    hidden, sourceId, override.mapping.type, override.itemId
+                ).changes;
+                itemsUpdated += updateCategoryItems.run(
+                    hidden, sourceId, override.mapping.type, override.itemId
+                ).changes;
+            }
+            for (const override of normalizedOverrides.filter(value => value.mapping.table === 'playlist_items')) {
+                const category = getItemCategory.get(sourceId, override.mapping.type, override.itemId);
+                itemsUpdated += updateItem.run(
+                    override.hidden ? 1 : 0,
+                    sourceId,
+                    override.mapping.type,
+                    override.itemId
+                ).changes;
+                if (category?.category_id) {
+                    touchedCategories.set(
+                        `${override.mapping.type}:${category.category_id}`,
+                        { type: override.mapping.type, categoryId: category.category_id }
+                    );
+                }
+            }
+
+            // Only categories affected by individual item exceptions need to
+            // be derived again. Whole-source and category operations already
+            // established every other category state.
+            for (const { type, categoryId } of touchedCategories.values()) {
+                const hasVisibleItems = Boolean(
+                    categoryHasVisibleItems.get(sourceId, type, categoryId)
+                );
+                categoriesUpdated += updateCategory.run(
+                    hasVisibleItems ? 0 : 1,
+                    sourceId,
+                    type,
+                    categoryId
+                ).changes;
+            }
+
+            return { categoriesUpdated, itemsUpdated };
+        });
+
+        const result = apply();
+        console.log('[Channels] Visibility applied:', {
+            sourceId,
+            contentType: types[0],
+            visible,
+            overrideCount: normalizedOverrides.length
+        });
+        res.json({ success: true, ...result, overrideCount: normalizedOverrides.length });
+    } catch (err) {
+        if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+        if (err.code === 'SQLITE_BUSY') {
+            return res.status(503).json({ error: 'Database is busy, please try again' });
+        }
+        console.error('Error applying visibility:', err);
+        res.status(500).json({ error: 'Failed to apply visibility' });
     }
 });
 
