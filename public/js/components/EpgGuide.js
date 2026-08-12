@@ -26,6 +26,8 @@ class EpgGuide {
         this.pixelsPerMinute = 6.67; // Width scaling (30min = 200px)
         this.favorites = new Set(); // Set<"sourceId:channelId">
         this.selectedGroup = 'Favorites'; // Default to Favorites
+        this.isLoading = false;
+        this.loadError = null;
 
         // Virtual scrolling properties
         this.filteredChannels = [];
@@ -189,17 +191,22 @@ class EpgGuide {
      * Load EPG data (server-side caching)
      */
     async loadEpg(forceRefresh = false) {
+        this.isLoading = true;
+        this.loadError = null;
         try {
             this.container.innerHTML = '<div class="loading"></div>';
             await this.fetchEpgData(forceRefresh);
             this.fullEpgLoaded = true;
             this.lastRefreshTime = new Date();
+            this.isLoading = false;
             this.render();
 
             if (!this._backgroundRefreshTimer) {
                 this.startBackgroundRefresh();
             }
         } catch (err) {
+            this.isLoading = false;
+            this.loadError = 'Unable to load EPG data';
             console.error('Error loading EPG:', err);
             this.container.innerHTML = `
         <div class="empty-state">
@@ -392,6 +399,15 @@ class EpgGuide {
      * Render the EPG grid
      */
     render() {
+        if (this.isLoading) {
+            this.container.innerHTML = '<div class="loading"></div>';
+            return;
+        }
+        if (this.loadError) {
+            this.container.innerHTML = `<div class="empty-state"><p>Error loading EPG</p><p class="hint">${this.loadError}</p></div>`;
+            return;
+        }
+
         // Get channel list instance
         const channelList = window.app?.channelList;
         if (!channelList) return;

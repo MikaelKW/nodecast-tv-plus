@@ -59,11 +59,15 @@ function createChannelList() {
     ];
     channelList.channels = [];
     channelList.groups = [];
+    channelList.isLoading = true;
     channelList.sourceCatalogueCache = new Map();
     channelList.loadHiddenItems = async () => {};
     channelList.loadFavorites = async () => {};
     channelList.renderCount = 0;
-    channelList.render = () => { channelList.renderCount += 1; };
+    channelList.render = () => {
+        assert.equal(channelList.isLoading, false, 'Catalogue rendering must begin only after loading completes.');
+        channelList.renderCount += 1;
+    };
     return channelList;
 }
 
