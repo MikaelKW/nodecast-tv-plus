@@ -270,6 +270,32 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    // Search text entered while Manage Content is loading must remain queued
+    // behind the active request, then filter the completed catalogue.
+    await page.locator('.tab[data-tab="content"]').click();
+    await expect(page.locator('#tab-content')).toHaveClass(/active/);
+    let releaseManagedContent;
+    const managedContentGate = new Promise(resolve => { releaseManagedContent = resolve; });
+    let managedContentRequestSeen;
+    const managedContentRequest = new Promise(resolve => { managedContentRequestSeen = resolve; });
+    await page.route(`**/api/proxy/xtream/${m3uSource.id}/live_categories?includeHidden=true`, async route => {
+        managedContentRequestSeen();
+        await managedContentGate;
+        await route.continue();
+    });
+    await page.locator('#content-source-select').selectOption(String(m3uSource.id));
+    await managedContentRequest;
+    await page.locator('#content-search').fill('NodeCast Test Pattern');
+    await expect(page.locator('#content-tree')).toHaveText('Loading...');
+    await expect(page.locator('#content-tree')).not.toContainText('No matches found');
+    releaseManagedContent();
+    await expect(page.locator('#content-tree')).toContainText('Local Test (1)');
+    await expect(page.locator('#content-tree')).not.toContainText('Secondary Test');
+    await expect(page.locator('#content-search')).toHaveValue('NodeCast Test Pattern');
+    await page.unroute(`**/api/proxy/xtream/${m3uSource.id}/live_categories?includeHidden=true`);
+    await page.locator('#content-search').fill('');
+    await page.locator('.tab[data-tab="sources"]').click();
+
     // A slow large-playlist estimate must keep the refresh action locked even
     // while the three-second status poll reports no backend sync yet.
     let refreshEstimateRequests = 0;
@@ -920,7 +946,26 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
+    let releaseLiveChannels;
+    const liveChannelsGate = new Promise(resolve => { releaseLiveChannels = resolve; });
+    let liveChannelsRequestSeen;
+    const liveChannelsRequest = new Promise(resolve => { liveChannelsRequestSeen = resolve; });
+    await page.route(`**/api/proxy/xtream/${variantSource.id}/live_streams`, async route => {
+        liveChannelsRequestSeen();
+        await liveChannelsGate;
+        await route.continue();
+    });
     await page.locator('#source-select').selectOption(`m3u:${variantSource.id}`);
+    await liveChannelsRequest;
+    await page.locator('#channel-search').fill('Quality Variant HD');
+    await page.waitForTimeout(350);
+    await expect(page.locator('#channel-list .loading')).toBeVisible();
+    await expect(page.locator('#channel-list')).not.toContainText('No channels match your search');
+    releaseLiveChannels();
+    await expect(page.locator('.group-header', { hasText: 'Quality Variants' })).toContainText('1');
+    await expect(page.locator('#channel-search')).toHaveValue('Quality Variant HD');
+    await page.unroute(`**/api/proxy/xtream/${variantSource.id}/live_streams`);
+    await page.locator('#channel-search').fill('');
     const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
     await expect(variantGroup).toContainText('4');
     await variantGroup.click();
