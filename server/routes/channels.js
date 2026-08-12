@@ -7,6 +7,24 @@ const auth = require('../auth');
 
 router.use(auth.requireAuth);
 
+const limitVisibilityReads = rateLimit({
+    limit: 300,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many content-visibility requests. Try again shortly.' }
+});
+
+const limitVisibilityWrites = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many content-visibility changes. Try again shortly.' }
+});
+
 const limitRecentContent = rateLimit({
     limit: 120,
     windowMs: 60 * 1000,
@@ -78,7 +96,7 @@ function createCategoryVisibilityReconciler(db) {
 }
 
 // Get all hidden items (formatted like db.json for frontend compatibility)
-router.get('/hidden', async (req, res) => {
+router.get('/hidden', limitVisibilityReads, async (req, res) => {
     try {
         const { sourceId } = req.query;
         const db = getDb();
@@ -131,7 +149,7 @@ router.get('/hidden', async (req, res) => {
 });
 
 // Hide item
-router.post('/hide', auth.requireAdmin, async (req, res) => {
+router.post('/hide', auth.requireAdmin, limitVisibilityWrites, async (req, res) => {
     try {
         const { sourceId, itemType, itemId } = req.body;
         const mapping = mapItemType(itemType);
@@ -161,7 +179,7 @@ router.post('/hide', auth.requireAdmin, async (req, res) => {
 });
 
 // Show item
-router.post('/show', auth.requireAdmin, async (req, res) => {
+router.post('/show', auth.requireAdmin, limitVisibilityWrites, async (req, res) => {
     try {
         const { sourceId, itemType, itemId } = req.body;
         const mapping = mapItemType(itemType);
@@ -191,7 +209,7 @@ router.post('/show', auth.requireAdmin, async (req, res) => {
 });
 
 // Check hidden status
-router.get('/hidden/check', async (req, res) => {
+router.get('/hidden/check', limitVisibilityReads, async (req, res) => {
     try {
         const { sourceId, itemType, itemId } = req.query;
         const mapping = mapItemType(itemType);
@@ -213,7 +231,7 @@ router.get('/hidden/check', async (req, res) => {
 });
 
 // Bulk Hide
-router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
+router.post('/hide/bulk', auth.requireAdmin, limitVisibilityWrites, async (req, res) => {
     try {
         const { items } = req.body;
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
@@ -266,7 +284,7 @@ router.post('/hide/bulk', auth.requireAdmin, async (req, res) => {
 });
 
 // Bulk Show
-router.post('/show/bulk', auth.requireAdmin, async (req, res) => {
+router.post('/show/bulk', auth.requireAdmin, limitVisibilityWrites, async (req, res) => {
     try {
         const { items } = req.body;
         if (!Array.isArray(items)) return res.status(400).json({ error: 'items array required' });
