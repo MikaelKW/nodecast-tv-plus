@@ -6,7 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-transcode-test-'));
 process.env.NODECAST_CACHE_DIR = path.join(testRoot, 'cache');
-const ffmpegPath = require('ffmpeg-static');
+const { resolveFFmpegPath } = require('../server/services/ffmpegBinary');
+const ffmpegPath = resolveFFmpegPath().path;
 const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
 const systemFfprobe = spawnSync('ffprobe', ['-version'], {
     stdio: 'ignore',
@@ -100,7 +101,7 @@ async function createTransientServer(mediaPath, initialStatus) {
 }
 
 async function main() {
-    assert.ok(ffmpegPath, 'ffmpeg-static is required for the transcode test.');
+    assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
 
     const ownerSessions = [];

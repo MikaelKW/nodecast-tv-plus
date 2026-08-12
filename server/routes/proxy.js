@@ -12,7 +12,6 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
-const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const auth = require('../auth');
