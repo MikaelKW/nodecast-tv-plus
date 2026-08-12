@@ -30,12 +30,13 @@
         "test:session-isolation": "node scripts/session-cookie-isolation-test.js",
         "test:performance": "node scripts/large-provider-performance-test.js",
         "test:content-visibility": "node scripts/content-visibility-test.js",
+        "test:ffmpeg-binary": "node scripts/ffmpeg-binary-test.js",
         "test:xmltv": "node scripts/xmltv-timestamp-test.js",
         "test:security": "node scripts/security-test.js",
         "test:resource-controls": "node scripts/resource-controls-test.js",
         "test:updates": "node scripts/release-update-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:remux && npm run test:xtream-fallback && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:content-visibility && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:transcode && npm run test:subtitle && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:content-visibility && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:transcode && npm run test:subtitle && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
