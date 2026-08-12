@@ -370,6 +370,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#content-source-select').selectOption(String(variantSource.id));
     await expect(page.locator('.content-group')).toContainText('Quality Variants');
     await page.locator('.content-group-header').click();
+    const qualityVariantsGroupCheckbox = page.locator('.group-checkbox');
+    await expect(qualityVariantsGroupCheckbox).toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#content-show-results')).toBeDisabled();
     await expect(page.locator('#content-hide-results')).toBeDisabled();
 
@@ -380,6 +384,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('.channel-checkbox')).toBeChecked();
     await page.locator('#content-hide-results').click();
     await expect(page.locator('.channel-checkbox')).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'mixed');
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
@@ -390,8 +397,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#content-search').fill('Quality Variant');
     await expect(page.locator('.channel-checkbox')).toHaveCount(4);
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(3);
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
     await page.locator('#content-show-results').click();
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await expect(qualityVariantsGroupCheckbox).toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'true');
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
@@ -407,6 +419,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // immediately, but the server is unchanged until Save Changes is clicked.
     await page.locator('#content-hide-all').click();
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(0);
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'false');
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
         const hidden = await response.json();
@@ -438,6 +453,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // the whole-source operation and preserves that exception when saved.
     await page.locator('#content-hide-all').click();
     await page.locator('.channel-checkbox').first().check();
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'mixed');
     await expect(page.locator('#content-save')).toBeEnabled();
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
@@ -445,6 +463,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const hidden = await response.json();
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(3);
+
+    await page.evaluate(id => window.app.sourceManager.loadContentTree(String(id)), variantSource.id);
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await expect(page.locator('.group-checkbox')).not.toBeChecked();
+    await expect(page.locator('.group-checkbox')).toHaveJSProperty('indeterminate', true);
+    await expect(page.locator('.group-checkbox')).toHaveAttribute('aria-checked', 'mixed');
+    await page.locator('.content-group-header').click();
 
     // A later, separate Save that enables one channel after Hide All must also
     // restore its parent category so the channel is available in Live TV.
