@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
@@ -10,6 +11,14 @@ const {
     passwordIdentityLimiter,
     passwordIpLimiter
 } = require('../services/authRateLimiter');
+
+const limitOidcAuthorization = rateLimit({
+    limit: 60,
+    windowMs: 15 * 60 * 1000,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many single sign-on requests. Try again shortly.' }
+});
 
 function userMutationErrorStatus(error) {
     return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
@@ -102,13 +111,14 @@ router.get('/oidc/status', async (req, res) => {
  * Start OIDC Login
  * GET /api/auth/oidc/login
  */
-router.get('/oidc/login', authenticateOidc());
+router.get('/oidc/login', limitOidcAuthorization, authenticateOidc());
 
 /**
  * OIDC Callback
  * GET /api/auth/oidc/callback
  */
 router.get('/oidc/callback',
+    limitOidcAuthorization,
     authenticateOidc({ session: false, failureRedirect: withBasePath('/login.html?error=SSO+Failed') }),
     async (req, res) => {
         try {
