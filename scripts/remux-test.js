@@ -7,9 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { spawn, spawnSync } = require('node:child_process');
-const bundledFfmpegPath = require('ffmpeg-static');
 const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
 const { buildRemuxArgs, parseAudioCodecs } = require('../server/services/remux');
+const { resolveFFmpegPath } = require('../server/services/ffmpegBinary');
 
 function availableCommand(command, fallback) {
     const result = spawnSync(command, ['-version'], {
@@ -142,7 +142,8 @@ async function main() {
     assert.equal(mixedArgs[mixedArgs.indexOf('-bsf:a:2') + 1], 'aac_adtstoasc');
     testClientRemuxUrl();
 
-    const ffmpegPath = availableCommand('ffmpeg', bundledFfmpegPath);
+    const ffmpegPath = resolveFFmpegPath().path;
+    assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the remux test.');
     const ffprobePath = availableCommand('ffprobe', bundledFfprobePath);
     const testDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-remux-test-'));
     const outputPath = path.join(testDirectory, 'remuxed.mp4');
