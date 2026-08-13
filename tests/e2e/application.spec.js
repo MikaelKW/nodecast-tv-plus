@@ -4,6 +4,19 @@ const OTPAuth = require('otpauth');
 
 const fixtureBaseUrl = 'http://127.0.0.1:3211';
 
+function isIgnorableGoogleFont404(text, resourceUrl) {
+    if (!/Failed to load resource:.*status of 404/i.test(text)) return false;
+
+    try {
+        const url = new URL(resourceUrl);
+        return url.protocol === 'https:' &&
+            url.hostname === 'fonts.gstatic.com' &&
+            /\.(?:woff2?|ttf|otf)$/i.test(url.pathname);
+    } catch (error) {
+        return false;
+    }
+}
+
 async function waitForSync(page, sourceId) {
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch('/api/sources/status');
@@ -15,6 +28,19 @@ async function waitForSync(page, sourceId) {
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
     test.setTimeout(120_000);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'https://fonts.gstatic.com/s/inter/v20/example.woff2'
+    )).toBe(true);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'http://127.0.0.1:3210/missing.woff2'
+    )).toBe(false);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'https://fonts.gstatic.com/missing.js'
+    )).toBe(false);
+
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
@@ -35,6 +61,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             expectedAuthenticationErrors -= 1;
             return;
         }
+        if (isIgnorableGoogleFont404(message.text(), message.location().url)) return;
         browserErrors.push(`console: ${message.text()}`);
     });
     page.on('request', request => {
@@ -270,6 +297,32 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const m3uSource = m3uSourceResult.source;
     await waitForSync(page, m3uSource.id);
 
+    // Search text entered while Manage Content is loading must remain queued
+    // behind the active request, then filter the completed catalogue.
+    await page.locator('.tab[data-tab="content"]').click();
+    await expect(page.locator('#tab-content')).toHaveClass(/active/);
+    let releaseManagedContent;
+    const managedContentGate = new Promise(resolve => { releaseManagedContent = resolve; });
+    let managedContentRequestSeen;
+    const managedContentRequest = new Promise(resolve => { managedContentRequestSeen = resolve; });
+    await page.route(`**/api/proxy/xtream/${m3uSource.id}/live_categories?includeHidden=true`, async route => {
+        managedContentRequestSeen();
+        await managedContentGate;
+        await route.continue();
+    });
+    await page.locator('#content-source-select').selectOption(String(m3uSource.id));
+    await managedContentRequest;
+    await page.locator('#content-search').fill('NodeCast Test Pattern');
+    await expect(page.locator('#content-tree')).toHaveText('Loading...');
+    await expect(page.locator('#content-tree')).not.toContainText('No matches found');
+    releaseManagedContent();
+    await expect(page.locator('#content-tree')).toContainText('Local Test (1)');
+    await expect(page.locator('#content-tree')).not.toContainText('Secondary Test');
+    await expect(page.locator('#content-search')).toHaveValue('NodeCast Test Pattern');
+    await page.unroute(`**/api/proxy/xtream/${m3uSource.id}/live_categories?includeHidden=true`);
+    await page.locator('#content-search').fill('');
+    await page.locator('.tab[data-tab="sources"]').click();
+
     // A slow large-playlist estimate must keep the refresh action locked even
     // while the three-second status poll reports no backend sync yet.
     let refreshEstimateRequests = 0;
@@ -317,6 +370,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#content-source-select').selectOption(String(variantSource.id));
     await expect(page.locator('.content-group')).toContainText('Quality Variants');
     await page.locator('.content-group-header').click();
+    const qualityVariantsGroupCheckbox = page.locator('.group-checkbox');
+    await expect(qualityVariantsGroupCheckbox).toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('#content-show-results')).toBeDisabled();
     await expect(page.locator('#content-hide-results')).toBeDisabled();
 
@@ -327,6 +384,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('.channel-checkbox')).toBeChecked();
     await page.locator('#content-hide-results').click();
     await expect(page.locator('.channel-checkbox')).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'mixed');
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
@@ -337,8 +397,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#content-search').fill('Quality Variant');
     await expect(page.locator('.channel-checkbox')).toHaveCount(4);
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(3);
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
     await page.locator('#content-show-results').click();
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(4);
+    await expect(qualityVariantsGroupCheckbox).toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'true');
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
@@ -354,6 +419,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // immediately, but the server is unchanged until Save Changes is clicked.
     await page.locator('#content-hide-all').click();
     await expect(page.locator('.channel-checkbox:checked')).toHaveCount(0);
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', false);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'false');
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch(`/api/channels/hidden?sourceId=${id}`);
         const hidden = await response.json();
@@ -385,6 +453,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // the whole-source operation and preserves that exception when saved.
     await page.locator('#content-hide-all').click();
     await page.locator('.channel-checkbox').first().check();
+    await expect(qualityVariantsGroupCheckbox).not.toBeChecked();
+    await expect(qualityVariantsGroupCheckbox).toHaveJSProperty('indeterminate', true);
+    await expect(qualityVariantsGroupCheckbox).toHaveAttribute('aria-checked', 'mixed');
     await expect(page.locator('#content-save')).toBeEnabled();
     await page.locator('#content-save').click();
     await expect.poll(async () => page.evaluate(async id => {
@@ -392,6 +463,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const hidden = await response.json();
         return hidden.filter(item => item.item_type === 'channel').length;
     }, variantSource.id)).toBe(3);
+
+    await page.evaluate(id => window.app.sourceManager.loadContentTree(String(id)), variantSource.id);
+    await expect(page.locator('.content-group')).toContainText('Quality Variants');
+    await expect(page.locator('.group-checkbox')).not.toBeChecked();
+    await expect(page.locator('.group-checkbox')).toHaveJSProperty('indeterminate', true);
+    await expect(page.locator('.group-checkbox')).toHaveAttribute('aria-checked', 'mixed');
+    await page.locator('.content-group-header').click();
 
     // A later, separate Save that enables one channel after Hide All must also
     // restore its parent category so the channel is available in Live TV.
@@ -920,7 +998,26 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
+    let releaseLiveChannels;
+    const liveChannelsGate = new Promise(resolve => { releaseLiveChannels = resolve; });
+    let liveChannelsRequestSeen;
+    const liveChannelsRequest = new Promise(resolve => { liveChannelsRequestSeen = resolve; });
+    await page.route(`**/api/proxy/xtream/${variantSource.id}/live_streams`, async route => {
+        liveChannelsRequestSeen();
+        await liveChannelsGate;
+        await route.continue();
+    });
     await page.locator('#source-select').selectOption(`m3u:${variantSource.id}`);
+    await liveChannelsRequest;
+    await page.locator('#channel-search').fill('Quality Variant HD');
+    await page.waitForTimeout(350);
+    await expect(page.locator('#channel-list .loading')).toBeVisible();
+    await expect(page.locator('#channel-list')).not.toContainText('No channels match your search');
+    releaseLiveChannels();
+    await expect(page.locator('.group-header', { hasText: 'Quality Variants' })).toContainText('1');
+    await expect(page.locator('#channel-search')).toHaveValue('Quality Variant HD');
+    await page.unroute(`**/api/proxy/xtream/${variantSource.id}/live_streams`);
+    await page.locator('#channel-search').fill('');
     const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
     await expect(variantGroup).toContainText('4');
     await variantGroup.click();

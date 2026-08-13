@@ -21,6 +21,24 @@ const limitSourceDeletion = rateLimit({
     message: { error: 'Too many source deletion requests. Try again shortly.' }
 });
 
+const limitSourceStatus = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many source-status requests. Try again shortly.' }
+});
+
+const limitSourceTests = rateLimit({
+    limit: 20,
+    windowMs: 5 * 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many source connection tests. Try again shortly.' }
+});
+
 const maskSource = source => ({
     ...source,
     password: source.password ? '********' : null
@@ -67,7 +85,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get sync status for all sources
-router.get('/status', auth.requireAdmin, async (req, res) => {
+router.get('/status', auth.requireAdmin, limitSourceStatus, async (req, res) => {
     try {
         const { getDb } = require('../db/sqlite');
         const db = getDb();
@@ -236,7 +254,7 @@ router.post('/:id/sync', auth.requireAdmin, async (req, res) => {
 });
 
 // Test source connection
-router.post('/:id/test', auth.requireAdmin, async (req, res) => {
+router.post('/:id/test', auth.requireAdmin, limitSourceTests, async (req, res) => {
     try {
         const source = await sources.getById(req.params.id);
         if (!source) {

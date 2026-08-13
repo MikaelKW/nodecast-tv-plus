@@ -23,6 +23,7 @@ class ChannelList {
         this.sources = [];
         this.sourceCatalogueCache = new Map();
         this.isLoading = false;
+        this.loadError = null;
         this.renderedChannels = [];
 
         this.loadCollapsedState();
@@ -295,6 +296,17 @@ class ChannelList {
      * Render channel list
      */
     render() {
+        if (this.isLoading) {
+            this.container.innerHTML = '<div class="loading"></div>';
+            this.renderedChannels = [];
+            return;
+        }
+        if (this.loadError) {
+            this.container.innerHTML = `<div class="empty-state"><p>Error loading channels</p><p class="hint">${this.escapeHtml(this.loadError)}</p></div>`;
+            this.renderedChannels = [];
+            return;
+        }
+
         const searchTerm = this.searchInput.value.toLowerCase();
         const showHidden = this.showHiddenCheckbox ? this.showHiddenCheckbox.checked : false;
 
@@ -707,6 +719,7 @@ class ChannelList {
     async loadChannels() {
         if (this.isLoading) return;
         this.isLoading = true;
+        this.loadError = null;
         this.currentRenderId = null; // Reset render tracking
 
         const sourceValue = this.sourceSelect.value;
@@ -736,10 +749,13 @@ class ChannelList {
             this.hiddenItems = new Set();
             await this.loadFavorites();
 
+            this.isLoading = false;
             this.render();
         } catch (err) {
             console.error('Error loading channels:', err);
-            this.container.innerHTML = `<div class="empty-state"><p>Error loading channels</p><p class="hint">${err.message}</p></div>`;
+            this.loadError = err.message || 'Unable to load channels';
+            this.isLoading = false;
+            this.render();
         } finally {
             this.isLoading = false;
         }
@@ -812,9 +828,12 @@ class ChannelList {
 
             this.groups = nextCatalogue.groups;
             this.channels = nextCatalogue.channels;
+            this.isLoading = false;
             this.render();
         } catch (err) {
             console.error('Error loading all channels:', err);
+            this.loadError = err.message || 'Unable to load channels';
+            this.isLoading = false;
             this.render();
         }
     }

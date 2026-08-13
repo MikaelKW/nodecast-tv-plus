@@ -4,6 +4,7 @@ const http = require('node:http');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { resolveFFmpegPath } = require('../../server/services/ffmpegBinary');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 // Use a process-specific directory so repeated local/CI runs can never race
@@ -77,7 +78,11 @@ function controlledGuideXml() {
 }
 
 function generateMedia() {
-    const ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
+    const ffmpegPath = resolveFFmpegPath().path;
+    if (!ffmpegPath) {
+        throw new Error('Unable to generate test media: FFmpeg is unavailable');
+    }
+
     const result = spawnSync(ffmpegPath, [
         '-hide_banner', '-loglevel', 'error', '-y',
         '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25',
