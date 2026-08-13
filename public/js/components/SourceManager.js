@@ -1101,10 +1101,7 @@ class SourceManager {
      */
     getGroupHtml(group) {
         const isExpanded = this.expandedGroups.has(group.id);
-
-        // Group checkbox is checked if ANY child is visible (derived state)
-        const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
-        const checked = hasVisibleChild;
+        const visibilityState = this.getGroupVisibilityState(group);
 
         let itemsHtml = '';
         if (isExpanded) {
@@ -1133,7 +1130,9 @@ class SourceManager {
                                data-type="group" 
                                data-id="${this.escapeHtml(group.name)}" 
                                data-source-id="${this.treeData.sourceId}" 
-                               ${checked ? 'checked' : ''}>
+                               data-indeterminate="${visibilityState.indeterminate}"
+                               aria-checked="${visibilityState.indeterminate ? 'mixed' : visibilityState.checked}"
+                               ${visibilityState.checked ? 'checked' : ''}>
                         <span class="group-name">${this.escapeHtml(group.name)} (${group.items.length})</span>
                     </label>
                 </div>
@@ -1152,6 +1151,36 @@ class SourceManager {
             .replace(/'/g, "&#039;");
     }
 
+    /**
+     * Derive the three-state checkbox value for a content group.
+     */
+    getGroupVisibilityState(group) {
+        // Search results contain a filtered copy of the group's items. Always
+        // derive the header state from the complete group so one visible match
+        // does not incorrectly make a partially hidden group look fully shown.
+        const completeGroup = this.treeData?.groups?.find(item => item.id === group.id) || group;
+        const visibleCount = completeGroup.items.reduce((count, item) => (
+            this.hiddenSet.has(`${item.type}:${item.id}`) ? count : count + 1
+        ), 0);
+
+        return {
+            checked: completeGroup.items.length > 0 && visibleCount === completeGroup.items.length,
+            indeterminate: visibleCount > 0 && visibleCount < completeGroup.items.length
+        };
+    }
+
+    /**
+     * Apply a derived group state to the native checkbox. The indeterminate
+     * value is a DOM property and cannot be represented by an HTML attribute.
+     */
+    applyGroupCheckboxState(groupCheckbox, group) {
+        const state = this.getGroupVisibilityState(group);
+        groupCheckbox.checked = state.checked;
+        groupCheckbox.indeterminate = state.indeterminate;
+        groupCheckbox.dataset.indeterminate = String(state.indeterminate);
+        groupCheckbox.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked));
+    }
+
     attachTreeListeners(container) {
         // Toggle group collapse
         container.querySelectorAll('.content-group-header').forEach(header => {
@@ -1163,6 +1192,13 @@ class SourceManager {
                 const groupId = groupEl.dataset.groupId;
                 this.toggleGroupExpand(groupId);
             });
+        });
+
+        // Restore native indeterminate state after inserting the HTML.
+        container.querySelectorAll('.group-checkbox').forEach(groupCheckbox => {
+            const groupId = groupCheckbox.closest('.content-group')?.dataset.groupId;
+            const group = this.treeData.groups.find(item => item.id === groupId);
+            if (group) this.applyGroupCheckboxState(groupCheckbox, group);
         });
 
         // Toggle visibility
@@ -1362,8 +1398,7 @@ class SourceManager {
                 const groupId = groupEl.dataset.groupId;
                 const group = this.treeData.groups.find(g => g.id === groupId);
                 if (group) {
-                    const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
-                    groupCheckbox.checked = hasVisibleChild;
+                    this.applyGroupCheckboxState(groupCheckbox, group);
                 }
             }
         }
