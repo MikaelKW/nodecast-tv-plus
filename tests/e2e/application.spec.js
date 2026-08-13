@@ -4,6 +4,19 @@ const OTPAuth = require('otpauth');
 
 const fixtureBaseUrl = 'http://127.0.0.1:3211';
 
+function isIgnorableGoogleFont404(text, resourceUrl) {
+    if (!/Failed to load resource:.*status of 404/i.test(text)) return false;
+
+    try {
+        const url = new URL(resourceUrl);
+        return url.protocol === 'https:' &&
+            url.hostname === 'fonts.gstatic.com' &&
+            /\.(?:woff2?|ttf|otf)$/i.test(url.pathname);
+    } catch (error) {
+        return false;
+    }
+}
+
 async function waitForSync(page, sourceId) {
     await expect.poll(async () => page.evaluate(async id => {
         const response = await fetch('/api/sources/status');
@@ -15,6 +28,19 @@ async function waitForSync(page, sourceId) {
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
     test.setTimeout(120_000);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'https://fonts.gstatic.com/s/inter/v20/example.woff2'
+    )).toBe(true);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'http://127.0.0.1:3210/missing.woff2'
+    )).toBe(false);
+    expect(isIgnorableGoogleFont404(
+        'Failed to load resource: the server responded with a status of 404 ()',
+        'https://fonts.gstatic.com/missing.js'
+    )).toBe(false);
+
     const browserErrors = [];
     const qualityLogs = [];
     const qualitySessionSources = [];
@@ -35,6 +61,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             expectedAuthenticationErrors -= 1;
             return;
         }
+        if (isIgnorableGoogleFont404(message.text(), message.location().url)) return;
         browserErrors.push(`console: ${message.text()}`);
     });
     page.on('request', request => {
