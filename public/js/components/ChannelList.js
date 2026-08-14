@@ -909,8 +909,15 @@ class ChannelList {
     }
 
     _appendSourceChannels(target, result) {
-        target.groups.push(...result.groups);
-        target.channels.push(...result.channels);
+        // Avoid passing an entire provider catalogue as variadic arguments.
+        // Chromium rejects sufficiently large argument lists (for example a
+        // 280,000-channel M3U) with "Maximum call stack size exceeded".
+        for (const group of result.groups) {
+            target.groups.push(group);
+        }
+        for (const channel of result.channels) {
+            target.channels.push(channel);
+        }
     }
 
     _sourceCatalogueCacheKey(sourceId, sourceType) {
