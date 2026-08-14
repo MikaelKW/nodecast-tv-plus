@@ -103,7 +103,8 @@ function testClientRemuxUrl() {
             location: {
                 href: 'https://nodecast.example/nodecast/',
                 origin: 'https://nodecast.example'
-            }
+            },
+            navigator: { userAgent: '' }
         },
         URL,
         URLSearchParams
@@ -124,6 +125,18 @@ function testClientRemuxUrl() {
     assert.equal(parsed.pathname, '/nodecast/api/remux');
     assert.equal(parsed.searchParams.get('url'), 'https://media.example/live.ts?token=example');
     assert.equal(parsed.searchParams.get('audioCodecs'), 'aac,mp3');
+    assert.equal(
+        sandbox.window.NodeCastUrl.prefersHlsRemuxFallback(
+            'Mozilla/5.0 Firefox/141.0'
+        ),
+        true
+    );
+    assert.equal(
+        sandbox.window.NodeCastUrl.prefersHlsRemuxFallback(
+            'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36'
+        ),
+        false
+    );
 }
 
 async function main() {

@@ -51,5 +51,16 @@
         return resolve(`/api/remux?${params.toString()}`);
     }
 
-    window.NodeCastUrl = Object.freeze({ basePath, resolve, absolute, isApi, remux });
+    function prefersHlsRemuxFallback(userAgent = window.navigator?.userAgent || '') {
+        return /\bFirefox\//i.test(String(userAgent));
+    }
+
+    window.NodeCastUrl = Object.freeze({
+        basePath,
+        resolve,
+        absolute,
+        isApi,
+        remux,
+        prefersHlsRemuxFallback
+    });
 })();
