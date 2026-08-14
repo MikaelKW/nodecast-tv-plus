@@ -46,6 +46,7 @@ router.post('/session', async (req, res) => {
         videoCodec,
         audioCodec,
         audioChannels,
+        forceAudioTranscode,
         audioStreamIndex,
         videoHeight,
         maxResolution
@@ -53,6 +54,10 @@ router.post('/session', async (req, res) => {
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required' });
+    }
+
+    if (forceAudioTranscode !== undefined && typeof forceAudioTranscode !== 'boolean') {
+        return res.status(400).json({ error: 'forceAudioTranscode must be true or false' });
     }
 
     let validatedUrl;
@@ -102,6 +107,7 @@ router.post('/session', async (req, res) => {
             videoCodec: videoCodec, // 'h264', 'hevc', etc.
             audioCodec: audioCodec, // 'aac', 'ac3', etc.
             audioChannels: audioChannels, // number of channels (2=stereo)
+            forceAudioTranscode: forceAudioTranscode === true,
             audioStreamIndex: selectedAudioStreamIndex,
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight

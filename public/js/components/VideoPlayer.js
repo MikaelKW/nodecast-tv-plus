@@ -1152,7 +1152,30 @@ class VideoPlayer {
                         window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
                         return;
                     } else if (info.needsRemux) {
-                        // Raw .ts container - use remux
+                        // Firefox can render the fragmented-MP4 video while
+                        // silently dropping its remuxed AAC audio. Use the HLS
+                        // session path there, copying video and normalizing audio.
+                        if (NodeCastUrl.prefersHlsRemuxFallback()) {
+                            console.log('[Player] Auto: Using Firefox-compatible HLS remux');
+                            this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
+                            const playlistUrl = await this.startTranscodeSession(streamUrl, {
+                                videoMode: 'copy',
+                                videoCodec: info.video,
+                                audioCodec: info.audio,
+                                audioChannels: info.audioChannels,
+                                forceAudioTranscode: true
+                            }, playAbortController.signal);
+                            if (this._playId !== playId) return;
+                            this.currentUrl = playlistUrl;
+                            this.playHls(playlistUrl);
+                            this.updateNowPlaying(channel);
+                            this.showNowPlayingOverlay();
+                            this.fetchEpgData(channel);
+                            window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+                            return;
+                        }
+
+                        // Other browsers retain the lower-overhead direct remux.
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
                         const remuxUrl = this.getRemuxUrl(streamUrl, info);
@@ -1322,6 +1345,30 @@ class VideoPlayer {
             if (!forceDirectFallback && this.settings.forceRemux && (isRawTs || isExtensionless)) {
                 console.log('[Player] Force Remux enabled. Routing through FFmpeg remux...');
                 console.log('[Player] Stream type:', isRawTs ? 'Raw TS' : 'Extension-less (assumed TS)');
+
+                if (NodeCastUrl.prefersHlsRemuxFallback()) {
+                    this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
+                    const playlistUrl = await this.startTranscodeSession(
+                        streamUrl,
+                        {
+                            videoMode: 'copy',
+                            videoCodec: this.currentStreamInfo?.video || 'h264',
+                            audioCodec: this.currentStreamInfo?.audio,
+                            audioChannels: this.currentStreamInfo?.audioChannels,
+                            forceAudioTranscode: true
+                        },
+                        playAbortController.signal
+                    );
+                    if (this._playId !== playId) return;
+                    this.currentUrl = playlistUrl;
+                    this.playHls(playlistUrl);
+                    this.updateNowPlaying(channel);
+                    this.showNowPlayingOverlay();
+                    this.fetchEpgData(channel);
+                    window.dispatchEvent(new CustomEvent('channelChanged', { detail: channel }));
+                    return;
+                }
+
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
                 const remuxUrl = this.getRemuxUrl(streamUrl);
                 this.video.src = remuxUrl;

@@ -208,6 +208,20 @@ async function main() {
     assert.equal(ordinaryArgs.includes('-copyts'), false);
     assert.equal(ordinaryArgs.includes('-muxdelay'), false);
 
+    const compatibilityAudioSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        audioCodec: 'aac',
+        audioChannels: 1,
+        audioMixPreset: 'passthrough',
+        forceAudioTranscode: true
+    });
+    const compatibilityAudioArgs = compatibilityAudioSession.buildFFmpegArgs();
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-c:a') + 1], 'aac');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-profile:a') + 1], 'aac_low');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-ac') + 1], '2');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-af') + 1], 'aresample=async=1');
+
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },
         { height: 480, bitrate: 1_000_000 },
