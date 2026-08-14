@@ -283,8 +283,12 @@ class EpgGuide {
         }
 
         return successful.reduce((merged, result) => {
-            merged.channels.push(...(result.value.channels || []));
-            merged.programmes.push(...(result.value.programmes || []));
+            for (const channel of result.value.channels || []) {
+                merged.channels.push(channel);
+            }
+            for (const programme of result.value.programmes || []) {
+                merged.programmes.push(programme);
+            }
             return merged;
         }, { channels: [], programmes: [] });
     }
