@@ -466,7 +466,7 @@ class WatchPage {
             this.currentTranscodeOptions = sessionOptions;
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
-            if (options.maxResolution || Number.isInteger(options.audioStreamIndex)) {
+            if (options.maxResolution || options.forceAudioTranscode || Number.isInteger(options.audioStreamIndex)) {
                 console.warn('[WatchPage] Selected playback session failed:', err.message);
                 throw err;
             }
@@ -804,6 +804,23 @@ class WatchPage {
                     this.setVolumeFromStorage();
                     return;
                 } else if (info.needsRemux) {
+                    if (NodeCastUrl.prefersHlsRemuxFallback()) {
+                        console.log('[WatchPage] Auto: Using Firefox-compatible HLS remux');
+                        this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
+                        const playlistUrl = await this.startTranscodeSession(url, {
+                            videoMode: 'copy',
+                            seekOffset: this.resumeTime,
+                            videoCodec: info.video,
+                            audioCodec: info.audio,
+                            audioChannels: info.audioChannels,
+                            forceAudioTranscode: true,
+                            ...this.getSelectedAudioOptions(info)
+                        });
+                        this.playHls(playlistUrl);
+                        this.setVolumeFromStorage();
+                        return;
+                    }
+
                     // Remux (container swap) currently doesn't use session logic, uses direct stream
                     // TODO: Move remux to session logic if seeking is needed for TS files
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
@@ -875,6 +892,23 @@ class WatchPage {
         // Priority 2: Force Remux for raw TS streams
         if (!forceDirectFallback && settings.forceRemux && isRawTs) {
             console.log('[WatchPage] Force Remux enabled');
+
+            if (NodeCastUrl.prefersHlsRemuxFallback()) {
+                this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
+                const playlistUrl = await this.startTranscodeSession(url, {
+                    videoMode: 'copy',
+                    seekOffset: this.resumeTime,
+                    videoCodec: this.currentStreamInfo?.video || 'h264',
+                    audioCodec: this.currentStreamInfo?.audio,
+                    audioChannels: this.currentStreamInfo?.audioChannels,
+                    forceAudioTranscode: true,
+                    ...this.getSelectedAudioOptions(this.currentStreamInfo)
+                });
+                this.playHls(playlistUrl);
+                this.setVolumeFromStorage();
+                return;
+            }
+
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
             const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
             this.video.src = finalUrl;
