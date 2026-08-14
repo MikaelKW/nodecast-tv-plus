@@ -72,6 +72,25 @@ function createChannelList() {
 }
 
 async function run() {
+    const largeCatalogue = createChannelList();
+    const largeChannelCount = 282069;
+    const largeResult = {
+        groups: sourceResult(1, 'm3u', 'large').groups,
+        channels: Array.from({ length: largeChannelCount }, (_, index) => ({
+            id: `m3u_1_${index}`,
+            name: `Large catalogue channel ${index}`,
+            sourceId: 1,
+            sourceType: 'm3u'
+        }))
+    };
+    const largeTarget = { groups: [], channels: [] };
+    largeCatalogue._appendSourceChannels(largeTarget, largeResult);
+    assert.equal(
+        largeTarget.channels.length,
+        largeChannelCount,
+        'Provider catalogues larger than the Chromium argument limit must append without a stack overflow.'
+    );
+
     const channelList = createChannelList();
     const attempts = new Map();
     let failSourceTwo = false;
