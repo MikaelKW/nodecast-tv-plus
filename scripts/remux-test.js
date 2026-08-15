@@ -7,9 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { spawn, spawnSync } = require('node:child_process');
-const bundledFfmpegPath = require('ffmpeg-static');
 const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
 const { buildRemuxArgs, parseAudioCodecs } = require('../server/services/remux');
+const { resolveFFmpegPath } = require('../server/services/ffmpegBinary');
 
 function availableCommand(command, fallback) {
     const result = spawnSync(command, ['-version'], {
@@ -103,7 +103,8 @@ function testClientRemuxUrl() {
             location: {
                 href: 'https://nodecast.example/nodecast/',
                 origin: 'https://nodecast.example'
-            }
+            },
+            navigator: { userAgent: '' }
         },
         URL,
         URLSearchParams
@@ -124,6 +125,18 @@ function testClientRemuxUrl() {
     assert.equal(parsed.pathname, '/nodecast/api/remux');
     assert.equal(parsed.searchParams.get('url'), 'https://media.example/live.ts?token=example');
     assert.equal(parsed.searchParams.get('audioCodecs'), 'aac,mp3');
+    assert.equal(
+        sandbox.window.NodeCastUrl.prefersHlsRemuxFallback(
+            'Mozilla/5.0 Firefox/141.0'
+        ),
+        true
+    );
+    assert.equal(
+        sandbox.window.NodeCastUrl.prefersHlsRemuxFallback(
+            'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36'
+        ),
+        false
+    );
 }
 
 async function main() {
@@ -142,7 +155,8 @@ async function main() {
     assert.equal(mixedArgs[mixedArgs.indexOf('-bsf:a:2') + 1], 'aac_adtstoasc');
     testClientRemuxUrl();
 
-    const ffmpegPath = availableCommand('ffmpeg', bundledFfmpegPath);
+    const ffmpegPath = resolveFFmpegPath().path;
+    assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the remux test.');
     const ffprobePath = availableCommand('ffprobe', bundledFfprobePath);
     const testDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-remux-test-'));
     const outputPath = path.join(testDirectory, 'remuxed.mp4');

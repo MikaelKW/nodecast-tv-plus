@@ -18,6 +18,8 @@ class SourceManager {
         this.searchQuery = ''; // Search filter for content browser
         this.pendingAllVisibility = null; // Whole-source action staged until Save Changes
         this.contentLoadRequestId = 0; // Ignore stale async responses after tab/source changes
+        this.contentLoadingRequestId = null; // Keep search rendering in a loading state for the active request
+        this.contentLoadMessage = null; // Preserve non-success states while search input changes
         this.initialSyncStates = new Map(); // sourceId -> { status, type, message }
         this.sourceSubmissionInProgress = false;
         this.sourceRefreshesInProgress = new Set();
@@ -855,6 +857,8 @@ class SourceManager {
         const requestId = ++this.contentLoadRequestId;
         const sourceId = this.contentSourceSelect?.value;
         if (!sourceId) {
+            this.contentLoadingRequestId = null;
+            this.contentLoadMessage = null;
             const typeLabel = this.contentType === 'movies' ? 'movie categories' :
                 this.contentType === 'series' ? 'series categories' : 'groups and channels';
             this.contentTree.innerHTML = `<p class="hint">Select a source to view ${typeLabel}</p>`;
@@ -900,6 +904,8 @@ class SourceManager {
      * Load content tree for a source
      */
     async loadContentTree(sourceId, requestId = ++this.contentLoadRequestId) {
+        this.contentLoadingRequestId = requestId;
+        this.contentLoadMessage = null;
         this.contentTree.innerHTML = '<p class="hint">Loading...</p>';
         this.treeData = { type: 'channels', sourceId, groups: [] };
         this.pendingAllVisibility = null;
@@ -986,12 +992,15 @@ class SourceManager {
                     items: group.items
                 }));
 
+            this.contentLoadingRequestId = null;
             this.renderTree();
 
         } catch (err) {
             if (requestId !== this.contentLoadRequestId) return;
+            this.contentLoadingRequestId = null;
             console.error('Error loading content tree:', err);
-            this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading content</p>';
+            this.contentLoadMessage = { text: 'Error loading content', isError: true };
+            this.renderTree();
         }
     }
 
@@ -1025,6 +1034,18 @@ class SourceManager {
      * Render the full tree based on current state
      */
     renderTree() {
+        if (this.contentLoadingRequestId === this.contentLoadRequestId) {
+            this.contentTree.innerHTML = '<p class="hint">Loading...</p>';
+            this.updateFilteredActionState();
+            return;
+        }
+        if (this.contentLoadMessage) {
+            const style = this.contentLoadMessage.isError ? ' style="color: var(--color-error);"' : '';
+            this.contentTree.innerHTML = `<p class="hint"${style}>${this.contentLoadMessage.text}</p>`;
+            this.updateFilteredActionState();
+            return;
+        }
+
         const groups = this.getFilteredGroups();
 
         if (!groups.length) {
@@ -1080,10 +1101,7 @@ class SourceManager {
      */
     getGroupHtml(group) {
         const isExpanded = this.expandedGroups.has(group.id);
-
-        // Group checkbox is checked if ANY child is visible (derived state)
-        const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
-        const checked = hasVisibleChild;
+        const visibilityState = this.getGroupVisibilityState(group);
 
         let itemsHtml = '';
         if (isExpanded) {
@@ -1112,7 +1130,9 @@ class SourceManager {
                                data-type="group" 
                                data-id="${this.escapeHtml(group.name)}" 
                                data-source-id="${this.treeData.sourceId}" 
-                               ${checked ? 'checked' : ''}>
+                               data-indeterminate="${visibilityState.indeterminate}"
+                               aria-checked="${visibilityState.indeterminate ? 'mixed' : visibilityState.checked}"
+                               ${visibilityState.checked ? 'checked' : ''}>
                         <span class="group-name">${this.escapeHtml(group.name)} (${group.items.length})</span>
                     </label>
                 </div>
@@ -1131,6 +1151,36 @@ class SourceManager {
             .replace(/'/g, "&#039;");
     }
 
+    /**
+     * Derive the three-state checkbox value for a content group.
+     */
+    getGroupVisibilityState(group) {
+        // Search results contain a filtered copy of the group's items. Always
+        // derive the header state from the complete group so one visible match
+        // does not incorrectly make a partially hidden group look fully shown.
+        const completeGroup = this.treeData?.groups?.find(item => item.id === group.id) || group;
+        const visibleCount = completeGroup.items.reduce((count, item) => (
+            this.hiddenSet.has(`${item.type}:${item.id}`) ? count : count + 1
+        ), 0);
+
+        return {
+            checked: completeGroup.items.length > 0 && visibleCount === completeGroup.items.length,
+            indeterminate: visibleCount > 0 && visibleCount < completeGroup.items.length
+        };
+    }
+
+    /**
+     * Apply a derived group state to the native checkbox. The indeterminate
+     * value is a DOM property and cannot be represented by an HTML attribute.
+     */
+    applyGroupCheckboxState(groupCheckbox, group) {
+        const state = this.getGroupVisibilityState(group);
+        groupCheckbox.checked = state.checked;
+        groupCheckbox.indeterminate = state.indeterminate;
+        groupCheckbox.dataset.indeterminate = String(state.indeterminate);
+        groupCheckbox.setAttribute('aria-checked', state.indeterminate ? 'mixed' : String(state.checked));
+    }
+
     attachTreeListeners(container) {
         // Toggle group collapse
         container.querySelectorAll('.content-group-header').forEach(header => {
@@ -1142,6 +1192,13 @@ class SourceManager {
                 const groupId = groupEl.dataset.groupId;
                 this.toggleGroupExpand(groupId);
             });
+        });
+
+        // Restore native indeterminate state after inserting the HTML.
+        container.querySelectorAll('.group-checkbox').forEach(groupCheckbox => {
+            const groupId = groupCheckbox.closest('.content-group')?.dataset.groupId;
+            const group = this.treeData.groups.find(item => item.id === groupId);
+            if (group) this.applyGroupCheckboxState(groupCheckbox, group);
         });
 
         // Toggle visibility
@@ -1183,6 +1240,8 @@ class SourceManager {
      * Load movie categories tree for a source
      */
     async loadMovieCategoriesTree(sourceId, requestId = ++this.contentLoadRequestId) {
+        this.contentLoadingRequestId = requestId;
+        this.contentLoadMessage = null;
         this.contentTree.innerHTML = '<p class="hint">Loading movie categories...</p>';
         this.treeData = { type: 'movies', sourceId, groups: [] };
         this.pendingAllVisibility = null;
@@ -1192,7 +1251,9 @@ class SourceManager {
             if (requestId !== this.contentLoadRequestId) return;
 
             if (source.type !== 'xtream') {
-                this.contentTree.innerHTML = '<p class="hint">Movie categories are only available for Xtream sources</p>';
+                this.contentLoadingRequestId = null;
+                this.contentLoadMessage = { text: 'Movie categories are only available for Xtream sources', isError: false };
+                this.renderTree();
                 return;
             }
 
@@ -1200,7 +1261,9 @@ class SourceManager {
             if (requestId !== this.contentLoadRequestId) return;
 
             if (!categories || categories.length === 0) {
-                this.contentTree.innerHTML = '<p class="hint">No movie categories found</p>';
+                this.contentLoadingRequestId = null;
+                this.contentLoadMessage = { text: 'No movie categories found', isError: false };
+                this.renderTree();
                 return;
             }
 
@@ -1234,12 +1297,15 @@ class SourceManager {
 
             // Auto expand
             this.expandedGroups.add('all_categories');
+            this.contentLoadingRequestId = null;
             this.renderTree();
 
         } catch (err) {
             if (requestId !== this.contentLoadRequestId) return;
+            this.contentLoadingRequestId = null;
             console.error('Error loading movie categories:', err);
-            this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading movie categories</p>';
+            this.contentLoadMessage = { text: 'Error loading movie categories', isError: true };
+            this.renderTree();
         }
     }
 
@@ -1247,6 +1313,8 @@ class SourceManager {
      * Load series categories tree for a source
      */
     async loadSeriesCategoriesTree(sourceId, requestId = ++this.contentLoadRequestId) {
+        this.contentLoadingRequestId = requestId;
+        this.contentLoadMessage = null;
         this.contentTree.innerHTML = '<p class="hint">Loading series categories...</p>';
         this.treeData = { type: 'series', sourceId, groups: [] };
         this.pendingAllVisibility = null;
@@ -1256,7 +1324,9 @@ class SourceManager {
             if (requestId !== this.contentLoadRequestId) return;
 
             if (source.type !== 'xtream') {
-                this.contentTree.innerHTML = '<p class="hint">Series categories are only available for Xtream sources</p>';
+                this.contentLoadingRequestId = null;
+                this.contentLoadMessage = { text: 'Series categories are only available for Xtream sources', isError: false };
+                this.renderTree();
                 return;
             }
 
@@ -1264,7 +1334,9 @@ class SourceManager {
             if (requestId !== this.contentLoadRequestId) return;
 
             if (!categories || categories.length === 0) {
-                this.contentTree.innerHTML = '<p class="hint">No series categories found</p>';
+                this.contentLoadingRequestId = null;
+                this.contentLoadMessage = { text: 'No series categories found', isError: false };
+                this.renderTree();
                 return;
             }
 
@@ -1288,12 +1360,15 @@ class SourceManager {
             }];
 
             this.expandedGroups.add('all_series_categories');
+            this.contentLoadingRequestId = null;
             this.renderTree();
 
         } catch (err) {
             if (requestId !== this.contentLoadRequestId) return;
+            this.contentLoadingRequestId = null;
             console.error('Error loading series categories:', err);
-            this.contentTree.innerHTML = '<p class="hint" style="color: var(--color-error);">Error loading series categories</p>';
+            this.contentLoadMessage = { text: 'Error loading series categories', isError: true };
+            this.renderTree();
         }
     }
 
@@ -1323,8 +1398,7 @@ class SourceManager {
                 const groupId = groupEl.dataset.groupId;
                 const group = this.treeData.groups.find(g => g.id === groupId);
                 if (group) {
-                    const hasVisibleChild = group.items.some(item => !this.hiddenSet.has(`${item.type}:${item.id}`));
-                    groupCheckbox.checked = hasVisibleChild;
+                    this.applyGroupCheckboxState(groupCheckbox, group);
                 }
             }
         }

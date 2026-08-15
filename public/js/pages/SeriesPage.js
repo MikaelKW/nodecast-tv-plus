@@ -23,6 +23,7 @@ class SeriesPage {
         this.batchSize = 24;
         this.filteredSeries = [];
         this.isLoading = false;
+        this.loadError = null;
         this.observer = null;
         this.hiddenCategoryIds = new Set();
         this.currentSeries = null;
@@ -177,6 +178,7 @@ class SeriesPage {
 
     async loadSeries() {
         this.isLoading = true;
+        this.loadError = null;
         this.container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
 
         try {
@@ -223,9 +225,11 @@ class SeriesPage {
             }
 
             console.log(`[Series] Total loaded: ${this.seriesList.length} series`);
+            this.isLoading = false;
             this.filterAndRender();
         } catch (err) {
             console.error('Error loading series:', err);
+            this.loadError = 'Error loading series';
             this.container.innerHTML = '<div class="empty-state"><p>Error loading series</p></div>';
         } finally {
             this.isLoading = false;
@@ -233,6 +237,15 @@ class SeriesPage {
     }
 
     filterAndRender() {
+        if (this.isLoading) {
+            this.container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+            return;
+        }
+        if (this.loadError) {
+            this.container.innerHTML = `<div class="empty-state"><p>${this.loadError}</p></div>`;
+            return;
+        }
+
         const searchTerm = this.searchInput?.value?.toLowerCase() || '';
 
         this.filteredSeries = this.seriesList.filter(s => {

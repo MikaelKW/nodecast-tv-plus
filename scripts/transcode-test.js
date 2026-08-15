@@ -6,7 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-transcode-test-'));
 process.env.NODECAST_CACHE_DIR = path.join(testRoot, 'cache');
-const ffmpegPath = require('ffmpeg-static');
+const { resolveFFmpegPath } = require('../server/services/ffmpegBinary');
+const ffmpegPath = resolveFFmpegPath().path;
 const bundledFfprobePath = require('@ffprobe-installer/ffprobe').path;
 const systemFfprobe = spawnSync('ffprobe', ['-version'], {
     stdio: 'ignore',
@@ -100,7 +101,7 @@ async function createTransientServer(mediaPath, initialStatus) {
 }
 
 async function main() {
-    assert.ok(ffmpegPath, 'ffmpeg-static is required for the transcode test.');
+    assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
 
     const ownerSessions = [];
@@ -206,6 +207,20 @@ async function main() {
     assert.equal(ordinaryArgs.includes('-noaccurate_seek'), false);
     assert.equal(ordinaryArgs.includes('-copyts'), false);
     assert.equal(ordinaryArgs.includes('-muxdelay'), false);
+
+    const compatibilityAudioSession = new TranscodeSession('https://example.com/source', {
+        videoMode: 'copy',
+        videoCodec: 'h264',
+        audioCodec: 'aac',
+        audioChannels: 1,
+        audioMixPreset: 'passthrough',
+        forceAudioTranscode: true
+    });
+    const compatibilityAudioArgs = compatibilityAudioSession.buildFFmpegArgs();
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-c:a') + 1], 'aac');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-profile:a') + 1], 'aac_low');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-ac') + 1], '2');
+    assert.equal(compatibilityAudioArgs[compatibilityAudioArgs.indexOf('-af') + 1], 'aresample=async=1');
 
     const adaptiveLevels = [
         { height: 1080, bitrate: 5_000_000 },

@@ -4,6 +4,12 @@
  */
 const { fetchWithPolicy } = require('./outboundSecurity');
 
+const XTREAM_API_HEADERS = Object.freeze({
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+});
+
 class XtreamApi {
     constructor(baseUrl, username, password) {
         // Clean up base URL
@@ -35,7 +41,11 @@ class XtreamApi {
      */
     async request(action, params = {}) {
         const url = this.buildApiUrl(action, params);
-        const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [this.baseUrl] });
+        const response = await fetchWithPolicy(
+            url,
+            { headers: XTREAM_API_HEADERS },
+            { allowPrivateHosts: [this.baseUrl] }
+        );
         if (!response.ok) {
             throw new Error(`Xtream API error: ${response.status} ${response.statusText}`);
         }

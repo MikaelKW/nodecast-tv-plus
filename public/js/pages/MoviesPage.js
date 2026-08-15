@@ -18,6 +18,7 @@ class MoviesPage {
         this.batchSize = 24;
         this.filteredMovies = [];
         this.isLoading = false;
+        this.loadError = null;
         this.observer = null;
         this.favoriteIds = new Set(); // Track favorite movie IDs
         this.showFavoritesOnly = false;
@@ -162,6 +163,7 @@ class MoviesPage {
 
     async loadMovies() {
         this.isLoading = true;
+        this.loadError = null;
         this.container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
 
         try {
@@ -208,9 +210,11 @@ class MoviesPage {
             }
 
             console.log(`[Movies] Total loaded: ${this.movies.length} movies`);
+            this.isLoading = false;
             this.filterAndRender();
         } catch (err) {
             console.error('Error loading movies:', err);
+            this.loadError = 'Error loading movies';
             this.container.innerHTML = '<div class="empty-state"><p>Error loading movies</p></div>';
         } finally {
             this.isLoading = false;
@@ -218,6 +222,15 @@ class MoviesPage {
     }
 
     filterAndRender() {
+        if (this.isLoading) {
+            this.container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+            return;
+        }
+        if (this.loadError) {
+            this.container.innerHTML = `<div class="empty-state"><p>${this.loadError}</p></div>`;
+            return;
+        }
+
         const searchTerm = this.searchInput?.value?.toLowerCase() || '';
 
         this.filteredMovies = this.movies.filter(m => {

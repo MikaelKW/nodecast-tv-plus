@@ -254,6 +254,7 @@ class TranscodeSession extends EventEmitter {
         const audioCodec = this.options.audioCodec?.toLowerCase() || 'unknown';
         const audioChannels = this.options.audioChannels || 0;
         const audioMixPreset = this.options.audioMixPreset || 'auto';
+        const forceAudioTranscode = this.options.forceAudioTranscode === true;
         const isStereoAac = audioCodec.includes('aac') && audioChannels === 2;
 
         // Define pan filter presets for 5.1 -> Stereo downmix
@@ -266,7 +267,20 @@ class TranscodeSession extends EventEmitter {
             cinematic: 'pan=stereo|FL=FC+0.80*FL+0.60*BL+0.5*LFE|FR=FC+0.80*FR+0.60*BR+0.5*LFE'
         };
 
-        if (audioMixPreset === 'passthrough') {
+        if (forceAudioTranscode) {
+            // Firefox does not reliably expose audio from the low-latency
+            // fragmented-MP4 remux response. Normalize it into stereo AAC-LC
+            // inside the HLS compatibility path while leaving video untouched.
+            console.log(`[TranscodeSession ${this.id}] Audio: Compatibility transcode (${audioCodec} ${audioChannels}ch -> Stereo AAC-LC)`);
+            args.push(
+                '-c:a', 'aac',
+                '-profile:a', 'aac_low',
+                '-ar', '48000',
+                '-ac', '2',
+                '-b:a', '192k',
+                '-af', 'aresample=async=1'
+            );
+        } else if (audioMixPreset === 'passthrough') {
             // Passthrough: Always copy audio, no processing
             console.log(`[TranscodeSession ${this.id}] Audio: Passthrough (copy)`);
             args.push('-c:a', 'copy');
