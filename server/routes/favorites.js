@@ -43,7 +43,9 @@ router.get('/channels', async (req, res) => {
                 name: row.name,
                 tvgId: data.epg_channel_id || data.tvgId || null,
                 tvgLogo: row.stream_icon,
-                ...(sourceType === 'm3u' ? { url: row.stream_url } : {}),
+                ...(sourceType === 'm3u'
+                    ? { url: row.stream_url || data.stream_url || data.url || null }
+                    : {}),
                 groupId: `${sourceType}_${row.source_id}_${row.category_id || ''}`,
                 groupTitle: row.category_name || 'Uncategorized',
                 sourceId: row.source_id,

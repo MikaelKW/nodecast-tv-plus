@@ -109,7 +109,7 @@ function seedCatalogue(dataDirectory) {
     );
     channel.run(
         '1:beta', 1, 'beta', 'beta Channel', 'visible',
-        null, 'http://streams.invalid/beta.ts', 0, '{}'
+        null, null, 0, JSON.stringify({ stream_url: 'http://streams.invalid/beta.ts' })
     );
     channel.run(
         '1:gamma', 1, 'gamma', 'Gamma Channel', 'visible',
