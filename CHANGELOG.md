@@ -4,6 +4,35 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.5.4] - 2026-08-15
+
+This focused stabilization release restores provider and browser compatibility, improves loading and content-visibility feedback, and strengthens route-specific request controls.
+
+### Changed
+
+- Show an indeterminate/minus state for partially visible Manage Content groups while preserving complete group state during filtered searches ([#295]).
+- Resolve FFmpeg from the system first and use the optional bundled package only as a fallback, keeping application and browser-fixture startup reliable when the optional package is unavailable ([#316], [#318]).
+
+### Fixed
+
+- Restore compatibility with Xtream gateways that reject header-minimal API requests while retaining outbound destination, redirect, and protected-network validation ([#308]).
+- Keep Live TV, Manage Content, Movies, Series, and TV Guide in their loading state while a search is entered, then apply the retained query when catalogue loading completes ([#305]).
+- Load very large channel and EPG catalogues in Chromium without exceeding the JavaScript call stack; broader full-catalogue performance work remains tracked separately ([#326]).
+- Restore audio for AAC MPEG-TS remux playback in Firefox while preserving the existing automatic remux path in Chromium ([#323]).
+- Keep browser/media CI independent of external Google Fonts availability and optional bundled FFmpeg installation.
+
+### Security
+
+- Add route-specific per-account request limits to OIDC authorization, content-visibility operations, and administrative source status and testing endpoints ([#306]).
+
+### Upgrade notes
+
+- Preserve and back up the existing `/app/data` volume before recreating the container with `2.5.4`.
+- Keep the existing strong, distinct `JWT_SECRET` and `SESSION_SECRET` values. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Migration from the published 2.5.3 container is covered by the automated release gate; supported upstream v2.1.1 and 2.1.4 baselines remain covered.
+- Stable images are published to both `ghcr.io/mikaelkw/nodecast-tv-plus` and `mikaelkw/nodecast-tv-plus`; GHCR remains the canonical registry.
+- Roll back by restoring the pre-upgrade data backup and recreating the container with `2.5.3` and the existing deployment secrets.
+
 ## [2.5.3] - 2026-08-11
 
 This maintenance release improves large-provider reliability, preserves distinct channel variants, adds release-update visibility, and reduces the production container footprint.
@@ -338,6 +367,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.5.4]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.0...v2.5.1
@@ -413,3 +443,11 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#273]: https://github.com/MikaelKW/nodecast-tv-plus/issues/273
 [#283]: https://github.com/MikaelKW/nodecast-tv-plus/issues/283
 [#298]: https://github.com/MikaelKW/nodecast-tv-plus/issues/298
+[#295]: https://github.com/MikaelKW/nodecast-tv-plus/issues/295
+[#305]: https://github.com/MikaelKW/nodecast-tv-plus/issues/305
+[#306]: https://github.com/MikaelKW/nodecast-tv-plus/issues/306
+[#308]: https://github.com/MikaelKW/nodecast-tv-plus/issues/308
+[#316]: https://github.com/MikaelKW/nodecast-tv-plus/pull/316
+[#318]: https://github.com/MikaelKW/nodecast-tv-plus/pull/318
+[#323]: https://github.com/MikaelKW/nodecast-tv-plus/issues/323
+[#326]: https://github.com/MikaelKW/nodecast-tv-plus/pull/326
