@@ -7,6 +7,7 @@ class HomePage {
         this.app = app;
         this.container = null; // Will be set in renderLayout
         this.isLoading = false;
+        this.favoriteChannelsByKey = new Map();
     }
 
     async init() {
@@ -196,38 +197,17 @@ class HomePage {
         if (!list || !section) return;
 
         try {
-            // Fetch favorite channels for current user
-            const favorites = await window.API.request('GET', '/favorites?itemType=channel');
+            // Fetch only the resolved channel records needed by this dashboard row.
+            const channels = await window.API.favorites.getChannels();
 
-            if (!favorites || favorites.length === 0) {
+            if (!channels || channels.length === 0) {
                 list.innerHTML = '<div class="empty-state hint">Add channels to favorites from Live TV</div>';
                 return;
             }
 
-            // Ensure channel list is loaded to resolve channel details
-            const channelList = this.app.channelList;
-            if (!channelList.channels || channelList.channels.length === 0) {
-                await channelList.loadSources();
-                await channelList.loadChannels();
-            }
-
-            // Match favorites to channel data
-            const channels = [];
-            for (const fav of favorites) {
-                // Find channel in loaded channel list
-                const channel = channelList.channels.find(ch =>
-                    String(ch.sourceId) === String(fav.source_id) &&
-                    (String(ch.id) === String(fav.item_id) || String(ch.streamId) === String(fav.item_id))
-                );
-                if (channel) {
-                    channels.push({ ...channel, favoriteId: fav.id });
-                }
-            }
-
-            if (channels.length === 0) {
-                list.innerHTML = '<div class="empty-state hint">Add channels to favorites from Live TV</div>';
-                return;
-            }
+            this.favoriteChannelsByKey = new Map(
+                channels.map(channel => [this.favoriteChannelKey(channel.id, channel.sourceId), channel])
+            );
 
             // Render channel tiles
             list.innerHTML = channels.map(ch => this.createChannelTile(ch)).join('');
@@ -237,7 +217,10 @@ class HomePage {
                 tile.addEventListener('click', () => {
                     const channelId = tile.dataset.channelId;
                     const sourceId = tile.dataset.sourceId;
-                    this.playChannel(channelId, sourceId);
+                    const channel = this.favoriteChannelsByKey.get(
+                        this.favoriteChannelKey(channelId, sourceId)
+                    );
+                    if (channel) this.playChannel(channel);
                 });
             });
 
@@ -265,29 +248,19 @@ class HomePage {
         `;
     }
 
-    playChannel(channelId, sourceId) {
+    favoriteChannelKey(channelId, sourceId) {
+        return `${sourceId}:${channelId}`;
+    }
+
+    playChannel(channel) {
         // Navigate to Live TV and select the channel
         this.app.navigateTo('live');
 
-        // Small delay to ensure page is ready
-        setTimeout(() => {
-            const channelList = this.app.channelList;
-            if (channelList) {
-                // Find and select the channel
-                const channel = channelList.channels.find(ch =>
-                    String(ch.id) === String(channelId) && String(ch.sourceId) === String(sourceId)
-                );
-                if (channel) {
-                    channelList.selectChannel({
-                        channelId: channel.id,
-                        sourceId: channel.sourceId,
-                        sourceType: channel.sourceType,
-                        streamId: channel.streamId || '',
-                        url: channel.url || ''
-                    });
-                }
-            }
-        }, 100);
+        // Playback can begin from the targeted dashboard record while Live TV
+        // loads its broader catalogue independently in the background.
+        this.app.channelList?.playChannelRecord(channel)?.catch(err => {
+            console.error('[Dashboard] Error starting favorite channel:', err);
+        });
     }
 
     renderHistory(items) {

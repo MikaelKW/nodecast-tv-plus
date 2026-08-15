@@ -79,6 +79,10 @@ function initSchema() {
             ON playlist_items(source_id, type, item_id);
         CREATE INDEX IF NOT EXISTS idx_items_source_type_category_hidden
             ON playlist_items(source_id, type, category_id, is_hidden);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_hidden_name
+            ON playlist_items(source_id, type, is_hidden, name COLLATE NOCASE, item_id);
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_category_hidden_name
+            ON playlist_items(source_id, type, category_id, is_hidden, name COLLATE NOCASE, item_id);
     `);
 
     // EPG Programs
@@ -121,6 +125,16 @@ function initSchema() {
             type TEXT NOT NULL,
             is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1)),
             PRIMARY KEY (source_id, type)
+        );
+    `);
+
+    // Monotonic source revisions let clients invalidate compact catalogue
+    // summaries and pages without downloading the full catalogue first.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS catalogue_revisions (
+            source_id INTEGER PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL
         );
     `);
 
@@ -228,11 +242,70 @@ const favorites = {
             set.add(`${row.source_id}:${row.item_id}:${row.item_type}`);
         }
         return set;
+    },
+
+    getVisibleChannels(userId, limit = 100) {
+        const db = getDb();
+        return db.prepare(`
+            SELECT
+                f.id AS favorite_id,
+                f.source_id,
+                f.item_id,
+                p.name,
+                p.category_id,
+                p.stream_icon,
+                p.stream_url,
+                p.data,
+                c.name AS category_name
+            FROM favorites f
+            INNER JOIN playlist_items p
+                ON p.source_id = f.source_id
+               AND p.item_id = f.item_id
+               AND p.type = 'live'
+            LEFT JOIN categories c
+                ON c.source_id = p.source_id
+               AND c.type = p.type
+               AND c.category_id = p.category_id
+            WHERE f.user_id = ?
+              AND f.item_type = 'channel'
+              AND p.is_hidden = 0
+              AND COALESCE(c.is_hidden, 0) = 0
+            ORDER BY f.created_at DESC, f.id DESC
+            LIMIT ?
+        `).all(userId, limit);
+    }
+};
+
+const catalogueRevisions = {
+    get(sourceId) {
+        const row = getDb().prepare(
+            'SELECT revision, updated_at FROM catalogue_revisions WHERE source_id = ?'
+        ).get(sourceId);
+        return row || { revision: 0, updated_at: null };
+    },
+
+    bump(sourceId) {
+        const now = Date.now();
+        getDb().prepare(`
+            INSERT INTO catalogue_revisions (source_id, revision, updated_at)
+            VALUES (?, 1, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+                revision = catalogue_revisions.revision + 1,
+                updated_at = excluded.updated_at
+        `).run(sourceId, now);
+        return this.get(sourceId);
+    },
+
+    remove(sourceId) {
+        return getDb().prepare(
+            'DELETE FROM catalogue_revisions WHERE source_id = ?'
+        ).run(sourceId).changes > 0;
     }
 };
 
 module.exports = {
     getDb,
     initSchema,
-    favorites
+    favorites,
+    catalogueRevisions
 };

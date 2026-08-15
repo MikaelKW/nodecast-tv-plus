@@ -1235,6 +1235,18 @@ class ChannelList {
             }
         }
 
+        await this.playChannelRecord(channel);
+    }
+
+    /**
+     * Resolve and play a channel record that may come from outside the full
+     * Live TV catalogue, such as the targeted favorites endpoint on Home.
+     */
+    async playChannelRecord(channel) {
+        if (!channel) return;
+
+        this.currentChannel = channel;
+
         // Get stream URL
         let streamUrl;
         if (channel.sourceType === 'xtream') {

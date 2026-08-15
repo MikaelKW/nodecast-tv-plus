@@ -85,6 +85,8 @@ const API = {
 
     // Favorites
     favorites: {
+        getChannels: (limit = 100) =>
+            API.request('GET', `/favorites/channels?limit=${encodeURIComponent(limit)}`),
         getAll: (sourceId = null, itemType = null) => {
             let url = '/favorites';
             const params = [];
@@ -103,6 +105,23 @@ const API = {
 
     // Proxy
     proxy: {
+        catalogue: {
+            liveSummary: (sourceId) =>
+                API.request('GET', `/proxy/catalogue/${sourceId}/live/summary`),
+            liveChannels: (sourceId, options = {}) => {
+                const params = new URLSearchParams();
+                if (options.categoryId) params.set('category_id', options.categoryId);
+                if (options.query) params.set('query', options.query);
+                if (options.cursor) params.set('cursor', options.cursor);
+                if (options.limit) params.set('limit', options.limit);
+                const query = params.toString();
+                return API.request(
+                    'GET',
+                    `/proxy/catalogue/${sourceId}/live/channels${query ? `?${query}` : ''}`
+                );
+            }
+        },
+
         // Xtream
         xtream: {
             auth: (sourceId) => API.request('GET', `/proxy/xtream/${sourceId}/auth`),

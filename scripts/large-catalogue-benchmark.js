@@ -441,6 +441,62 @@ async function setupSession(baseUrl) {
     return cookie;
 }
 
+async function seedFavorites(baseUrl, cookie, count = 12) {
+    for (let index = 0; index < count; index += 1) {
+        const itemId = `channel-${String(index).padStart(6, '0')}`;
+        const response = await fetch(`${baseUrl}/api/favorites`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Cookie: cookie },
+            body: JSON.stringify({ sourceId, itemId, itemType: 'channel' })
+        });
+        assert.equal(response.status, 200);
+    }
+}
+
+async function measureHomeBrowser(baseUrl, cookie, expectedFavorites = 12) {
+    const browser = await chromium.launch({ headless: true });
+    try {
+        const context = await browser.newContext();
+        const parsedBase = new URL(baseUrl);
+        const [name, value] = cookie.split('=', 2);
+        await context.addCookies([{
+            name,
+            value,
+            domain: parsedBase.hostname,
+            path: '/',
+            httpOnly: true,
+            sameSite: 'Lax'
+        }]);
+        const page = await context.newPage();
+        page.setDefaultTimeout(30000);
+        let fullLiveCatalogueRequests = 0;
+        page.on('request', request => {
+            if (new URL(request.url()).pathname.endsWith('/live_streams')) {
+                fullLiveCatalogueRequests += 1;
+            }
+        });
+
+        const started = performance.now();
+        await page.goto(`${baseUrl}/#home`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(expected => (
+            document.querySelectorAll('#favorite-channels-list .channel-tile').length === expected
+        ), expectedFavorites);
+        const readyMs = elapsed(started);
+        const state = await page.evaluate(() => ({
+            favoriteTiles: document.querySelectorAll('#favorite-channels-list .channel-tile').length,
+            liveChannelsMaterialized: window.app?.channelList?.channels?.length || 0,
+            domNodes: document.getElementsByTagName('*').length,
+            heapMb: performance.memory
+                ? Number((performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1))
+                : null
+        }));
+
+        return { readyMs, fullLiveCatalogueRequests, ...state };
+    } finally {
+        await browser.close();
+    }
+}
+
 async function measureBrowser(baseUrl, cookie) {
     const browser = await chromium.launch({ headless: true });
     try {
@@ -516,6 +572,63 @@ async function run() {
 
         server = await startServer(dataDirectory);
         const cookie = await setupSession(server.baseUrl);
+        await seedFavorites(server.baseUrl, cookie);
+        const favoriteMeasurement = await measureServerMemory(server, () =>
+            requestCompressedJson(
+                `${server.baseUrl}/api/favorites/channels`,
+                cookie
+            )
+        );
+        const favoriteChannels = favoriteMeasurement.result;
+        assert.equal(favoriteChannels.data.length, 12);
+        favoriteChannels.data = null;
+
+        let home;
+        try {
+            const homeMeasurement = await measureServerMemory(server, () =>
+                measureHomeBrowser(server.baseUrl, cookie)
+            );
+            home = {
+                ...homeMeasurement.result,
+                serverMemory: homeMeasurement.memory
+            };
+        } catch (error) {
+            home = { error: error.message };
+        }
+
+        const summaryMeasurement = await measureServerMemory(server, () =>
+            requestCompressedJson(
+                `${server.baseUrl}/api/proxy/catalogue/${sourceId}/live/summary`,
+                cookie
+            )
+        );
+        const catalogueSummary = summaryMeasurement.result;
+        assert.equal(catalogueSummary.data.totalChannels, channelCount);
+        assert.equal(catalogueSummary.data.groups.length, categoryCount);
+        catalogueSummary.data = null;
+
+        const pageMeasurement = await measureServerMemory(server, () =>
+            requestCompressedJson(
+                `${server.baseUrl}/api/proxy/catalogue/${sourceId}/live/channels?limit=100`,
+                cookie
+            )
+        );
+        const cataloguePage = pageMeasurement.result;
+        assert.equal(cataloguePage.data.items.length, 100);
+        assert.equal(cataloguePage.data.hasMore, true);
+        assert.ok(cataloguePage.data.nextCursor);
+        cataloguePage.data = null;
+
+        const searchMeasurement = await measureServerMemory(server, () =>
+            requestCompressedJson(
+                `${server.baseUrl}/api/proxy/catalogue/${sourceId}/live/channels?limit=100&query=${encodeURIComponent(lastChannelName)}`,
+                cookie
+            )
+        );
+        const catalogueSearch = searchMeasurement.result;
+        assert.equal(catalogueSearch.data.items.length, 1);
+        catalogueSearch.data = null;
+
         const categories = await requestCompressedJson(
             `${server.baseUrl}/api/proxy/xtream/${sourceId}/live_categories`,
             cookie
@@ -563,6 +676,26 @@ async function run() {
             },
             direct,
             http: {
+                favoriteChannels: {
+                    ...favoriteChannels,
+                    data: undefined,
+                    serverMemory: favoriteMeasurement.memory
+                },
+                catalogueSummary: {
+                    ...catalogueSummary,
+                    data: undefined,
+                    serverMemory: summaryMeasurement.memory
+                },
+                cataloguePage: {
+                    ...cataloguePage,
+                    data: undefined,
+                    serverMemory: pageMeasurement.memory
+                },
+                catalogueSearch: {
+                    ...catalogueSearch,
+                    data: undefined,
+                    serverMemory: searchMeasurement.memory
+                },
                 categories: { ...categories, data: undefined },
                 streamsCold: {
                     ...streamsCold,
@@ -575,6 +708,7 @@ async function run() {
                     serverMemory: warmMeasurement.memory
                 }
             },
+            home,
             browser
         };
 
