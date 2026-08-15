@@ -209,6 +209,7 @@ async function run() {
         assert.ok(cookie);
 
         await requestFavorite(baseUrl, cookie, 'visible-channel');
+        await requestFavorite(baseUrl, cookie, 'm3u_1_beta');
         await requestFavorite(baseUrl, cookie, 'hidden-channel');
         await requestFavorite(baseUrl, cookie, 'hidden-group-channel');
 
@@ -218,20 +219,35 @@ async function run() {
         const responseText = await response.text();
         assert.equal(response.status, 200, responseText);
         const channels = JSON.parse(responseText);
-        assert.equal(channels.length, 1);
-        assert.deepEqual(channels, [{
-            favoriteId: channels[0].favoriteId,
-            id: 'm3u_1_visible-channel',
-            streamId: 'visible-channel',
-            name: 'Visible Favorite',
-            tvgId: 'visible-epg',
-            tvgLogo: 'https://images.invalid/visible.png',
-            url: 'http://streams.invalid/visible.ts',
-            groupId: 'm3u_1_visible',
-            groupTitle: 'Visible Group',
-            sourceId: 1,
-            sourceType: 'm3u'
-        }]);
+        assert.equal(channels.length, 2);
+        assert.deepEqual(channels, [
+            {
+                favoriteId: channels[0].favoriteId,
+                id: 'm3u_1_beta',
+                streamId: 'beta',
+                name: 'beta Channel',
+                tvgId: null,
+                tvgLogo: null,
+                url: 'http://streams.invalid/beta.ts',
+                groupId: 'm3u_1_visible',
+                groupTitle: 'Visible Group',
+                sourceId: 1,
+                sourceType: 'm3u'
+            },
+            {
+                favoriteId: channels[1].favoriteId,
+                id: 'm3u_1_visible-channel',
+                streamId: 'visible-channel',
+                name: 'Visible Favorite',
+                tvgId: 'visible-epg',
+                tvgLogo: 'https://images.invalid/visible.png',
+                url: 'http://streams.invalid/visible.ts',
+                groupId: 'm3u_1_visible',
+                groupTitle: 'Visible Group',
+                sourceId: 1,
+                sourceType: 'm3u'
+            }
+        ]);
 
         const summary = await requestJson(
             `${baseUrl}/api/proxy/catalogue/1/live/summary`,

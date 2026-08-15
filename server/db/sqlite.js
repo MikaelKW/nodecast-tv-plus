@@ -246,33 +246,67 @@ const favorites = {
 
     getVisibleChannels(userId, limit = 100) {
         const db = getDb();
-        return db.prepare(`
+        const favoriteRows = db.prepare(`
             SELECT
                 f.id AS favorite_id,
                 f.source_id,
-                f.item_id,
+                f.item_id AS favorite_item_id
+            FROM favorites f
+            WHERE f.user_id = ?
+              AND f.item_type = 'channel'
+            ORDER BY f.created_at DESC, f.id DESC
+            LIMIT ?
+        `).all(userId, limit);
+        const resolveChannel = db.prepare(`
+            SELECT
+                p.item_id,
                 p.name,
                 p.category_id,
                 p.stream_icon,
                 p.stream_url,
                 p.data,
                 c.name AS category_name
-            FROM favorites f
-            INNER JOIN playlist_items p
-                ON p.source_id = f.source_id
-               AND p.item_id = f.item_id
-               AND p.type = 'live'
+            FROM playlist_items p
             LEFT JOIN categories c
                 ON c.source_id = p.source_id
                AND c.type = p.type
                AND c.category_id = p.category_id
-            WHERE f.user_id = ?
-              AND f.item_type = 'channel'
+            WHERE p.source_id = ?
+              AND p.type = 'live'
+              AND p.item_id = ?
               AND p.is_hidden = 0
               AND COALESCE(c.is_hidden, 0) = 0
-            ORDER BY f.created_at DESC, f.id DESC
-            LIMIT ?
-        `).all(userId, limit);
+            LIMIT 1
+        `);
+        const channels = [];
+
+        for (const favorite of favoriteRows) {
+            const compositePrefixes = [
+                `m3u_${favorite.source_id}_`,
+                `xtream_${favorite.source_id}_`
+            ];
+            const candidates = [String(favorite.favorite_item_id)];
+            for (const prefix of compositePrefixes) {
+                if (candidates[0].startsWith(prefix)) {
+                    candidates.push(candidates[0].slice(prefix.length));
+                }
+            }
+
+            let channel = null;
+            for (const itemId of candidates) {
+                channel = resolveChannel.get(favorite.source_id, itemId);
+                if (channel) break;
+            }
+            if (!channel) continue;
+
+            channels.push({
+                favorite_id: favorite.favorite_id,
+                source_id: favorite.source_id,
+                ...channel
+            });
+        }
+
+        return channels;
     }
 };
 
