@@ -30,6 +30,7 @@
         "test:totp": "node scripts/totp-auth-test.js",
         "test:session-isolation": "node scripts/session-cookie-isolation-test.js",
         "test:performance": "node scripts/large-provider-performance-test.js",
+        "benchmark:catalogue": "node --expose-gc scripts/large-catalogue-benchmark.js",
         "test:content-visibility": "node scripts/content-visibility-test.js",
         "test:ffmpeg-binary": "node scripts/ffmpeg-binary-test.js",
         "test:content-group-state": "node scripts/content-group-state-test.js",
