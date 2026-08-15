@@ -1,6 +1,6 @@
 {
     "name": "nodecast-tv-plus",
-    "version": "2.5.3",
+    "version": "2.5.4",
     "description": "NodeCast TV Plus - Modern IPTV Player",
     "license": "GPL-3.0-only",
     "main": "server/index.js",
@@ -31,8 +31,8 @@
         "test:session-isolation": "node scripts/session-cookie-isolation-test.js",
         "test:performance": "node scripts/large-provider-performance-test.js",
         "test:content-visibility": "node scripts/content-visibility-test.js",
-        "test:content-group-state": "node scripts/content-group-state-test.js",
         "test:ffmpeg-binary": "node scripts/ffmpeg-binary-test.js",
+        "test:content-group-state": "node scripts/content-group-state-test.js",
         "test:xmltv": "node scripts/xmltv-timestamp-test.js",
         "test:security": "node scripts/security-test.js",
         "test:resource-controls": "node scripts/resource-controls-test.js",
