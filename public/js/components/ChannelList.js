@@ -3,6 +3,8 @@
  * Handles the sidebar channel list
  */
 
+const BOUNDED_GROUP_PAGE_SIZE = 500;
+
 class ChannelList {
     constructor() {
         this.container = document.getElementById('channel-list');
@@ -34,6 +36,7 @@ class ChannelList {
         this.favoriteChannels = [];
         this.guideChannels = null;
         this._boundedRequestId = 0;
+        this.boundedContinuationObserver = null;
         this.isLoading = false;
         this.loadError = null;
         this.renderedChannels = [];
@@ -1562,7 +1565,10 @@ class ChannelList {
                 const page = await API.proxy.catalogue.liveChannels(part.source.id, {
                     categoryId: part.categoryId,
                     cursor: append ? previous?.nextCursor : null,
-                    limit: 100
+                    // A normal-sized group should feel complete as soon as it
+                    // opens. Larger groups continue in bounded pages as the
+                    // user approaches the end of the loaded channels.
+                    limit: Math.min(BOUNDED_GROUP_PAGE_SIZE, Math.max(1, part.count || BOUNDED_GROUP_PAGE_SIZE))
                 });
                 return { part, page };
             });
@@ -1593,6 +1599,7 @@ class ChannelList {
             ]));
             current.channels = [...unique.values()].sort((a, b) => a.name.localeCompare(b.name));
             current.loading = false;
+            current.error = null;
             current.hasMore = [...current.parts.values()].some(page => page.hasMore);
             this._rememberBoundedChannels(current.channels);
             this.renderBounded();
@@ -1640,6 +1647,43 @@ class ChannelList {
                 this.toggleFavorite(Number(item.dataset.sourceId), item.dataset.channelId);
             });
         });
+    }
+
+    _setupBoundedContinuationObserver() {
+        this.boundedContinuationObserver?.disconnect();
+        this.boundedContinuationObserver = null;
+
+        const sentinels = this.container.querySelectorAll('.bounded-load-sentinel');
+        if (sentinels.length === 0) return;
+
+        if (typeof IntersectionObserver === 'undefined') {
+            sentinels.forEach(sentinel => {
+                const button = document.createElement('button');
+                button.className = 'btn btn-secondary bounded-load-fallback';
+                button.textContent = 'Load remaining channels';
+                button.addEventListener('click', () => {
+                    this.loadBoundedGroup(sentinel.dataset.group, { append: true });
+                });
+                sentinel.replaceChildren(button);
+            });
+            return;
+        }
+
+        this.boundedContinuationObserver = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const groupName = entry.target.dataset.group;
+                this.boundedContinuationObserver?.unobserve(entry.target);
+                this.loadBoundedGroup(groupName, { append: true }).catch(err => {
+                    console.error(`Unable to continue loading group ${groupName}:`, err);
+                });
+            }
+        }, {
+            root: this.container,
+            rootMargin: '300px 0px'
+        });
+
+        sentinels.forEach(sentinel => this.boundedContinuationObserver.observe(sentinel));
     }
 
     renderBounded() {
@@ -1729,8 +1773,8 @@ class ChannelList {
               <div class="group-channels">
                 ${collapsed ? '' : channels.map(channel => this._boundedChannelHtml(channel, groupName)).join('')}
                 ${!collapsed && state?.loading ? '<div class="loading"></div>' : ''}
-                ${!collapsed && state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p></div>` : ''}
-                ${!collapsed && state?.hasMore ? '<button class="btn btn-secondary bounded-load-more">Load more</button>' : ''}
+                ${!collapsed && state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p><button class="btn btn-secondary bounded-load-retry">Try again</button></div>` : ''}
+                ${!collapsed && state?.hasMore && !state.loading && !state.error ? `<div class="bounded-load-sentinel" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
               </div>`;
 
             const header = groupEl.querySelector('.group-header');
@@ -1744,7 +1788,7 @@ class ChannelList {
                 }
             });
             header.addEventListener('contextmenu', event => this.showContextMenu(event, 'group', header.dataset));
-            groupEl.querySelector('.bounded-load-more')?.addEventListener('click', () =>
+            groupEl.querySelector('.bounded-load-retry')?.addEventListener('click', () =>
                 this.loadBoundedGroup(groupName, { append: true })
             );
             this._attachBoundedChannelListeners(groupEl);
@@ -1767,6 +1811,7 @@ class ChannelList {
 
         fragment.appendChild(list);
         this.container.replaceChildren(fragment);
+        this._setupBoundedContinuationObserver();
     }
 
     async loadGuideChannels() {

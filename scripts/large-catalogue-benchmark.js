@@ -543,15 +543,36 @@ async function measureBrowser(baseUrl, cookie) {
         await page.locator('.group-header:not(.favorites-group)').first().click();
         await page.waitForFunction(() => (
             [...window.app.channelList.boundedGroupPages.values()]
-                .some(state => state.channels.length === 100 && state.loading === false)
+                .some(state => state.channels.length === 500 && state.loading === false)
         ));
         const groupLoadMs = elapsed(groupLoadStarted);
         const loadedGroupState = await page.evaluate(() => ({
             materializedChannels: window.app.channelList.channels.length,
             renderedChannels: window.app.channelList.renderedChannels.length,
-            domNodes: document.getElementsByTagName('*').length
+            domNodes: document.getElementsByTagName('*').length,
+            loadMoreButtons: document.querySelectorAll('.bounded-load-more').length
         }));
-        assert.ok(loadedGroupState.materializedChannels <= 200);
+        assert.ok(loadedGroupState.materializedChannels <= 512);
+        assert.equal(loadedGroupState.loadMoreButtons, 0);
+
+        let automaticContinuation = null;
+        if (Math.ceil(channelCount / categoryCount) > 500) {
+            await page.locator('#channel-list').evaluate(element => {
+                element.scrollTop = element.scrollHeight;
+            });
+            await page.waitForFunction(() => (
+                [...window.app.channelList.boundedGroupPages.values()]
+                    .some(state => state.channels.length > 500 && state.loading === false)
+            ));
+            automaticContinuation = await page.evaluate(() => ({
+                loadedChannels: Math.max(
+                    ...[...window.app.channelList.boundedGroupPages.values()]
+                        .map(state => state.channels.length)
+                ),
+                loadMoreButtons: document.querySelectorAll('.bounded-load-more').length
+            }));
+            assert.equal(automaticContinuation.loadMoreButtons, 0);
+        }
 
         const reloadStarted = performance.now();
         await page.reload({ waitUntil: 'domcontentloaded' });
@@ -581,7 +602,8 @@ async function measureBrowser(baseUrl, cookie) {
             searchMs,
             fullLiveCatalogueRequests,
             initialState,
-            loadedGroupState
+            loadedGroupState,
+            automaticContinuation
         };
     } finally {
         await browser.close();
