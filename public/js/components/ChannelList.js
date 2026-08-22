@@ -1490,7 +1490,7 @@ class ChannelList {
             this.boundedSearchResults = [];
             this.boundedSearchPages.clear();
         }
-        this.renderBounded();
+        this.renderBounded({ preserveScrollPosition: append });
 
         try {
             const requests = this.boundedSources.map(async source => {
@@ -1537,16 +1537,20 @@ class ChannelList {
             );
             this._rememberBoundedChannels(this.boundedSearchResults);
             this.isLoading = false;
-            this.renderBounded();
+            this.renderBounded({ preserveScrollPosition: append });
         } catch (err) {
             if (requestId !== this._boundedRequestId) return;
             this.isLoading = false;
             this.loadError = err.message || 'Unable to search channels';
-            this.renderBounded();
+            this.renderBounded({ preserveScrollPosition: append });
         }
     }
 
-    async loadBoundedGroup(groupName, { append = false, preserveScrollPosition = true } = {}) {
+    async loadBoundedGroup(groupName, {
+        append = false,
+        preserveScrollPosition = true,
+        scrollAnchor = null
+    } = {}) {
         const group = this.boundedGroupIndex.get(groupName);
         if (!group) return;
         const current = this.boundedGroupPages.get(groupName) || {
@@ -1557,7 +1561,7 @@ class ChannelList {
         if (current.loading) return;
         current.loading = true;
         this.boundedGroupPages.set(groupName, current);
-        this.renderBounded({ preserveScrollPosition });
+        this.renderBounded({ preserveScrollPosition, scrollAnchor });
 
         try {
             const requests = group.parts.map(async part => {
@@ -1604,11 +1608,11 @@ class ChannelList {
             current.error = null;
             current.hasMore = [...current.parts.values()].some(page => page.hasMore);
             this._rememberBoundedChannels(current.channels);
-            this.renderBounded({ preserveScrollPosition });
+            this.renderBounded({ preserveScrollPosition, scrollAnchor });
         } catch (err) {
             current.loading = false;
             current.error = err.message || 'Unable to load group';
-            this.renderBounded({ preserveScrollPosition });
+            this.renderBounded({ preserveScrollPosition, scrollAnchor });
         }
     }
 
@@ -1655,19 +1659,27 @@ class ChannelList {
         this.boundedContinuationObserver?.disconnect();
         this.boundedContinuationObserver = null;
 
-        const sentinels = this.container.querySelectorAll('.bounded-load-sentinel');
+        const sentinels = this.container.querySelectorAll(
+            '.bounded-load-sentinel, .bounded-search-sentinel'
+        );
         if (sentinels.length === 0) return;
 
         if (typeof IntersectionObserver === 'undefined') {
             sentinels.forEach(sentinel => {
                 const button = document.createElement('button');
                 button.className = 'btn btn-secondary bounded-load-fallback';
-                button.textContent = 'Load remaining channels';
+                button.textContent = sentinel.dataset.kind === 'search'
+                    ? 'Load more results'
+                    : 'Load remaining channels';
                 button.addEventListener('click', () => {
-                    this.loadBoundedGroup(sentinel.dataset.group, {
-                        append: sentinel.dataset.mode !== 'initial',
-                        preserveScrollPosition: true
-                    });
+                    if (sentinel.dataset.kind === 'search') {
+                        this.loadBoundedSearch({ append: true });
+                    } else {
+                        this.loadBoundedGroup(sentinel.dataset.group, {
+                            append: sentinel.dataset.mode !== 'initial',
+                            preserveScrollPosition: true
+                        });
+                    }
                 });
                 sentinel.replaceChildren(button);
             });
@@ -1681,14 +1693,24 @@ class ChannelList {
             // them prevents a burst of large page requests and DOM updates.
             const entry = entries.find(candidate => candidate.isIntersecting);
             if (!entry) return;
+            const isSearch = entry.target.dataset.kind === 'search';
             const groupName = entry.target.dataset.group;
             const append = entry.target.dataset.mode !== 'initial';
             this.boundedContinuationObserver?.unobserve(entry.target);
             this.boundedObserverLoadInFlight = true;
             try {
-                await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
+                if (isSearch) {
+                    await this.loadBoundedSearch({ append: true });
+                } else {
+                    await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
+                }
             } catch (err) {
-                console.error(`Unable to continue loading group ${groupName}:`, err);
+                console.error(
+                    isSearch
+                        ? 'Unable to continue loading search results:'
+                        : `Unable to continue loading group ${groupName}:`,
+                    err
+                );
             } finally {
                 this.boundedObserverLoadInFlight = false;
                 // A render performed while the serialized load was active may
@@ -1698,13 +1720,43 @@ class ChannelList {
             }
         }, {
             root: this.container,
-            rootMargin: '300px 0px'
+            // Begin fetching well before the sentinel reaches the bottom of
+            // the sidebar. This keeps fast scrolling ahead of the network
+            // without increasing the bounded page size or DOM footprint.
+            rootMargin: '150% 0px'
         });
 
         sentinels.forEach(sentinel => this.boundedContinuationObserver.observe(sentinel));
     }
 
-    renderBounded({ preserveScrollPosition = false } = {}) {
+    _captureBoundedScrollAnchor(element = null) {
+        const containerRect = this.container.getBoundingClientRect();
+        let anchor = element;
+        if (!anchor) {
+            const headers = [...this.container.querySelectorAll('.group-header[data-group]')];
+            anchor = headers.find(header => {
+                const rect = header.getBoundingClientRect();
+                return rect.bottom >= containerRect.top;
+            });
+        }
+        if (!anchor?.dataset?.group) return null;
+        return {
+            groupName: anchor.dataset.group,
+            offset: anchor.getBoundingClientRect().top - containerRect.top
+        };
+    }
+
+    _restoreBoundedScrollAnchor(anchor) {
+        if (!anchor) return;
+        const header = [...this.container.querySelectorAll('.group-header[data-group]')]
+            .find(candidate => candidate.dataset.group === anchor.groupName);
+        if (!header) return;
+        const containerTop = this.container.getBoundingClientRect().top;
+        const nextOffset = header.getBoundingClientRect().top - containerTop;
+        this.container.scrollTop += nextOffset - anchor.offset;
+    }
+
+    renderBounded({ preserveScrollPosition = false, scrollAnchor = null } = {}) {
         const previousScrollTop = preserveScrollPosition ? this.container.scrollTop : 0;
         if (this.isLoading) {
             if (this.toggleGroupsBtn) {
@@ -1799,11 +1851,12 @@ class ChannelList {
             const header = groupEl.querySelector('.group-header');
             header.addEventListener('click', async () => {
                 if (isSearch || isFavorites) return;
+                const anchor = this._captureBoundedScrollAnchor(header);
                 this.toggleGroup(groupName);
                 if (collapsed && !state?.channels?.length) {
-                    await this.loadBoundedGroup(groupName);
+                    await this.loadBoundedGroup(groupName, { scrollAnchor: anchor });
                 } else {
-                    this.renderBounded();
+                    this.renderBounded({ scrollAnchor: anchor });
                 }
             });
             header.addEventListener('contextmenu', event => this.showContextMenu(event, 'group', header.dataset));
@@ -1821,11 +1874,11 @@ class ChannelList {
         }
 
         if (query && [...this.boundedSearchPages.values()].some(page => page.hasMore)) {
-            const loadMore = document.createElement('button');
-            loadMore.className = 'btn btn-secondary bounded-search-more';
-            loadMore.textContent = 'Load more results';
-            loadMore.addEventListener('click', () => this.loadBoundedSearch({ append: true }));
-            list.appendChild(loadMore);
+            const sentinel = document.createElement('div');
+            sentinel.className = 'bounded-search-sentinel';
+            sentinel.dataset.kind = 'search';
+            sentinel.innerHTML = '<div class="loading"></div>';
+            list.appendChild(sentinel);
         }
 
         fragment.appendChild(list);
@@ -1833,6 +1886,7 @@ class ChannelList {
         if (preserveScrollPosition) {
             this.container.scrollTop = previousScrollTop;
         }
+        this._restoreBoundedScrollAnchor(scrollAnchor);
         this._setupBoundedContinuationObserver();
     }
 

@@ -576,6 +576,44 @@ async function measureBrowser(baseUrl, cookie) {
             assert.ok(automaticContinuation.scrollTop > 0, 'Automatic continuation reset the channel-list scroll position.');
         }
 
+        const anchorGroupName = await page.evaluate(() => {
+            const headers = [...document.querySelectorAll('.group-header:not(.favorites-group)')];
+            const header = headers[Math.min(1, headers.length - 1)];
+            header?.scrollIntoView({ block: 'start' });
+            return header?.dataset.group || null;
+        });
+        assert.ok(anchorGroupName);
+        const anchorHeader = () => page.locator('.group-header:not(.favorites-group)')
+            .filter({ hasText: anchorGroupName })
+            .first();
+        await anchorHeader().click();
+        await page.waitForFunction(groupName => (
+            window.app.channelList.boundedGroupPages.get(groupName)?.loading === false
+        ), anchorGroupName);
+        await anchorHeader().click();
+        const collapsedAnchorState = await page.evaluate(groupName => {
+            const container = document.querySelector('#channel-list');
+            const header = [...document.querySelectorAll('.group-header[data-group]')]
+                .find(candidate => candidate.dataset.group === groupName);
+            const containerRect = container.getBoundingClientRect();
+            const headerRect = header.getBoundingClientRect();
+            return {
+                scrollTop: container.scrollTop,
+                visible: headerRect.bottom >= containerRect.top && headerRect.top <= containerRect.bottom
+            };
+        }, anchorGroupName);
+        assert.ok(collapsedAnchorState.scrollTop > 0, 'Collapsing a loaded group reset the sidebar to the top.');
+        assert.ok(collapsedAnchorState.visible, 'Collapsing a loaded group lost the active group header.');
+        await anchorHeader().click();
+        const reopenedAnchorVisible = await page.evaluate(groupName => {
+            const containerRect = document.querySelector('#channel-list').getBoundingClientRect();
+            const header = [...document.querySelectorAll('.group-header[data-group]')]
+                .find(candidate => candidate.dataset.group === groupName)
+                .getBoundingClientRect();
+            return header.bottom >= containerRect.top && header.top <= containerRect.bottom;
+        }, anchorGroupName);
+        assert.ok(reopenedAnchorVisible, 'Reopening a loaded group lost the active group header.');
+
         const reloadStarted = performance.now();
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(expectedGroups => (
@@ -609,6 +647,25 @@ async function measureBrowser(baseUrl, cookie) {
         assert.ok(expandAllState.materializedChannels <= 512);
         await page.locator('#toggle-groups').click();
 
+        await page.locator('#channel-search').fill('Synthetic Channel');
+        await page.waitForFunction(() => (
+            window.app?.channelList?.isLoading === false
+            && window.app?.channelList?.boundedSearchResults?.length === 100
+        ));
+        await page.locator('#channel-list').evaluate(element => {
+            element.scrollTop = element.scrollHeight;
+        });
+        await page.waitForFunction(() => (
+            window.app?.channelList?.boundedSearchResults?.length > 100
+        ));
+        const automaticSearchContinuation = await page.evaluate(() => ({
+            results: window.app.channelList.boundedSearchResults.length,
+            loadMoreButtons: document.querySelectorAll('.bounded-search-more').length,
+            scrollTop: document.querySelector('#channel-list').scrollTop
+        }));
+        assert.equal(automaticSearchContinuation.loadMoreButtons, 0);
+        assert.ok(automaticSearchContinuation.scrollTop > 0, 'Search continuation reset the channel-list scroll position.');
+
         const searchStarted = performance.now();
         await page.locator('#channel-search').fill(lastChannelName);
         await page.waitForFunction(() => (
@@ -626,6 +683,7 @@ async function measureBrowser(baseUrl, cookie) {
             initialState,
             loadedGroupState,
             automaticContinuation,
+            automaticSearchContinuation,
             expandAllState
         };
     } finally {
