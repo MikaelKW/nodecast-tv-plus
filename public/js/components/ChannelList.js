@@ -37,6 +37,7 @@ class ChannelList {
         this.guideChannels = null;
         this._boundedRequestId = 0;
         this.boundedContinuationObserver = null;
+        this.boundedObserverLoadInFlight = false;
         this.isLoading = false;
         this.loadError = null;
         this.renderedChannels = [];
@@ -109,10 +110,12 @@ class ChannelList {
      */
     expandAll() {
         if (this.boundedMode) {
-            // Expanding every group would immediately request the entire
-            // provider catalogue. Only expand groups whose bounded pages are
-            // already present; unloaded groups remain intentionally collapsed.
-            for (const groupName of this.boundedGroupPages.keys()) {
+            // Mark every header as expanded, but let the viewport observer
+            // fetch each group's first bounded page only as it approaches the
+            // visible area. This preserves Expand All semantics without
+            // materializing an entire large provider catalogue at once.
+            for (const group of this.boundedGroups) {
+                const groupName = group.name;
                 this.collapsedGroups.delete(groupName);
                 this._userExpandedGroups.add(groupName);
             }
@@ -173,10 +176,9 @@ class ChannelList {
      */
     toggleAllGroups() {
         if (this.boundedMode) {
-            const loadedGroupNames = [...this.boundedGroupPages.keys()];
-            const allLoadedCollapsed = loadedGroupNames.length === 0
-                || loadedGroupNames.every(name => this.collapsedGroups.has(name));
-            if (allLoadedCollapsed) {
+            const allCollapsed = this.boundedGroups.length > 0
+                && this.boundedGroups.every(group => this.collapsedGroups.has(group.name));
+            if (allCollapsed) {
                 this.expandAll();
             } else {
                 this.collapseAll();
@@ -1544,7 +1546,7 @@ class ChannelList {
         }
     }
 
-    async loadBoundedGroup(groupName, { append = false } = {}) {
+    async loadBoundedGroup(groupName, { append = false, preserveScrollPosition = true } = {}) {
         const group = this.boundedGroupIndex.get(groupName);
         if (!group) return;
         const current = this.boundedGroupPages.get(groupName) || {
@@ -1555,7 +1557,7 @@ class ChannelList {
         if (current.loading) return;
         current.loading = true;
         this.boundedGroupPages.set(groupName, current);
-        this.renderBounded();
+        this.renderBounded({ preserveScrollPosition });
 
         try {
             const requests = group.parts.map(async part => {
@@ -1602,11 +1604,11 @@ class ChannelList {
             current.error = null;
             current.hasMore = [...current.parts.values()].some(page => page.hasMore);
             this._rememberBoundedChannels(current.channels);
-            this.renderBounded();
+            this.renderBounded({ preserveScrollPosition });
         } catch (err) {
             current.loading = false;
             current.error = err.message || 'Unable to load group';
-            this.renderBounded();
+            this.renderBounded({ preserveScrollPosition });
         }
     }
 
@@ -1662,21 +1664,37 @@ class ChannelList {
                 button.className = 'btn btn-secondary bounded-load-fallback';
                 button.textContent = 'Load remaining channels';
                 button.addEventListener('click', () => {
-                    this.loadBoundedGroup(sentinel.dataset.group, { append: true });
+                    this.loadBoundedGroup(sentinel.dataset.group, {
+                        append: sentinel.dataset.mode !== 'initial',
+                        preserveScrollPosition: true
+                    });
                 });
                 sentinel.replaceChildren(button);
             });
             return;
         }
 
-        this.boundedContinuationObserver = new IntersectionObserver(entries => {
-            for (const entry of entries) {
-                if (!entry.isIntersecting) continue;
-                const groupName = entry.target.dataset.group;
-                this.boundedContinuationObserver?.unobserve(entry.target);
-                this.loadBoundedGroup(groupName, { append: true }).catch(err => {
-                    console.error(`Unable to continue loading group ${groupName}:`, err);
-                });
+        this.boundedContinuationObserver = new IntersectionObserver(async entries => {
+            if (this.boundedObserverLoadInFlight) return;
+            // Load a single visible sentinel at a time. Expand All can expose
+            // several unloaded group sentinels in the viewport; serializing
+            // them prevents a burst of large page requests and DOM updates.
+            const entry = entries.find(candidate => candidate.isIntersecting);
+            if (!entry) return;
+            const groupName = entry.target.dataset.group;
+            const append = entry.target.dataset.mode !== 'initial';
+            this.boundedContinuationObserver?.unobserve(entry.target);
+            this.boundedObserverLoadInFlight = true;
+            try {
+                await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
+            } catch (err) {
+                console.error(`Unable to continue loading group ${groupName}:`, err);
+            } finally {
+                this.boundedObserverLoadInFlight = false;
+                // A render performed while the serialized load was active may
+                // already have observed another sentinel. Recreate the
+                // observer so the next visible group can proceed normally.
+                this._setupBoundedContinuationObserver();
             }
         }, {
             root: this.container,
@@ -1686,7 +1704,8 @@ class ChannelList {
         sentinels.forEach(sentinel => this.boundedContinuationObserver.observe(sentinel));
     }
 
-    renderBounded() {
+    renderBounded({ preserveScrollPosition = false } = {}) {
+        const previousScrollTop = preserveScrollPosition ? this.container.scrollTop : 0;
         if (this.isLoading) {
             if (this.toggleGroupsBtn) {
                 this.toggleGroupsBtn.disabled = true;
@@ -1706,19 +1725,18 @@ class ChannelList {
             return;
         }
 
+        const query = this.searchInput.value.trim();
         if (this.toggleGroupsBtn) {
-            const loadedGroupNames = [...this.boundedGroupPages.keys()];
-            const hasLoadedGroups = loadedGroupNames.length > 0;
-            const allLoadedCollapsed = hasLoadedGroups
-                && loadedGroupNames.every(name => this.collapsedGroups.has(name));
-            this.toggleGroupsBtn.disabled = !hasLoadedGroups;
-            this.toggleGroupsBtn.innerHTML = allLoadedCollapsed ? Icons.expandAll : Icons.collapseAll;
-            this.toggleGroupsBtn.title = hasLoadedGroups
-                ? (allLoadedCollapsed ? 'Expand Loaded Groups' : 'Collapse All Groups')
-                : 'Expand a group to load its channels';
+            const hasGroups = this.boundedGroups.length > 0;
+            const allCollapsed = hasGroups
+                && this.boundedGroups.every(group => this.collapsedGroups.has(group.name));
+            this.toggleGroupsBtn.disabled = !hasGroups || Boolean(query);
+            this.toggleGroupsBtn.innerHTML = allCollapsed ? Icons.expandAll : Icons.collapseAll;
+            this.toggleGroupsBtn.title = query
+                ? 'Clear the search to expand or collapse all groups'
+                : (allCollapsed ? 'Expand All Groups' : 'Collapse All Groups');
         }
 
-        const query = this.searchInput.value.trim();
         const fragment = document.createDocumentFragment();
         const list = document.createElement('div');
         list.className = 'channel-list-content';
@@ -1774,7 +1792,8 @@ class ChannelList {
                 ${collapsed ? '' : channels.map(channel => this._boundedChannelHtml(channel, groupName)).join('')}
                 ${!collapsed && state?.loading ? '<div class="loading"></div>' : ''}
                 ${!collapsed && state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p><button class="btn btn-secondary bounded-load-retry">Try again</button></div>` : ''}
-                ${!collapsed && state?.hasMore && !state.loading && !state.error ? `<div class="bounded-load-sentinel" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
+                ${!collapsed && !isSearch && !isFavorites && !state ? `<div class="bounded-load-sentinel" data-mode="initial" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
+                ${!collapsed && state?.hasMore && !state.loading && !state.error ? `<div class="bounded-load-sentinel" data-mode="append" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
               </div>`;
 
             const header = groupEl.querySelector('.group-header');
@@ -1811,6 +1830,9 @@ class ChannelList {
 
         fragment.appendChild(list);
         this.container.replaceChildren(fragment);
+        if (preserveScrollPosition) {
+            this.container.scrollTop = previousScrollTop;
+        }
         this._setupBoundedContinuationObserver();
     }
 

@@ -569,9 +569,11 @@ async function measureBrowser(baseUrl, cookie) {
                     ...[...window.app.channelList.boundedGroupPages.values()]
                         .map(state => state.channels.length)
                 ),
-                loadMoreButtons: document.querySelectorAll('.bounded-load-more').length
+                loadMoreButtons: document.querySelectorAll('.bounded-load-more').length,
+                scrollTop: document.querySelector('#channel-list').scrollTop
             }));
             assert.equal(automaticContinuation.loadMoreButtons, 0);
+            assert.ok(automaticContinuation.scrollTop > 0, 'Automatic continuation reset the channel-list scroll position.');
         }
 
         const reloadStarted = performance.now();
@@ -586,6 +588,26 @@ async function measureBrowser(baseUrl, cookie) {
         const reloadHeapMb = await page.evaluate(() => performance.memory
             ? Number((performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1))
             : null);
+
+        await page.locator('#toggle-groups').click();
+        await page.waitForFunction(() => (
+            [...document.querySelectorAll('.group-header:not(.favorites-group)')]
+                .every(header => !header.classList.contains('collapsed'))
+        ));
+        await page.waitForFunction(() => (
+            window.app.channelList.boundedGroupPages.size >= 1
+            && [...window.app.channelList.boundedGroupPages.values()].every(state => state.loading === false)
+        ));
+        const expandAllState = await page.evaluate(() => ({
+            collapsedHeaders: document.querySelectorAll('.group-header:not(.favorites-group).collapsed').length,
+            loadedGroups: window.app.channelList.boundedGroupPages.size,
+            materializedChannels: window.app.channelList.channels.length,
+            renderedChannels: window.app.channelList.renderedChannels.length
+        }));
+        assert.equal(expandAllState.collapsedHeaders, 0);
+        assert.ok(expandAllState.loadedGroups >= 1);
+        assert.ok(expandAllState.materializedChannels <= 512);
+        await page.locator('#toggle-groups').click();
 
         const searchStarted = performance.now();
         await page.locator('#channel-search').fill(lastChannelName);
@@ -603,7 +625,8 @@ async function measureBrowser(baseUrl, cookie) {
             fullLiveCatalogueRequests,
             initialState,
             loadedGroupState,
-            automaticContinuation
+            automaticContinuation,
+            expandAllState
         };
     } finally {
         await browser.close();
@@ -769,6 +792,9 @@ async function run() {
 
         console.log('\nLarge-catalogue benchmark (synthetic data only)');
         console.log(JSON.stringify(report, null, 2));
+        if (home.error || browser.error) {
+            throw new Error(`Large-catalogue browser validation failed: ${home.error || browser.error}`);
+        }
     } catch (error) {
         if (server) console.error(server.getOutput());
         throw error;
