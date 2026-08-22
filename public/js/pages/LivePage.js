@@ -95,7 +95,7 @@ class LivePage {
         document.addEventListener('keydown', this.handleKeydown);
 
         // Only reload if channels aren't already loaded
-        if (this.app.channelList.channels.length === 0) {
+        if (!this.app.channelList.isCatalogueReady) {
             await this.app.channelList.loadSources();
             await this.app.channelList.loadChannels();
         }

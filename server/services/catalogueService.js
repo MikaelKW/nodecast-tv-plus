@@ -63,6 +63,7 @@ function formatLiveChannel(row) {
         name: row.name,
         stream_icon: row.stream_icon,
         category_id: row.category_id,
+        category_name: row.category_name || 'Uncategorized',
         container_extension: row.container_extension,
         epg_channel_id: data.epg_channel_id || data.tvgId || null
     };
@@ -144,8 +145,11 @@ function getLiveChannelPage(sourceId, options = {}) {
 
     if (query) {
         const pattern = `%${escapeLike(query)}%`;
-        where.push("p.name LIKE ? ESCAPE '\\' COLLATE NOCASE");
-        params.push(pattern);
+        where.push(`(
+            p.name LIKE ? ESCAPE '\\' COLLATE NOCASE
+            OR COALESCE(c.name, 'Uncategorized') LIKE ? ESCAPE '\\' COLLATE NOCASE
+        )`);
+        params.push(pattern, pattern);
     }
 
     if (cursor) {
@@ -162,6 +166,7 @@ function getLiveChannelPage(sourceId, options = {}) {
             p.item_id,
             p.name,
             p.category_id,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
             p.stream_icon,
             p.container_extension,
             p.data

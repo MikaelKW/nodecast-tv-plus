@@ -22,6 +22,18 @@ class ChannelList {
         this.currentChannel = null;
         this.sources = [];
         this.sourceCatalogueCache = new Map();
+        this.boundedSummaryCache = new Map();
+        this.boundedMode = true;
+        this.isCatalogueReady = false;
+        this.boundedGroups = [];
+        this.boundedGroupIndex = new Map();
+        this.boundedGroupPages = new Map();
+        this.boundedSearchResults = [];
+        this.boundedSearchPages = new Map();
+        this.boundedSources = [];
+        this.favoriteChannels = [];
+        this.guideChannels = null;
+        this._boundedRequestId = 0;
         this.isLoading = false;
         this.loadError = null;
         this.renderedChannels = [];
@@ -93,6 +105,18 @@ class ChannelList {
      * Expand all groups
      */
     expandAll() {
+        if (this.boundedMode) {
+            // Expanding every group would immediately request the entire
+            // provider catalogue. Only expand groups whose bounded pages are
+            // already present; unloaded groups remain intentionally collapsed.
+            for (const groupName of this.boundedGroupPages.keys()) {
+                this.collapsedGroups.delete(groupName);
+                this._userExpandedGroups.add(groupName);
+            }
+            this.saveCollapsedState();
+            this.renderBounded();
+            return;
+        }
         this.collapsedGroups.clear();
         this.saveCollapsedState();
 
@@ -118,6 +142,15 @@ class ChannelList {
      * Collapse all groups
      */
     collapseAll() {
+        if (this.boundedMode) {
+            for (const group of this.boundedGroups) {
+                this.collapsedGroups.add(group.name);
+                this._userExpandedGroups.delete(group.name);
+            }
+            this.saveCollapsedState();
+            this.renderBounded();
+            return;
+        }
         this.container.querySelectorAll('.group-header').forEach(h => {
             const groupName = h.dataset.group;
             this.collapsedGroups.add(groupName);
@@ -136,6 +169,17 @@ class ChannelList {
      * Toggle between expand/collapse all
      */
     toggleAllGroups() {
+        if (this.boundedMode) {
+            const loadedGroupNames = [...this.boundedGroupPages.keys()];
+            const allLoadedCollapsed = loadedGroupNames.length === 0
+                || loadedGroupNames.every(name => this.collapsedGroups.has(name));
+            if (allLoadedCollapsed) {
+                this.expandAll();
+            } else {
+                this.collapseAll();
+            }
+            return;
+        }
         const allHeaders = this.container.querySelectorAll('.group-header');
         const allCollapsed = [...allHeaders].every(h => h.classList.contains('collapsed'));
 
@@ -152,7 +196,13 @@ class ChannelList {
         this.searchInput.addEventListener('input', () => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
-                this.render();
+                if (this.boundedMode) {
+                    this.loadBoundedSearch().catch(err => {
+                        console.error('Error searching live catalogue:', err);
+                    });
+                } else {
+                    this.render();
+                }
             }, 300);
         });
 
@@ -296,6 +346,10 @@ class ChannelList {
      * Render channel list
      */
     render() {
+        if (this.boundedMode) {
+            this.renderBounded();
+            return;
+        }
         if (this.isLoading) {
             this.container.innerHTML = '<div class="loading"></div>';
             this.renderedChannels = [];
@@ -717,6 +771,13 @@ class ChannelList {
      * Load channels from selected source
      */
     async loadChannels() {
+        if (this.boundedMode) {
+            return this.loadBoundedChannels();
+        }
+        return this.loadLegacyChannels();
+    }
+
+    async loadLegacyChannels() {
         if (this.isLoading) return;
         this.isLoading = true;
         this.loadError = null;
@@ -1059,6 +1120,20 @@ class ChannelList {
      * Update Favorites group in DOM and data
      */
     updateFavoritesGroup(channel, isAdded) {
+        if (this.boundedMode) {
+            const existingIndex = this.favoriteChannels.findIndex(item =>
+                item.id === channel.id && String(item.sourceId) === String(channel.sourceId)
+            );
+            if (isAdded && existingIndex === -1) {
+                this.favoriteChannels.push(channel);
+                this.favoriteChannels.sort((a, b) => a.name.localeCompare(b.name));
+            } else if (!isAdded && existingIndex !== -1) {
+                this.favoriteChannels.splice(existingIndex, 1);
+            }
+            this.renderBounded();
+            return;
+        }
+
         // 1. Update Data
         if (!this.groupedChannels['Favorites']) {
             this.groupedChannels['Favorites'] = [];
@@ -1236,6 +1311,488 @@ class ChannelList {
         }
 
         await this.playChannelRecord(channel);
+    }
+
+    _selectedLiveSources() {
+        const selected = this.sourceSelect.value;
+        const enabled = this.sources.filter(source =>
+            ['xtream', 'm3u'].includes(source.type)
+            && source.enabled
+            && API.sources.isVisibleIn(source, 'live')
+        );
+        if (!selected) return enabled;
+        const [type, id] = selected.split(':');
+        return enabled.filter(source => source.type === type && String(source.id) === id);
+    }
+
+    _mapBoundedChannel(item, source, fallbackGroupName = 'Uncategorized') {
+        const sourceType = source.type;
+        return {
+            id: `${sourceType}_${source.id}_${item.stream_id}`,
+            streamId: item.stream_id,
+            name: item.name,
+            tvgId: item.epg_channel_id,
+            tvgLogo: item.stream_icon,
+            ...(sourceType === 'm3u'
+                ? { url: item.stream_url || item.url || null }
+                : {}),
+            groupId: `${sourceType}_${source.id}_${item.category_id || ''}`,
+            groupTitle: item.category_name || fallbackGroupName,
+            sourceId: source.id,
+            sourceType
+        };
+    }
+
+    _rememberBoundedChannels(items) {
+        const byKey = new Map(this.channels.map(channel => [
+            `${channel.sourceId}:${channel.id}`,
+            channel
+        ]));
+        for (const channel of items) {
+            byKey.set(`${channel.sourceId}:${channel.id}`, channel);
+        }
+        this.channels = [...byKey.values()];
+    }
+
+    async loadBoundedChannels() {
+        if (this.isLoading) return;
+        const requestId = ++this._boundedRequestId;
+        this.isLoading = true;
+        this.isCatalogueReady = false;
+        this.loadError = null;
+        this.currentRenderId = null;
+        this.renderBounded();
+
+        try {
+            const selectedSources = this._selectedLiveSources();
+            const [initialSummaryResults, favoriteChannels] = await Promise.all([
+                Promise.allSettled(selectedSources.map(source =>
+                    API.proxy.catalogue.liveSummary(source.id)
+                )),
+                API.favorites.getChannels(100)
+            ]);
+            if (requestId !== this._boundedRequestId) return;
+
+            const summaryResults = [...initialSummaryResults];
+            const failedIndexes = summaryResults
+                .map((result, index) => result.status === 'rejected' ? index : -1)
+                .filter(index => index !== -1);
+            if (failedIndexes.length > 0) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+                const retryResults = await Promise.allSettled(
+                    failedIndexes.map(index =>
+                        API.proxy.catalogue.liveSummary(selectedSources[index].id)
+                    )
+                );
+                retryResults.forEach((result, retryIndex) => {
+                    summaryResults[failedIndexes[retryIndex]] = result;
+                });
+            }
+
+            const groupByName = new Map();
+            let availableSources = 0;
+            summaryResults.forEach((result, index) => {
+                const source = selectedSources[index];
+                let summary;
+                if (result.status === 'fulfilled') {
+                    summary = result.value;
+                    this.boundedSummaryCache.set(String(source.id), summary);
+                } else {
+                    console.error(`Error loading source ${source?.id}:`, result.reason);
+                    summary = this.boundedSummaryCache.get(String(source?.id));
+                    if (summary) {
+                        console.warn(`Using last known live summary for source ${source?.id}`);
+                    } else {
+                        return;
+                    }
+                }
+                availableSources += 1;
+                for (const group of summary.groups || []) {
+                    const name = group.name || 'Uncategorized';
+                    let entry = groupByName.get(name);
+                    if (!entry) {
+                        entry = { name, count: 0, parts: [] };
+                        groupByName.set(name, entry);
+                    }
+                    entry.count += Number(group.count) || 0;
+                    entry.parts.push({
+                        source,
+                        categoryId: group.id,
+                        count: Number(group.count) || 0,
+                        revision: summary.revision
+                    });
+                }
+            });
+
+            if (selectedSources.length > 0 && availableSources === 0) {
+                throw new Error('Unable to load channels from any enabled source');
+            }
+
+            this.boundedSources = selectedSources;
+            this.boundedGroups = [...groupByName.values()].sort((a, b) =>
+                a.name.localeCompare(b.name)
+            );
+            this.boundedGroupIndex = new Map(this.boundedGroups.map(group => [group.name, group]));
+            // A catalogue refresh invalidates every previously loaded bounded
+            // page. Reset expanded state as well so a group cannot remain
+            // visually open with an empty page until it is toggled twice.
+            this._userExpandedGroups.clear();
+            for (const group of this.boundedGroups) {
+                this.collapsedGroups.add(group.name);
+            }
+            this.boundedGroupPages.clear();
+            this.boundedSearchPages.clear();
+            this.boundedSearchResults = [];
+            this.favoriteChannels = (favoriteChannels || []).filter(channel =>
+                selectedSources.some(source => String(source.id) === String(channel.sourceId))
+            );
+            this.visibleFavorites = new Set(this.favoriteChannels.map(channel =>
+                `${channel.sourceId}:${channel.id}`
+            ));
+            this.channels = [...this.favoriteChannels];
+            this.groups = this.boundedGroups.map(group => ({ id: group.name, name: group.name }));
+            this.hiddenItems = new Set();
+            this.isCatalogueReady = true;
+            this.isLoading = false;
+            if (this.searchInput.value.trim()) {
+                await this.loadBoundedSearch();
+                return;
+            }
+            this.renderBounded();
+        } catch (err) {
+            if (requestId !== this._boundedRequestId) return;
+            console.error('Error loading bounded live catalogue:', err);
+            this.loadError = err.message || 'Unable to load channels';
+            this.isLoading = false;
+            this.isCatalogueReady = true;
+            this.renderBounded();
+        }
+    }
+
+    async loadBoundedSearch({ append = false } = {}) {
+        const query = this.searchInput.value.trim();
+        if (!this.isCatalogueReady) return;
+        const requestId = ++this._boundedRequestId;
+        if (!query) {
+            this.boundedSearchResults = [];
+            this.boundedSearchPages.clear();
+            this.renderBounded();
+            return;
+        }
+
+        this.isLoading = !append;
+        if (!append) {
+            this.boundedSearchResults = [];
+            this.boundedSearchPages.clear();
+        }
+        this.renderBounded();
+
+        try {
+            const requests = this.boundedSources.map(async source => {
+                const previous = this.boundedSearchPages.get(String(source.id));
+                if (append && previous && !previous.hasMore) return null;
+                const page = await API.proxy.catalogue.liveChannels(source.id, {
+                    query,
+                    cursor: append ? previous?.nextCursor : null,
+                    limit: 100
+                });
+                return { source, page };
+            });
+            const results = await Promise.allSettled(requests);
+            if (requestId !== this._boundedRequestId) return;
+
+            const nextItems = [];
+            let completedSources = 0;
+            for (const result of results) {
+                if (result.status !== 'fulfilled' || !result.value) {
+                    if (result.status === 'rejected') {
+                        console.warn('Unable to search one live source:', result.reason);
+                    }
+                    continue;
+                }
+                completedSources += 1;
+                const { source, page } = result.value;
+                this.boundedSearchPages.set(String(source.id), page);
+                for (const item of page.items || []) {
+                    nextItems.push(this._mapBoundedChannel(item, source));
+                }
+            }
+            if (requests.length > 0 && completedSources === 0) {
+                throw new Error('Unable to search channels from any enabled source');
+            }
+            const combined = append
+                ? [...this.boundedSearchResults, ...nextItems]
+                : nextItems;
+            const unique = new Map(combined.map(channel => [
+                `${channel.sourceId}:${channel.id}`,
+                channel
+            ]));
+            this.boundedSearchResults = [...unique.values()].sort((a, b) =>
+                a.name.localeCompare(b.name)
+            );
+            this._rememberBoundedChannels(this.boundedSearchResults);
+            this.isLoading = false;
+            this.renderBounded();
+        } catch (err) {
+            if (requestId !== this._boundedRequestId) return;
+            this.isLoading = false;
+            this.loadError = err.message || 'Unable to search channels';
+            this.renderBounded();
+        }
+    }
+
+    async loadBoundedGroup(groupName, { append = false } = {}) {
+        const group = this.boundedGroupIndex.get(groupName);
+        if (!group) return;
+        const current = this.boundedGroupPages.get(groupName) || {
+            channels: [],
+            parts: new Map(),
+            loading: false
+        };
+        if (current.loading) return;
+        current.loading = true;
+        this.boundedGroupPages.set(groupName, current);
+        this.renderBounded();
+
+        try {
+            const requests = group.parts.map(async part => {
+                const key = `${part.source.id}:${part.categoryId}`;
+                const previous = current.parts.get(key);
+                if (append && previous && !previous.hasMore) return null;
+                const page = await API.proxy.catalogue.liveChannels(part.source.id, {
+                    categoryId: part.categoryId,
+                    cursor: append ? previous?.nextCursor : null,
+                    limit: 100
+                });
+                return { part, page };
+            });
+            const results = await Promise.allSettled(requests);
+            const nextItems = [];
+            let completedParts = 0;
+            for (const result of results) {
+                if (result.status !== 'fulfilled' || !result.value) {
+                    if (result.status === 'rejected') {
+                        console.warn(`Unable to load part of group ${groupName}:`, result.reason);
+                    }
+                    continue;
+                }
+                completedParts += 1;
+                const { part, page } = result.value;
+                current.parts.set(`${part.source.id}:${part.categoryId}`, page);
+                for (const item of page.items || []) {
+                    nextItems.push(this._mapBoundedChannel(item, part.source, groupName));
+                }
+            }
+            if (requests.length > 0 && completedParts === 0) {
+                throw new Error('Unable to load this channel group');
+            }
+            const combined = append ? [...current.channels, ...nextItems] : nextItems;
+            const unique = new Map(combined.map(channel => [
+                `${channel.sourceId}:${channel.id}`,
+                channel
+            ]));
+            current.channels = [...unique.values()].sort((a, b) => a.name.localeCompare(b.name));
+            current.loading = false;
+            current.hasMore = [...current.parts.values()].some(page => page.hasMore);
+            this._rememberBoundedChannels(current.channels);
+            this.renderBounded();
+        } catch (err) {
+            current.loading = false;
+            current.error = err.message || 'Unable to load group';
+            this.renderBounded();
+        }
+    }
+
+    _boundedChannelHtml(channel, groupName) {
+        const isActive = this.currentChannel?.id === channel.id
+            && String(this.currentChannel?.sourceId) === String(channel.sourceId);
+        const isFavorite = this.isFavorite(channel.sourceId, channel.id);
+        const renderId = `bounded_${groupName}_${channel.sourceId}_${channel.id}`;
+        return `
+          <div class="channel-item ${isActive ? 'active nav-active' : ''}"
+               data-channel-id="${this.escapeHtml(String(channel.id))}"
+               data-source-id="${this.escapeHtml(String(channel.sourceId))}"
+               data-source-type="${this.escapeHtml(channel.sourceType)}"
+               data-stream-id="${this.escapeHtml(String(channel.streamId || ''))}"
+               data-url="${this.escapeHtml(channel.url || '')}"
+               data-render-id="${this.escapeHtml(renderId)}"
+               data-render-group="${this.escapeHtml(groupName)}">
+            <img class="channel-logo" src="${this.escapeHtml(this.getProxiedImageUrl(channel.tvgLogo))}"
+                 alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
+            <div class="channel-info">
+              <div class="channel-name">${this.escapeHtml(channel.name)}</div>
+              <div class="channel-program">${this.escapeHtml(this.getProgramInfo(channel) || '')}</div>
+            </div>
+            <button class="favorite-btn ${isFavorite ? 'active' : ''}" title="${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}">
+              ${isFavorite ? Icons.favorite : Icons.favoriteOutline}
+            </button>
+          </div>`;
+    }
+
+    _attachBoundedChannelListeners(container) {
+        container.querySelectorAll('.channel-item').forEach(item => {
+            item.addEventListener('click', event => {
+                if (!event.target.closest('.favorite-btn')) this.selectChannel(item.dataset);
+            });
+            item.addEventListener('contextmenu', event => this.showContextMenu(event, 'channel', item.dataset));
+            item.querySelector('.favorite-btn')?.addEventListener('click', event => {
+                event.stopPropagation();
+                this.toggleFavorite(Number(item.dataset.sourceId), item.dataset.channelId);
+            });
+        });
+    }
+
+    renderBounded() {
+        if (this.isLoading) {
+            if (this.toggleGroupsBtn) {
+                this.toggleGroupsBtn.disabled = true;
+                this.toggleGroupsBtn.title = 'Channels are loading';
+            }
+            this.container.innerHTML = '<div class="loading"></div>';
+            this.renderedChannels = [];
+            return;
+        }
+        if (this.loadError) {
+            if (this.toggleGroupsBtn) {
+                this.toggleGroupsBtn.disabled = true;
+                this.toggleGroupsBtn.title = 'Groups are unavailable';
+            }
+            this.container.innerHTML = `<div class="empty-state"><p>Error loading channels</p><p class="hint">${this.escapeHtml(this.loadError)}</p></div>`;
+            this.renderedChannels = [];
+            return;
+        }
+
+        if (this.toggleGroupsBtn) {
+            const loadedGroupNames = [...this.boundedGroupPages.keys()];
+            const hasLoadedGroups = loadedGroupNames.length > 0;
+            const allLoadedCollapsed = hasLoadedGroups
+                && loadedGroupNames.every(name => this.collapsedGroups.has(name));
+            this.toggleGroupsBtn.disabled = !hasLoadedGroups;
+            this.toggleGroupsBtn.innerHTML = allLoadedCollapsed ? Icons.expandAll : Icons.collapseAll;
+            this.toggleGroupsBtn.title = hasLoadedGroups
+                ? (allLoadedCollapsed ? 'Expand Loaded Groups' : 'Collapse All Groups')
+                : 'Expand a group to load its channels';
+        }
+
+        const query = this.searchInput.value.trim();
+        const fragment = document.createDocumentFragment();
+        const list = document.createElement('div');
+        list.className = 'channel-list-content';
+        this.listContainer = list;
+        this.groupedChannels = {};
+        this.renderedChannels = [];
+
+        const groups = [];
+        if (query) {
+            const byGroup = new Map();
+            for (const channel of this.boundedSearchResults) {
+                const name = channel.groupTitle || 'Uncategorized';
+                if (!byGroup.has(name)) byGroup.set(name, []);
+                byGroup.get(name).push(channel);
+            }
+            for (const [name, channels] of [...byGroup.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+                groups.push({ name, count: channels.length, channels, search: true });
+            }
+        } else {
+            if (this.favoriteChannels.length > 0) {
+                groups.push({ name: 'Favorites', count: this.favoriteChannels.length, channels: this.favoriteChannels, favorites: true });
+            }
+            groups.push(...this.boundedGroups);
+        }
+
+        for (const group of groups) {
+            const groupName = group.name;
+            const isFavorites = group.favorites;
+            const isSearch = group.search;
+            const state = this.boundedGroupPages.get(groupName);
+            const collapsed = !isSearch && !isFavorites && this.collapsedGroups.has(groupName);
+            const channels = group.channels || state?.channels || [];
+            this.groupedChannels[groupName] = channels;
+            if (!collapsed) {
+                for (const channel of channels) {
+                    this.renderedChannels.push({
+                        ...channel,
+                        _renderId: `bounded_${groupName}_${channel.sourceId}_${channel.id}`,
+                        _renderGroup: groupName
+                    });
+                }
+            }
+
+            const groupEl = document.createElement('div');
+            groupEl.className = 'channel-group';
+            groupEl.innerHTML = `
+              <div class="group-header ${collapsed ? 'collapsed' : ''} ${isFavorites ? 'favorites-group' : ''}" data-group="${this.escapeHtml(groupName)}">
+                <span class="group-toggle">${Icons.chevronDown}</span>
+                <span class="group-name">${this.escapeHtml(groupName)}</span>
+                <span class="group-count">${group.count}</span>
+              </div>
+              <div class="group-channels">
+                ${collapsed ? '' : channels.map(channel => this._boundedChannelHtml(channel, groupName)).join('')}
+                ${!collapsed && state?.loading ? '<div class="loading"></div>' : ''}
+                ${!collapsed && state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p></div>` : ''}
+                ${!collapsed && state?.hasMore ? '<button class="btn btn-secondary bounded-load-more">Load more</button>' : ''}
+              </div>`;
+
+            const header = groupEl.querySelector('.group-header');
+            header.addEventListener('click', async () => {
+                if (isSearch || isFavorites) return;
+                this.toggleGroup(groupName);
+                if (collapsed && !state?.channels?.length) {
+                    await this.loadBoundedGroup(groupName);
+                } else {
+                    this.renderBounded();
+                }
+            });
+            header.addEventListener('contextmenu', event => this.showContextMenu(event, 'group', header.dataset));
+            groupEl.querySelector('.bounded-load-more')?.addEventListener('click', () =>
+                this.loadBoundedGroup(groupName, { append: true })
+            );
+            this._attachBoundedChannelListeners(groupEl);
+            list.appendChild(groupEl);
+        }
+
+        if (query && this.boundedSearchResults.length === 0) {
+            list.innerHTML = '<div class="empty-state"><p>No channels match your search</p><p class="hint">Try a different search term</p></div>';
+        } else if (!query && groups.length === 0) {
+            list.innerHTML = '<div class="empty-state"><p>No channels loaded</p><p class="hint">Add a source in Settings to get started</p></div>';
+        }
+
+        if (query && [...this.boundedSearchPages.values()].some(page => page.hasMore)) {
+            const loadMore = document.createElement('button');
+            loadMore.className = 'btn btn-secondary bounded-search-more';
+            loadMore.textContent = 'Load more results';
+            loadMore.addEventListener('click', () => this.loadBoundedSearch({ append: true }));
+            list.appendChild(loadMore);
+        }
+
+        fragment.appendChild(list);
+        this.container.replaceChildren(fragment);
+    }
+
+    async loadGuideChannels() {
+        const descriptors = this.sources
+            .filter(source => ['xtream', 'm3u'].includes(source.type)
+                && source.enabled
+                && API.sources.isVisibleIn(source, 'live'))
+            .map(source => ({ source, type: source.type }));
+        const results = await Promise.allSettled(descriptors.map(descriptor =>
+            this.fetchSourceChannels(descriptor.source.id, descriptor.type)
+        ));
+        const channels = [];
+        let available = 0;
+        results.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+                available += 1;
+                for (const channel of result.value.channels) channels.push(channel);
+            } else {
+                console.warn(`Unable to load guide catalogue for source ${descriptors[index]?.source.id}:`, result.reason);
+            }
+        });
+        if (descriptors.length > 0 && available === 0) {
+            throw new Error('Unable to load channels for TV Guide');
+        }
+        this.guideChannels = channels;
+        return channels;
     }
 
     /**
@@ -1420,6 +1977,14 @@ class ChannelList {
             this.visibleFavorites.add(key);
         } else {
             this.visibleFavorites.delete(key);
+        }
+
+        if (this.boundedMode) {
+            const channel = this.channels.find(c =>
+                String(c.sourceId) === String(sourceId) && String(c.id) === String(channelId)
+            );
+            if (channel) this.updateFavoritesGroup(channel, isFavorite);
+            return;
         }
 
         // Update DOM (All instances)

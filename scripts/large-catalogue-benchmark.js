@@ -513,31 +513,54 @@ async function measureBrowser(baseUrl, cookie) {
         }]);
         const page = await context.newPage();
         page.setDefaultTimeout(180000);
+        let fullLiveCatalogueRequests = 0;
+        page.on('request', request => {
+            if (new URL(request.url()).pathname.endsWith('/live_streams')) {
+                fullLiveCatalogueRequests += 1;
+            }
+        });
         const started = performance.now();
         await page.goto(`${baseUrl}/#live`, { waitUntil: 'domcontentloaded' });
-        await page.waitForFunction(expected => (
+        await page.waitForFunction(expectedGroups => (
             window.app?.currentPage === 'live'
             && window.app?.channelList?.isLoading === false
-            && window.app?.channelList?.channels?.length === expected
-        ), channelCount);
+            && window.app?.channelList?.isCatalogueReady === true
+            && window.app?.channelList?.boundedGroups?.length === expectedGroups
+        ), categoryCount);
         const coldLoadMs = elapsed(started);
-        const state = await page.evaluate(() => ({
-            channels: window.app.channelList.channels.length,
-            groups: window.app.channelList.sortedGroups?.length || 0,
+        const initialState = await page.evaluate(() => ({
+            materializedChannels: window.app.channelList.channels.length,
+            groups: window.app.channelList.boundedGroups?.length || 0,
             renderedChannels: window.app.channelList.renderedChannels?.length || 0,
             domNodes: document.getElementsByTagName('*').length,
             heapMb: performance.memory
                 ? Number((performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1))
                 : null
         }));
+        assert.ok(initialState.materializedChannels <= 100);
+
+        const groupLoadStarted = performance.now();
+        await page.locator('.group-header:not(.favorites-group)').first().click();
+        await page.waitForFunction(() => (
+            [...window.app.channelList.boundedGroupPages.values()]
+                .some(state => state.channels.length === 100 && state.loading === false)
+        ));
+        const groupLoadMs = elapsed(groupLoadStarted);
+        const loadedGroupState = await page.evaluate(() => ({
+            materializedChannels: window.app.channelList.channels.length,
+            renderedChannels: window.app.channelList.renderedChannels.length,
+            domNodes: document.getElementsByTagName('*').length
+        }));
+        assert.ok(loadedGroupState.materializedChannels <= 200);
 
         const reloadStarted = performance.now();
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await page.waitForFunction(expected => (
+        await page.waitForFunction(expectedGroups => (
             window.app?.currentPage === 'live'
             && window.app?.channelList?.isLoading === false
-            && window.app?.channelList?.channels?.length === expected
-        ), channelCount);
+            && window.app?.channelList?.isCatalogueReady === true
+            && window.app?.channelList?.boundedGroups?.length === expectedGroups
+        ), categoryCount);
         const reloadMs = elapsed(reloadStarted);
         const reloadHeapMb = await page.evaluate(() => performance.memory
             ? Number((performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1))
@@ -546,10 +569,20 @@ async function measureBrowser(baseUrl, cookie) {
         const searchStarted = performance.now();
         await page.locator('#channel-search').fill(lastChannelName);
         await page.waitForFunction(() => (
-            window.app?.channelList?.filteredChannels?.length === 1
+            window.app?.channelList?.isLoading === false
+            && window.app?.channelList?.boundedSearchResults?.length === 1
         ));
         const searchMs = elapsed(searchStarted);
-        return { coldLoadMs, reloadMs, reloadHeapMb, searchMs, ...state };
+        return {
+            coldLoadMs,
+            groupLoadMs,
+            reloadMs,
+            reloadHeapMb,
+            searchMs,
+            fullLiveCatalogueRequests,
+            initialState,
+            loadedGroupState
+        };
     } finally {
         await browser.close();
     }

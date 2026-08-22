@@ -266,6 +266,7 @@ async function run() {
             cookie
         );
         assert.deepEqual(firstPage.items.map(item => item.stream_id), ['alpha', 'beta']);
+        assert.deepEqual(firstPage.items.map(item => item.category_name), ['Visible Group', 'Visible Group']);
         assert.equal(firstPage.hasMore, true);
         assert.ok(firstPage.nextCursor);
 
@@ -290,6 +291,15 @@ async function run() {
             cookie
         );
         assert.deepEqual(searchPage.items.map(item => item.stream_id), ['visible-channel']);
+
+        const groupSearchPage = await requestJson(
+            `${baseUrl}/api/proxy/catalogue/1/live/channels?query=${encodeURIComponent('visible group')}&limit=10`,
+            cookie
+        );
+        assert.deepEqual(
+            groupSearchPage.items.map(item => item.stream_id),
+            ['alpha', 'beta', 'gamma', 'visible-channel']
+        );
 
         const literalWildcardSearch = await requestJson(
             `${baseUrl}/api/proxy/catalogue/1/live/channels?query=${encodeURIComponent('%')}&limit=10`,
