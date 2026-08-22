@@ -38,6 +38,7 @@ class ChannelList {
         this._boundedRequestId = 0;
         this.boundedContinuationObserver = null;
         this.boundedObserverLoadInFlight = false;
+        this.boundedLookaheadScrollScheduled = false;
         this.isLoading = false;
         this.loadError = null;
         this.renderedChannels = [];
@@ -213,6 +214,13 @@ class ChannelList {
 
         // Source filter handler
         this.sourceSelect.addEventListener('change', () => this.loadChannels());
+
+        // Prepare one additional group page after the user starts scrolling an
+        // expanded large group. The page stays outside the rendered channel
+        // list until the continuation boundary is reached, which keeps the DOM
+        // bounded while making ordinary scrolling less likely to catch up with
+        // the provider request.
+        this.container.addEventListener('scroll', () => this._scheduleBoundedGroupLookahead());
 
         // Show hidden toggle
         if (this.showHiddenCheckbox) {
@@ -1564,56 +1572,131 @@ class ChannelList {
         this.renderBounded({ preserveScrollPosition, scrollAnchor });
 
         try {
-            const requests = group.parts.map(async part => {
-                const key = `${part.source.id}:${part.categoryId}`;
-                const previous = current.parts.get(key);
-                if (append && previous && !previous.hasMore) return null;
-                const page = await API.proxy.catalogue.liveChannels(part.source.id, {
-                    categoryId: part.categoryId,
-                    cursor: append ? previous?.nextCursor : null,
-                    // A normal-sized group should feel complete as soon as it
-                    // opens. Larger groups continue in bounded pages as the
-                    // user approaches the end of the loaded channels.
-                    limit: Math.min(BOUNDED_GROUP_PAGE_SIZE, Math.max(1, part.count || BOUNDED_GROUP_PAGE_SIZE))
-                });
-                return { part, page };
-            });
-            const results = await Promise.allSettled(requests);
-            const nextItems = [];
-            let completedParts = 0;
-            for (const result of results) {
-                if (result.status !== 'fulfilled' || !result.value) {
-                    if (result.status === 'rejected') {
-                        console.warn(`Unable to load part of group ${groupName}:`, result.reason);
-                    }
-                    continue;
-                }
-                completedParts += 1;
-                const { part, page } = result.value;
-                current.parts.set(`${part.source.id}:${part.categoryId}`, page);
-                for (const item of page.items || []) {
-                    nextItems.push(this._mapBoundedChannel(item, part.source, groupName));
-                }
+            let batch = null;
+            if (append && current.prefetchedBatch) {
+                batch = current.prefetchedBatch;
+                current.prefetchedBatch = null;
+            } else if (append && current.prefetchPromise) {
+                batch = await current.prefetchPromise;
+                current.prefetchedBatch = null;
             }
-            if (requests.length > 0 && completedParts === 0) {
-                throw new Error('Unable to load this channel group');
+            if (!batch) {
+                batch = await this._fetchBoundedGroupPage(groupName, current, { append });
             }
-            const combined = append ? [...current.channels, ...nextItems] : nextItems;
-            const unique = new Map(combined.map(channel => [
-                `${channel.sourceId}:${channel.id}`,
-                channel
-            ]));
-            current.channels = [...unique.values()].sort((a, b) => a.name.localeCompare(b.name));
+            this._applyBoundedGroupPage(current, batch, { append });
             current.loading = false;
             current.error = null;
-            current.hasMore = [...current.parts.values()].some(page => page.hasMore);
             this._rememberBoundedChannels(current.channels);
             this.renderBounded({ preserveScrollPosition, scrollAnchor });
+            if (append && current.hasMore) {
+                this._prefetchBoundedGroup(groupName);
+            }
         } catch (err) {
             current.loading = false;
             current.error = err.message || 'Unable to load group';
             this.renderBounded({ preserveScrollPosition, scrollAnchor });
         }
+    }
+
+    async _fetchBoundedGroupPage(groupName, current, { append = true } = {}) {
+        const group = this.boundedGroupIndex.get(groupName);
+        if (!group) throw new Error('Channel group is no longer available');
+
+        const requests = group.parts.map(async part => {
+            const key = `${part.source.id}:${part.categoryId}`;
+            const previous = current.parts.get(key);
+            if (append && previous && !previous.hasMore) return null;
+            const page = await API.proxy.catalogue.liveChannels(part.source.id, {
+                categoryId: part.categoryId,
+                cursor: append ? previous?.nextCursor : null,
+                // A normal-sized group should feel complete as soon as it
+                // opens. Larger groups continue in bounded pages as the
+                // user approaches the end of the loaded channels.
+                limit: Math.min(BOUNDED_GROUP_PAGE_SIZE, Math.max(1, part.count || BOUNDED_GROUP_PAGE_SIZE))
+            });
+            return { part, page };
+        });
+        const results = await Promise.allSettled(requests);
+        const pages = [];
+        const channels = [];
+        let completedParts = 0;
+        for (const result of results) {
+            if (result.status !== 'fulfilled' || !result.value) {
+                if (result.status === 'rejected') {
+                    console.warn(`Unable to load part of group ${groupName}:`, result.reason);
+                }
+                continue;
+            }
+            completedParts += 1;
+            const { part, page } = result.value;
+            pages.push({ key: `${part.source.id}:${part.categoryId}`, page });
+            for (const item of page.items || []) {
+                channels.push(this._mapBoundedChannel(item, part.source, groupName));
+            }
+        }
+        if (requests.length > 0 && completedParts === 0) {
+            throw new Error('Unable to load this channel group');
+        }
+        return { pages, channels };
+    }
+
+    _applyBoundedGroupPage(current, batch, { append = true } = {}) {
+        for (const { key, page } of batch.pages) current.parts.set(key, page);
+        const combined = append ? [...current.channels, ...batch.channels] : batch.channels;
+        const unique = new Map(combined.map(channel => [
+            `${channel.sourceId}:${channel.id}`,
+            channel
+        ]));
+        current.channels = [...unique.values()].sort((a, b) => a.name.localeCompare(b.name));
+        current.hasMore = [...current.parts.values()].some(page => page.hasMore);
+    }
+
+    _prefetchBoundedGroup(groupName) {
+        const current = this.boundedGroupPages.get(groupName);
+        if (!current?.channels?.length || !current.hasMore || current.loading) return null;
+        if (current.prefetchedBatch) return Promise.resolve(current.prefetchedBatch);
+        if (current.prefetchPromise) return current.prefetchPromise;
+
+        const expectedState = current;
+        current.prefetchPromise = this._fetchBoundedGroupPage(groupName, current, { append: true })
+            .then(batch => {
+                if (this.boundedGroupPages.get(groupName) !== expectedState) return null;
+                current.prefetchedBatch = batch;
+                return batch;
+            })
+            .catch(err => {
+                // A speculative request must not put the visible group into an
+                // error state. Reaching the boundary will retry normally.
+                console.warn(`Unable to prepare more channels for group ${groupName}:`, err);
+                return null;
+            })
+            .finally(() => {
+                if (current.prefetchPromise) current.prefetchPromise = null;
+            });
+        return current.prefetchPromise;
+    }
+
+    _scheduleBoundedGroupLookahead() {
+        if (!this.boundedMode || this.searchInput.value.trim() || this.boundedLookaheadScrollScheduled) return;
+        this.boundedLookaheadScrollScheduled = true;
+        const schedule = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : callback => setTimeout(callback, 0);
+        schedule(() => {
+            this.boundedLookaheadScrollScheduled = false;
+            const containerRect = this.container.getBoundingClientRect();
+            const expandedGroups = [...this.container.querySelectorAll('.channel-group')];
+            for (const groupElement of expandedGroups) {
+                const header = groupElement.querySelector('.group-header[data-group]:not(.collapsed)');
+                if (!header || header.classList.contains('favorites-group')) continue;
+                const state = this.boundedGroupPages.get(header.dataset.group);
+                if (!state?.hasMore || !state.channels?.length) continue;
+                const rect = groupElement.getBoundingClientRect();
+                if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) continue;
+                this._prefetchBoundedGroup(header.dataset.group);
+                break;
+            }
+        });
     }
 
     _boundedChannelHtml(channel, groupName) {

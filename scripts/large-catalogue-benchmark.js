@@ -555,8 +555,27 @@ async function measureBrowser(baseUrl, cookie) {
         assert.ok(loadedGroupState.materializedChannels <= 512);
         assert.equal(loadedGroupState.loadMoreButtons, 0);
 
+        let lookaheadState = null;
+        let followingLookaheadState = null;
         let automaticContinuation = null;
         if (Math.ceil(channelCount / categoryCount) > 500) {
+            await page.locator('#channel-list').evaluate(element => {
+                element.scrollTop += 50;
+            });
+            await page.waitForFunction(() => (
+                [...window.app.channelList.boundedGroupPages.values()]
+                    .some(state => state.prefetchedBatch && state.channels.length === 500)
+            ));
+            lookaheadState = await page.evaluate(() => {
+                const state = [...window.app.channelList.boundedGroupPages.values()]
+                    .find(candidate => candidate.prefetchedBatch);
+                return {
+                    renderedChannels: state?.channels?.length || 0,
+                    bufferedChannels: state?.prefetchedBatch?.channels?.length || 0
+                };
+            });
+            assert.equal(lookaheadState.renderedChannels, 500, 'Lookahead rendered its buffered page too early.');
+            assert.ok(lookaheadState.bufferedChannels > 0, 'Lookahead did not prepare another bounded page.');
             await page.locator('#channel-list').evaluate(element => {
                 element.scrollTop = element.scrollHeight;
             });
@@ -564,6 +583,25 @@ async function measureBrowser(baseUrl, cookie) {
                 [...window.app.channelList.boundedGroupPages.values()]
                     .some(state => state.channels.length > 500 && state.loading === false)
             ));
+            if (Math.ceil(channelCount / categoryCount) > 1000) {
+                await page.waitForFunction(() => (
+                    [...window.app.channelList.boundedGroupPages.values()]
+                        .some(state => state.channels.length === 1000 && state.prefetchedBatch)
+                ));
+                followingLookaheadState = await page.evaluate(() => {
+                    const state = [...window.app.channelList.boundedGroupPages.values()]
+                        .find(candidate => candidate.channels.length === 1000 && candidate.prefetchedBatch);
+                    return {
+                        renderedChannels: state?.channels?.length || 0,
+                        bufferedChannels: state?.prefetchedBatch?.channels?.length || 0,
+                        prefetchInFlight: Boolean(state?.prefetchPromise)
+                    };
+                });
+                assert.ok(
+                    followingLookaheadState.bufferedChannels > 0,
+                    'Continuation did not prepare the following bounded page.'
+                );
+            }
             automaticContinuation = await page.evaluate(() => ({
                 loadedChannels: Math.max(
                     ...[...window.app.channelList.boundedGroupPages.values()]
@@ -682,6 +720,8 @@ async function measureBrowser(baseUrl, cookie) {
             fullLiveCatalogueRequests,
             initialState,
             loadedGroupState,
+            lookaheadState,
+            followingLookaheadState,
             automaticContinuation,
             automaticSearchContinuation,
             expandAllState
