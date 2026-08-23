@@ -26,6 +26,7 @@ const {
 const {
     SingleFlight
 } = require('../services/requestControls');
+const catalogueService = require('../services/catalogueService');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
@@ -75,6 +76,33 @@ const limitUpstreamMetadata = rateLimit({
     message: { error: 'Too many provider metadata requests. Try again shortly.' }
 });
 const upstreamSingleFlight = new SingleFlight();
+const limitCatalogueReads = rateLimit({
+    limit: 600,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many catalogue requests. Try again shortly.' }
+});
+
+async function requireLiveCatalogueSource(req, res) {
+    const sourceId = Number(req.params.sourceId);
+    if (!Number.isSafeInteger(sourceId) || sourceId < 1) {
+        res.status(400).json({ error: 'Valid sourceId required' });
+        return null;
+    }
+
+    const source = await sources.getById(sourceId);
+    if (!source || !source.enabled || !['xtream', 'm3u'].includes(source.type)) {
+        res.status(404).json({ error: 'Source not found' });
+        return null;
+    }
+    if (source.contentVisibility?.live === false) {
+        res.status(404).json({ error: 'Live TV is disabled for this source' });
+        return null;
+    }
+    return { sourceId, source };
+}
 
 // Helper to get formatted category list from DB
 function getCategoriesFromDb(sourceId, type, includeHidden = false) {
@@ -144,6 +172,39 @@ function getStreamsFromDb(sourceId, type, categoryId = null, includeHidden = fal
         };
     });
 }
+
+// Compact, revisioned catalogue endpoints. These coexist with the legacy
+// full-array routes while the browser is migrated to bounded loading.
+router.get('/catalogue/:sourceId/live/summary', limitCatalogueReads, async (req, res) => {
+    try {
+        const resolved = await requireLiveCatalogueSource(req, res);
+        if (!resolved) return;
+        res.json(catalogueService.getLiveSummary(resolved.sourceId));
+    } catch (err) {
+        logSafeError('Catalogue summary error:', err);
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Database error'
+        });
+    }
+});
+
+router.get('/catalogue/:sourceId/live/channels', limitCatalogueReads, async (req, res) => {
+    try {
+        const resolved = await requireLiveCatalogueSource(req, res);
+        if (!resolved) return;
+        res.json(catalogueService.getLiveChannelPage(resolved.sourceId, {
+            categoryId: req.query.category_id,
+            query: req.query.query,
+            cursor: req.query.cursor,
+            limit: req.query.limit
+        }));
+    } catch (err) {
+        logSafeError('Catalogue channel page error:', err);
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Database error'
+        });
+    }
+});
 
 
 // --- Xtream Codes Proxy API --- //
