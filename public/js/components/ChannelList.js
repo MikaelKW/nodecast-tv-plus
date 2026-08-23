@@ -1567,9 +1567,15 @@ class ChannelList {
             loading: false
         };
         if (current.loading) return;
+        const hadChannels = current.channels.length > 0;
         current.loading = true;
         this.boundedGroupPages.set(groupName, current);
-        this.renderBounded({ preserveScrollPosition, scrollAnchor });
+        // Keep an already-rendered page in place while its continuation is
+        // prepared. Rebuilding the entire sidebar here briefly blanked large
+        // lists and doubled the amount of synchronous DOM work per page.
+        if (!append || !hadChannels) {
+            this.renderBounded({ preserveScrollPosition, scrollAnchor });
+        }
 
         try {
             let batch = null;
@@ -1587,14 +1593,22 @@ class ChannelList {
             current.loading = false;
             current.error = null;
             this._rememberBoundedChannels(current.channels);
-            this.renderBounded({ preserveScrollPosition, scrollAnchor });
+            if (append && hadChannels) {
+                this._renderBoundedGroupChannels(groupName, current, { scrollAnchor });
+            } else {
+                this.renderBounded({ preserveScrollPosition, scrollAnchor });
+            }
             if (append && current.hasMore) {
                 this._prefetchBoundedGroup(groupName);
             }
         } catch (err) {
             current.loading = false;
             current.error = err.message || 'Unable to load group';
-            this.renderBounded({ preserveScrollPosition, scrollAnchor });
+            if (append && hadChannels) {
+                this._renderBoundedGroupChannels(groupName, current, { scrollAnchor });
+            } else {
+                this.renderBounded({ preserveScrollPosition, scrollAnchor });
+            }
         }
     }
 
@@ -1697,6 +1711,39 @@ class ChannelList {
                 break;
             }
         });
+    }
+
+    _renderBoundedGroupChannels(groupName, state, { scrollAnchor = null } = {}) {
+        const header = [...this.container.querySelectorAll('.group-header[data-group]')]
+            .find(candidate => candidate.dataset.group === groupName);
+        const groupElement = header?.closest('.channel-group');
+        const channelContainer = groupElement?.querySelector('.group-channels');
+        if (!header || !channelContainer || header.classList.contains('collapsed')) {
+            this.renderBounded({ preserveScrollPosition: true, scrollAnchor });
+            return;
+        }
+
+        const channels = state.channels || [];
+        this.groupedChannels[groupName] = channels;
+        const rendered = channels.map(channel => ({
+            ...channel,
+            _renderId: `bounded_${groupName}_${channel.sourceId}_${channel.id}`,
+            _renderGroup: groupName
+        }));
+        const firstIndex = this.renderedChannels.findIndex(channel => channel._renderGroup === groupName);
+        this.renderedChannels = this.renderedChannels.filter(channel => channel._renderGroup !== groupName);
+        this.renderedChannels.splice(firstIndex >= 0 ? firstIndex : this.renderedChannels.length, 0, ...rendered);
+
+        channelContainer.innerHTML = `
+          ${channels.map(channel => this._boundedChannelHtml(channel, groupName)).join('')}
+          ${state.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p><button class="btn btn-secondary bounded-load-retry">Try again</button></div>` : ''}
+          ${state.hasMore && !state.loading && !state.error ? `<div class="bounded-load-sentinel" data-mode="append" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}`;
+        channelContainer.querySelector('.bounded-load-retry')?.addEventListener('click', () =>
+            this.loadBoundedGroup(groupName, { append: true })
+        );
+        this._attachBoundedChannelListeners(channelContainer);
+        this._restoreBoundedScrollAnchor(scrollAnchor);
+        this._setupBoundedContinuationObserver();
     }
 
     _boundedChannelHtml(channel, groupName) {

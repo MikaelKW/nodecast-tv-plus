@@ -559,6 +559,9 @@ async function measureBrowser(baseUrl, cookie) {
         let followingLookaheadState = null;
         let automaticContinuation = null;
         if (Math.ceil(channelCount / categoryCount) > 500) {
+            // Scrolling an expanded group prepares the next bounded page. It
+            // must remain outside the visible list until the continuation
+            // boundary is reached.
             await page.locator('#channel-list').evaluate(element => {
                 element.scrollTop += 50;
             });
@@ -576,6 +579,9 @@ async function measureBrowser(baseUrl, cookie) {
             });
             assert.equal(lookaheadState.renderedChannels, 500, 'Lookahead rendered its buffered page too early.');
             assert.ok(lookaheadState.bufferedChannels > 0, 'Lookahead did not prepare another bounded page.');
+            await page.locator('.group-header:not(.favorites-group)').first().evaluate(element => {
+                element.dataset.benchmarkIdentity = 'preserve-during-continuation';
+            });
             await page.locator('#channel-list').evaluate(element => {
                 element.scrollTop = element.scrollHeight;
             });
@@ -608,10 +614,18 @@ async function measureBrowser(baseUrl, cookie) {
                         .map(state => state.channels.length)
                 ),
                 loadMoreButtons: document.querySelectorAll('.bounded-load-more').length,
-                scrollTop: document.querySelector('#channel-list').scrollTop
+                scrollTop: document.querySelector('#channel-list').scrollTop,
+                sidebarPreserved: Boolean(document.querySelector(
+                    '.group-header[data-benchmark-identity="preserve-during-continuation"]'
+                ))
             }));
             assert.equal(automaticContinuation.loadMoreButtons, 0);
             assert.ok(automaticContinuation.scrollTop > 0, 'Automatic continuation reset the channel-list scroll position.');
+            assert.equal(
+                automaticContinuation.sidebarPreserved,
+                true,
+                'Automatic continuation rebuilt the complete sidebar.'
+            );
         }
 
         const anchorGroupName = await page.evaluate(() => {
