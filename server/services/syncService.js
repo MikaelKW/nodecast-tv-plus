@@ -1,4 +1,4 @@
-const { getDb } = require('../db/sqlite');
+const { getDb, catalogueRevisions } = require('../db/sqlite');
 const { sources, settings } = require('../db'); // For source config and settings
 const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
@@ -174,6 +174,9 @@ class SyncService {
                 error = excluded.error
         `);
         stmt.run(sourceId, type, Date.now(), status, error);
+        if (type === 'all' && status === 'success') {
+            catalogueRevisions.bump(sourceId);
+        }
     }
 
     /**

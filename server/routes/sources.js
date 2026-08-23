@@ -2,7 +2,7 @@ const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { sources } = require('../db');
-const { getDb } = require('../db/sqlite');
+const { getDb, catalogueRevisions } = require('../db/sqlite');
 const xtreamApi = require('../services/xtreamApi');
 const syncService = require('../services/syncService');
 const m3uParser = require('../services/m3uParser');
@@ -202,6 +202,7 @@ router.delete('/:id', auth.requireAdmin, limitSourceDeletion, async (req, res) =
         const epgResult = deleteEpg.run(sourceId);
         deleteSyncStatus.run(sourceId);
         deleteVisibilityDefaults.run(sourceId);
+        catalogueRevisions.remove(sourceId);
 
         console.log(`[Source] Cascade delete for source ${sourceId}: ${catResult.changes} categories, ${itemResult.changes} items, ${epgResult.changes} EPG programs`);
 

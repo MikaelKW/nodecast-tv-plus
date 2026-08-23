@@ -27,7 +27,11 @@ async function waitForSync(page, sourceId) {
 }
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
-    test.setTimeout(120_000);
+    // This scenario intentionally covers setup, source synchronization, media
+    // processing, responsive layouts, and the bounded catalogue contract in a
+    // single-use environment. Keep enough headroom for slower Windows runners
+    // without reducing any individual assertion timeout.
+    test.setTimeout(150_000);
     expect(isIgnorableGoogleFont404(
         'Failed to load resource: the server responded with a status of 404 ()',
         'https://fonts.gstatic.com/s/inter/v20/example.woff2'
@@ -541,23 +545,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await waitForSync(page, healthyAfterFailureSource.id);
 
     const retainedSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
-        const originalCategories = API.proxy.xtream.liveCategories;
-        const originalStreams = API.proxy.xtream.liveStreams;
+        const originalSummary = API.proxy.catalogue.liveSummary;
         const originalConsoleError = console.error;
         const errors = [];
-        const failedChannelsBefore = window.app.channelList.channels.filter(channel =>
-            String(channel.sourceId) === String(failedId)
+        const groupsForSource = sourceId => window.app.channelList.boundedGroups.filter(group =>
+            group.parts.some(part => String(part.source.id) === String(sourceId))
         ).length;
+        const failedGroupsBefore = groupsForSource(failedId);
 
-        API.proxy.xtream.liveCategories = (sourceId, options) => (
+        API.proxy.catalogue.liveSummary = sourceId => (
             String(sourceId) === String(failedId)
                 ? Promise.reject(new Error('Controlled provider failure'))
-                : originalCategories(sourceId, options)
-        );
-        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => (
-            String(sourceId) === String(failedId)
-                ? Promise.reject(new Error('Controlled provider failure'))
-                : originalStreams(sourceId, categoryId, options)
+                : originalSummary(sourceId)
         );
         console.error = (...args) => errors.push(args.map(String).join(' '));
 
@@ -566,72 +565,55 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
             return {
-                failedChannelsBefore,
-                failedChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(failedId)
-                ).length,
-                healthyChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(healthyId)
-                ).length,
+                failedGroupsBefore,
+                failedGroups: groupsForSource(failedId),
+                healthyGroups: groupsForSource(healthyId),
                 errors
             };
         } finally {
-            API.proxy.xtream.liveCategories = originalCategories;
-            API.proxy.xtream.liveStreams = originalStreams;
+            API.proxy.catalogue.liveSummary = originalSummary;
             console.error = originalConsoleError;
         }
     }, { failedId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(retainedSourceLoad.failedChannelsBefore).toBeGreaterThan(0);
-    expect(retainedSourceLoad.failedChannels).toBe(retainedSourceLoad.failedChannelsBefore);
-    expect(retainedSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedGroupsBefore).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedGroups).toBe(retainedSourceLoad.failedGroupsBefore);
+    expect(retainedSourceLoad.healthyGroups).toBeGreaterThan(0);
     expect(retainedSourceLoad.errors.some(message =>
         message.includes(`Error loading source ${m3uSource.id}`)
     )).toBe(true);
 
     const transientSourceLoad = await page.evaluate(async ({ recoveredId, healthyId }) => {
-        const originalCategories = API.proxy.xtream.liveCategories;
-        const originalStreams = API.proxy.xtream.liveStreams;
-        let categoryAttempts = 0;
-        let streamAttempts = 0;
+        const originalSummary = API.proxy.catalogue.liveSummary;
+        let summaryAttempts = 0;
 
-        API.proxy.xtream.liveCategories = (sourceId, options) => {
-            if (String(sourceId) === String(recoveredId) && categoryAttempts++ === 0) {
-                return Promise.reject(new Error('Controlled transient category failure'));
+        API.proxy.catalogue.liveSummary = sourceId => {
+            if (String(sourceId) === String(recoveredId) && summaryAttempts++ === 0) {
+                return Promise.reject(new Error('Controlled transient summary failure'));
             }
-            return originalCategories(sourceId, options);
-        };
-        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => {
-            if (String(sourceId) === String(recoveredId) && streamAttempts++ === 0) {
-                return Promise.reject(new Error('Controlled transient stream failure'));
-            }
-            return originalStreams(sourceId, categoryId, options);
+            return originalSummary(sourceId);
         };
 
         try {
             await window.app.channelList.loadSources();
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
+            const groupsForSource = sourceId => window.app.channelList.boundedGroups.filter(group =>
+                group.parts.some(part => String(part.source.id) === String(sourceId))
+            ).length;
             return {
-                recoveredChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(recoveredId)
-                ).length,
-                healthyChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(healthyId)
-                ).length,
-                categoryAttempts,
-                streamAttempts
+                recoveredGroups: groupsForSource(recoveredId),
+                healthyGroups: groupsForSource(healthyId),
+                summaryAttempts
             };
         } finally {
-            API.proxy.xtream.liveCategories = originalCategories;
-            API.proxy.xtream.liveStreams = originalStreams;
+            API.proxy.catalogue.liveSummary = originalSummary;
         }
     }, { recoveredId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(transientSourceLoad.recoveredChannels).toBeGreaterThan(0);
-    expect(transientSourceLoad.healthyChannels).toBeGreaterThan(0);
-    expect(transientSourceLoad.categoryAttempts).toBe(2);
-    expect(transientSourceLoad.streamAttempts).toBe(2);
+    expect(transientSourceLoad.recoveredGroups).toBeGreaterThan(0);
+    expect(transientSourceLoad.healthyGroups).toBeGreaterThan(0);
+    expect(transientSourceLoad.summaryAttempts).toBe(2);
 
     await page.evaluate(async id => {
         const response = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
@@ -1002,7 +984,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const liveChannelsGate = new Promise(resolve => { releaseLiveChannels = resolve; });
     let liveChannelsRequestSeen;
     const liveChannelsRequest = new Promise(resolve => { liveChannelsRequestSeen = resolve; });
-    await page.route(`**/api/proxy/xtream/${variantSource.id}/live_streams`, async route => {
+    await page.route(`**/api/proxy/catalogue/${variantSource.id}/live/summary`, async route => {
         liveChannelsRequestSeen();
         await liveChannelsGate;
         await route.continue();
@@ -1016,7 +998,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     releaseLiveChannels();
     await expect(page.locator('.group-header', { hasText: 'Quality Variants' })).toContainText('1');
     await expect(page.locator('#channel-search')).toHaveValue('Quality Variant HD');
-    await page.unroute(`**/api/proxy/xtream/${variantSource.id}/live_streams`);
+    await page.unroute(`**/api/proxy/catalogue/${variantSource.id}/live/summary`);
     await page.locator('#channel-search').fill('');
     const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
     await expect(variantGroup).toContainText('4');

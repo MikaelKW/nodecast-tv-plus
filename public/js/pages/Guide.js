@@ -16,8 +16,10 @@ class GuidePage {
         // This fixes a race condition where navigating directly to the Guide page
         // before visiting Live TV would result in an empty EPG.
         const channelList = this.app.channelList;
-        if (!channelList.channels || channelList.channels.length === 0) {
-            await channelList.loadSources();
+        await channelList.loadSources();
+        if (channelList.boundedMode) {
+            await channelList.loadGuideChannels();
+        } else if (!channelList.channels || channelList.channels.length === 0) {
             await channelList.loadChannels();
         }
 

@@ -419,7 +419,8 @@ class EpgGuide {
         // Get channels and filter out hidden ones (always enforce hidden in EPG)
         // Note: We only check individual channel visibility, not group visibility
         // A group is implicitly visible if it has any visible children
-        const playableChannels = (channelList.channels || []).filter(ch => {
+        const guideChannels = channelList.guideChannels || channelList.channels || [];
+        const playableChannels = guideChannels.filter(ch => {
             // Use streamId (raw ID) for hidden check since that's what SourceManager stores
             const rawChannelId = ch.streamId || ch.id;
             const isChannelHidden = channelList.isHidden('channel', ch.sourceId, rawChannelId);
@@ -985,7 +986,9 @@ class EpgGuide {
     async playChannel(channelName) {
         // Find channel in channel list and play
         if (window.app?.channelList) {
-            const channel = window.app.channelList.channels.find(c =>
+            const availableChannels = window.app.channelList.guideChannels
+                || window.app.channelList.channels;
+            const channel = availableChannels.find(c =>
                 c.name === channelName || c.tvgName === channelName
             );
             if (channel) {
