@@ -103,6 +103,69 @@ async function createTransientServer(mediaPath, initialStatus) {
     };
 }
 
+async function createDroppedLiveServer(mediaPath) {
+    const payload = fs.readFileSync(mediaPath);
+    let requests = 0;
+    let rangedRequests = 0;
+    const activeTimers = new Set();
+    const server = http.createServer((req, res) => {
+        requests += 1;
+        if (req.headers.range) {
+            rangedRequests += 1;
+            res.writeHead(458, { Connection: 'close' });
+            return res.end('ranged resume rejected');
+        }
+
+        res.writeHead(200, {
+            Connection: 'close',
+            'Content-Type': 'video/mp2t'
+        });
+        let offset = 0;
+        const timer = setInterval(() => {
+            if (offset >= payload.length) {
+                clearInterval(timer);
+                activeTimers.delete(timer);
+                res.end();
+                return;
+            }
+            const end = Math.min(offset + 4096, payload.length);
+            res.write(payload.subarray(offset, end));
+            offset = end;
+        }, 25);
+        activeTimers.add(timer);
+        res.on('close', () => {
+            clearInterval(timer);
+            activeTimers.delete(timer);
+        });
+    });
+
+    await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = server.address();
+    return {
+        url: `http://127.0.0.1:${port}/live.ts`,
+        requestCount: () => requests,
+        rangedRequestCount: () => rangedRequests,
+        close: () => new Promise(resolve => {
+            for (const timer of activeTimers) clearInterval(timer);
+            activeTimers.clear();
+            server.close(resolve);
+            server.closeAllConnections();
+        })
+    };
+}
+
+async function waitFor(predicate, timeoutMs, message) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        if (await predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error(message);
+}
+
 async function main() {
     assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
@@ -237,6 +300,30 @@ async function main() {
     assert.equal(ordinaryArgs.includes('-copyts'), false);
     assert.equal(ordinaryArgs.includes('-muxdelay'), false);
 
+    const liveSession = new TranscodeSession('https://example.com/live-source', {
+        livePlayback: true,
+        videoMode: 'copy',
+        videoCodec: 'h264'
+    });
+    const liveArgs = liveSession.buildFFmpegArgs();
+    for (const reconnectFlag of HTTP_RECONNECT_ARGS.filter(argument => argument.startsWith('-'))) {
+        assert.equal(
+            liveArgs.includes(reconnectFlag),
+            false,
+            'Live sessions must reopen a fresh provider connection instead of resuming a rejected byte range.'
+        );
+    }
+    assert.match(
+        liveArgs[liveArgs.indexOf('-hls_flags') + 1],
+        /(?:^|\+)omit_endlist(?:\+|$)/,
+        'A temporary live input disconnect must not finalize the browser playlist.'
+    );
+    assert.doesNotMatch(
+        ordinaryArgs[ordinaryArgs.indexOf('-hls_flags') + 1],
+        /(?:^|\+)omit_endlist(?:\+|$)/,
+        'VOD sessions must retain ordinary end-of-stream semantics.'
+    );
+
     const compatibilityAudioSession = new TranscodeSession('https://example.com/source', {
         videoMode: 'copy',
         videoCodec: 'h264',
@@ -364,6 +451,65 @@ async function main() {
         } finally {
             if (seekedSession) await seekedSession.cleanup();
             await seekServer.close();
+        }
+
+        const liveMediaPath = path.join(testRoot, 'dropped-live.ts');
+        const generatedLiveMedia = spawnSync(ffmpegPath, [
+            '-hide_banner', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=24:d=6',
+            '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000:duration=6',
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-g', '48', '-sc_threshold', '0',
+            '-c:a', 'aac', '-shortest',
+            '-f', 'mpegts', '-y', liveMediaPath
+        ], { windowsHide: true, encoding: 'utf8' });
+        assert.equal(generatedLiveMedia.status, 0, generatedLiveMedia.stderr || 'Failed to generate live test media.');
+
+        const droppedLiveServer = await createDroppedLiveServer(liveMediaPath);
+        let droppedLiveSession;
+        try {
+            droppedLiveSession = new TranscodeSession('https://example.com/live-source.ts', {
+                ffmpegPath,
+                livePlayback: true,
+                videoMode: 'encode',
+                videoCodec: 'h264',
+                audioCodec: 'aac',
+                audioChannels: 1
+            });
+            droppedLiveSession.url = droppedLiveServer.url;
+            assert.equal(
+                await droppedLiveSession.startAndWaitForPlaylist(10_000, 1),
+                true,
+                'The controlled live session should generate its initial HLS playlist.'
+            );
+            const initialLivePlaylist = await droppedLiveSession.getPlaylist();
+            const initialSegmentIndexes = Array.from(initialLivePlaylist.matchAll(/seg(\d+)\.ts/g), match => Number(match[1]));
+            const initialLastSegment = Math.max(...initialSegmentIndexes);
+            await waitFor(
+                () => droppedLiveServer.requestCount() >= 2,
+                15_000,
+                'A dropped live input should be reopened as a fresh provider request.'
+            );
+            await waitFor(async () => {
+                const playlist = await droppedLiveSession.getPlaylist();
+                const indexes = Array.from(playlist?.matchAll(/seg(\d+)\.ts/g) || [], match => Number(match[1]));
+                return indexes.some(index => index > initialLastSegment);
+            }, 10_000, 'A fresh live connection should append new segments to the existing browser timeline.');
+            const livePlaylist = await droppedLiveSession.getPlaylist();
+            assert.ok(livePlaylist?.includes('.ts'), 'The restarted live session must retain playable segments.');
+            assert.equal(livePlaylist.includes('#EXT-X-ENDLIST'), false, 'A live disconnect must not finalize the HLS playlist.');
+            assert.equal(
+                droppedLiveServer.rangedRequestCount(),
+                0,
+                'A live restart must not issue the byte-range resume rejected by affected providers.'
+            );
+            assert.ok(
+                ['running', 'reconnecting'].includes(droppedLiveSession.status),
+                `The restarted live session must remain active; received ${droppedLiveSession.status}.`
+            );
+        } finally {
+            if (droppedLiveSession) await droppedLiveSession.cleanup();
+            await droppedLiveServer.close();
         }
     } finally {
         fs.rmSync(testRoot, { recursive: true, force: true });

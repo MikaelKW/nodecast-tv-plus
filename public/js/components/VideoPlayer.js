@@ -888,7 +888,12 @@ class VideoPlayer {
         const res = await this.requestPlaybackResource('/api/transcode/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, ...options, playbackLeaseId: this.playbackLeaseId }),
+            body: JSON.stringify({
+                url,
+                ...options,
+                livePlayback: true,
+                playbackLeaseId: this.playbackLeaseId
+            }),
             signal
         });
         if (!res.ok) {

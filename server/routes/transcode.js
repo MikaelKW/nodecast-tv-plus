@@ -50,6 +50,7 @@ router.post('/session', async (req, res) => {
         audioStreamIndex,
         videoHeight,
         maxResolution,
+        livePlayback,
         playbackLeaseId
     } = req.body;
 
@@ -59,6 +60,9 @@ router.post('/session', async (req, res) => {
 
     if (forceAudioTranscode !== undefined && typeof forceAudioTranscode !== 'boolean') {
         return res.status(400).json({ error: 'forceAudioTranscode must be true or false' });
+    }
+    if (livePlayback !== undefined && typeof livePlayback !== 'boolean') {
+        return res.status(400).json({ error: 'livePlayback must be true or false' });
     }
 
     let validatedUrl;
@@ -118,6 +122,7 @@ router.post('/session', async (req, res) => {
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight
                 : 0,
+            livePlayback: livePlayback === true,
             ownerId: req.user.id,
             playbackLeaseId
         });

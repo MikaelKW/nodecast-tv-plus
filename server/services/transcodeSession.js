@@ -37,6 +37,9 @@ const SEGMENT_DURATION = 4; // seconds per HLS segment
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const MAX_ACTIVE_SESSIONS = 12;
 const MAX_ACTIVE_SESSIONS_PER_USER = 4;
+const LIVE_RESTART_DELAY_MS = 250;
+const LIVE_STABLE_RUN_MS = 10 * 1000;
+const MAX_RAPID_LIVE_RESTARTS = 4;
 
 /**
  * Generate a unique session ID
@@ -105,6 +108,9 @@ class TranscodeSession extends EventEmitter {
         this.dir = path.join(CACHE_DIR, this.id);
         this.playlistPath = path.join(this.dir, 'stream.m3u8');
         this.process = null;
+        this.restartTimer = null;
+        this.processStartedAt = 0;
+        this.rapidLiveRestartCount = 0;
         this.retired = false;
         this.segments = new Map(); // segment index -> { ready: boolean, path: string }
         this.status = 'pending'; // pending | starting | running | stopped | error
@@ -140,7 +146,7 @@ class TranscodeSession extends EventEmitter {
             error.statusCode = 409;
             throw error;
         }
-        if (this.status === 'running') {
+        if (this.status === 'running' || this.process) {
             return;
         }
 
@@ -160,21 +166,23 @@ class TranscodeSession extends EventEmitter {
         const args = this.buildFFmpegArgs();
 
         try {
-            this.process = spawn(this.options.ffmpegPath, args, {
+            const activeProcess = spawn(this.options.ffmpegPath, args, {
                 cwd: this.dir,
                 windowsHide: true
             });
+            this.process = activeProcess;
+            this.processStartedAt = Date.now();
 
             this.status = 'running';
 
             // Handle stdout (should be empty for file output)
-            this.process.stdout.on('data', (data) => {
+            activeProcess.stdout.on('data', (data) => {
                 console.log(`[TranscodeSession ${this.id}] stdout: ${data}`);
             });
 
             // Handle stderr (FFmpeg progress/errors)
             let stderrBuffer = '';
-            this.process.stderr.on('data', (data) => {
+            activeProcess.stderr.on('data', (data) => {
                 stderrBuffer += data.toString();
                 // Log periodically to avoid spam
                 const lines = stderrBuffer.split('\n');
@@ -189,8 +197,12 @@ class TranscodeSession extends EventEmitter {
             });
 
             // Handle process exit
-            this.process.on('exit', (code) => {
-                if (code === 0 || code === null) {
+            activeProcess.on('exit', (code) => {
+                if (this.process === activeProcess) this.process = null;
+
+                if (this.options.livePlayback === true && !this.retired) {
+                    this.scheduleLiveRestart(code);
+                } else if (code === 0 || code === null) {
                     console.log(`[TranscodeSession ${this.id}] FFmpeg completed successfully`);
                     this.status = 'stopped';
                 } else if (code !== 255) { // 255 is often from SIGKILL
@@ -198,12 +210,11 @@ class TranscodeSession extends EventEmitter {
                     this.status = 'error';
                     this.error = `FFmpeg exited with code ${code}`;
                 }
-                this.process = null;
                 this.emit('exit', code);
             });
 
             // Handle spawn errors
-            this.process.on('error', (err) => {
+            activeProcess.on('error', (err) => {
                 console.error(`[TranscodeSession ${this.id}] FFmpeg error:`, err);
                 this.status = 'error';
                 this.error = err.message;
@@ -223,6 +234,39 @@ class TranscodeSession extends EventEmitter {
             this.error = err.message;
             throw err;
         }
+    }
+
+    scheduleLiveRestart(code) {
+        if (this.retired || this.restartTimer) return;
+
+        const runDuration = Date.now() - this.processStartedAt;
+        if (runDuration >= LIVE_STABLE_RUN_MS) {
+            this.rapidLiveRestartCount = 0;
+        } else {
+            this.rapidLiveRestartCount += 1;
+        }
+
+        if (this.rapidLiveRestartCount > MAX_RAPID_LIVE_RESTARTS) {
+            this.status = 'error';
+            this.error = 'Live input repeatedly disconnected before playback stabilized';
+            console.error(`[TranscodeSession ${this.id}] ${this.error}`);
+            return;
+        }
+
+        this.status = 'reconnecting';
+        console.warn(
+            `[TranscodeSession ${this.id}] Live input ended (code ${code ?? 'signal'}); reopening a fresh connection`
+        );
+        this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            if (this.retired) return;
+            this.start().catch(error => {
+                this.status = 'error';
+                this.error = error.message;
+                console.error(`[TranscodeSession ${this.id}] Live input restart failed: ${redactText(error.message)}`);
+            });
+        }, LIVE_RESTART_DELAY_MS);
+        this.restartTimer.unref?.();
     }
 
     /**
@@ -252,12 +296,15 @@ class TranscodeSession extends EventEmitter {
         }
 
         // Input options (common)
+        const reconnectArgs = this.options.livePlayback === true
+            ? []
+            : appendHttpReconnectArgs([]);
         args.push(
             '-probesize', '2000000',
             '-analyzeduration', '3000000',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
-            ...appendHttpReconnectArgs([])
+            ...reconnectArgs
         );
 
         args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST);
@@ -364,11 +411,14 @@ class TranscodeSession extends EventEmitter {
             // lead so ffprobe reports the real source time of the first packet.
             args.push('-muxpreload', '0', '-muxdelay', '0');
         }
+        const hlsFlags = this.options.livePlayback === true
+            ? 'independent_segments+append_list+omit_endlist'
+            : 'independent_segments+append_list';
         args.push(
             '-f', 'hls',
             '-hls_time', String(SEGMENT_DURATION),
             '-hls_list_size', '0', // Keep all segments in playlist
-            '-hls_flags', 'independent_segments+append_list',
+            '-hls_flags', hlsFlags,
             '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', path.join(this.dir, 'seg%04d.ts'),
             this.playlistPath
@@ -615,6 +665,10 @@ class TranscodeSession extends EventEmitter {
      * Stop the transcoding process
      */
     async stop() {
+        if (this.restartTimer) {
+            clearTimeout(this.restartTimer);
+            this.restartTimer = null;
+        }
         const activeProcess = this.process;
         if (activeProcess) {
             console.log(`[TranscodeSession ${this.id}] Stopping FFmpeg process`);
