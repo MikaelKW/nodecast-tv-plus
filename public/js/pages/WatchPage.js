@@ -479,7 +479,7 @@ class WatchPage {
     async startQualityPlayback(url, resolution, streamInfo = null) {
         const label = PlaybackQuality.getLabel(resolution);
         console.log(`[WatchPage] Applying session quality cap: ${label}`);
-        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+        this.updateTranscodeStatus('transcoding', 'Transcoding (Video)');
         const playlistUrl = await this.startTranscodeSession(url, {
             videoMode: 'encode',
             maxResolution: resolution,

@@ -26,6 +26,7 @@ class VideoPlayer {
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
         this._xtreamStreamFormats = new Map();
+        this.playbackLeaseId = this.getPlaybackLeaseId();
         this.currentChannel = null;
         this.overlayTimer = null;
         this.overlayDuration = 5000; // 5 seconds
@@ -38,6 +39,10 @@ class VideoPlayer {
         this.qualityCapPending = false;
         this.settingsLoaded = false;
 
+        window.addEventListener('pagehide', () => {
+            this.releasePlaybackLease();
+        });
+
         // Settings - start with defaults, load from server async
         this.settings = this.getDefaultSettings();
 
@@ -45,6 +50,29 @@ class VideoPlayer {
         this.loadSettingsFromServer().then(() => {
             this.init();
         });
+    }
+
+    getPlaybackLeaseId() {
+        const storageKey = 'nodecast_live_playback_lease';
+        try {
+            const existing = sessionStorage.getItem(storageKey);
+            if (existing) return existing;
+            const generated = crypto.randomUUID();
+            sessionStorage.setItem(storageKey, generated);
+            return generated;
+        } catch {
+            return `${Date.now()}_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`;
+        }
+    }
+
+    releasePlaybackLease() {
+        this.currentSessionId = null;
+        fetch(NodeCastUrl.resolve('/api/transcode/lease/release'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playbackLeaseId: this.playbackLeaseId }),
+            keepalive: true
+        }).catch(() => {});
     }
 
     /**
@@ -860,7 +888,7 @@ class VideoPlayer {
         const res = await this.requestPlaybackResource('/api/transcode/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, ...options }),
+            body: JSON.stringify({ url, ...options, playbackLeaseId: this.playbackLeaseId }),
             signal
         });
         if (!res.ok) {
@@ -868,6 +896,12 @@ class VideoPlayer {
             throw new Error(detail.reason || detail.error || 'Failed to start session');
         }
         const session = await res.json();
+        if (signal?.aborted) {
+            await fetch(NodeCastUrl.resolve(`/api/transcode/${session.sessionId}`), {
+                method: 'DELETE'
+            }).catch(() => {});
+            throw new DOMException('Playback request was replaced', 'AbortError');
+        }
         this.currentSessionId = session.sessionId;
         return NodeCastUrl.resolve(session.playlistUrl);
     }
@@ -875,7 +909,7 @@ class VideoPlayer {
     async startQualityPlayback(channel, streamUrl, resolution, streamInfo, signal, playId) {
         const label = PlaybackQuality.getLabel(resolution);
         console.log(`[Player] Applying session quality cap: ${label}`);
-        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+        this.updateTranscodeStatus('transcoding', 'Transcoding (Video)');
         const playlistUrl = await this.startTranscodeSession(streamUrl, {
             videoMode: 'encode',
             maxResolution: resolution,

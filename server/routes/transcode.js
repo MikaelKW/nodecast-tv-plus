@@ -49,7 +49,8 @@ router.post('/session', async (req, res) => {
         forceAudioTranscode,
         audioStreamIndex,
         videoHeight,
-        maxResolution
+        maxResolution,
+        playbackLeaseId
     } = req.body;
 
     if (!url) {
@@ -67,6 +68,7 @@ router.post('/session', async (req, res) => {
         validatedUrl = await authorizeMediaUrl(url);
         resolutionOverride = parseMaxResolutionOverride(maxResolution);
         selectedAudioStreamIndex = parseOptionalStreamIndex(audioStreamIndex, 'audioStreamIndex');
+        transcodeSession.normalizePlaybackLeaseId(playbackLeaseId);
     } catch (err) {
         return res.status(err.statusCode || 400).json({ error: err.message });
     }
@@ -83,7 +85,11 @@ router.post('/session', async (req, res) => {
         if (res.writableEnded || clientDisconnected) return;
         clientDisconnected = true;
         if (session) {
-            disconnectCleanup = transcodeSession.removeSession(session.id);
+            disconnectCleanup = transcodeSession.removeSession(
+                session.id,
+                req.user.id,
+                'client disconnected'
+            );
         }
     };
     res.on('close', cleanupDisconnectedSession);
@@ -112,19 +118,24 @@ router.post('/session', async (req, res) => {
             videoHeight: Number.isInteger(videoHeight) && videoHeight > 0 && videoHeight <= 4320
                 ? videoHeight
                 : 0,
-            ownerId: req.user.id
+            ownerId: req.user.id,
+            playbackLeaseId
         });
 
         // Wait for the first segment, retrying one immediate provider rejection.
         const ready = await session.startAndWaitForPlaylist(TRANSCODE_START_TIMEOUT_MS);
 
         if (clientDisconnected) {
-            await (disconnectCleanup || transcodeSession.removeSession(session.id));
+            await (disconnectCleanup || transcodeSession.removeSession(
+                session.id,
+                req.user.id,
+                'client disconnected'
+            ));
             return;
         }
 
         if (!ready) {
-            await transcodeSession.removeSession(session.id);
+            await transcodeSession.removeSession(session.id, req.user.id, 'startup failed');
             return res.status(500).json({ error: 'Transcoding failed to start', reason: 'Playlist not generated in time' });
         }
 
@@ -144,6 +155,24 @@ router.post('/session', async (req, res) => {
         });
     } finally {
         res.off('close', cleanupDisconnectedSession);
+    }
+});
+
+/**
+ * Release the managed playback session owned by one browser tab.
+ * POST /api/transcode/lease/release
+ */
+router.post('/lease/release', async (req, res) => {
+    try {
+        const released = await transcodeSession.releasePlaybackLease(
+            req.user.id,
+            req.body?.playbackLeaseId
+        );
+        res.json({ success: true, released });
+    } catch (err) {
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Failed to release playback session'
+        });
     }
 });
 
@@ -204,7 +233,7 @@ router.delete('/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
 
     try {
-        const removed = await transcodeSession.removeSession(sessionId, req.user.id);
+        const removed = await transcodeSession.removeSession(sessionId, req.user.id, 'client request');
         if (!removed) return res.status(404).json({ error: 'Session not found' });
         res.json({ success: true });
     } catch (err) {

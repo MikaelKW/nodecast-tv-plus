@@ -18,7 +18,10 @@ const { HTTP_RECONNECT_ARGS } = require('../server/services/ffmpegNetwork');
 const {
     TranscodeSession,
     createSession,
-    removeSession
+    getSession,
+    removeSession,
+    releasePlaybackLease,
+    normalizePlaybackLeaseId
 } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
 const { parseOptionalStreamIndex } = require('../server/services/mediaSelection');
@@ -103,6 +106,32 @@ async function createTransientServer(mediaPath, initialStatus) {
 async function main() {
     assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the transcode test.');
     assert.ok(!HTTP_RECONNECT_ARGS.includes('-http_persistent'), 'Do not use an option unsupported by the bundled FFmpeg.');
+
+    const leaseId = 'controlled_playback_lease_0001';
+    assert.equal(normalizePlaybackLeaseId(leaseId), leaseId);
+    assert.equal(normalizePlaybackLeaseId(undefined), null);
+    assert.throws(() => normalizePlaybackLeaseId('short'), /playbackLeaseId/);
+
+    const firstLeaseSession = await createSession('https://example.com/first.mp4', {
+        ownerId: 81,
+        playbackLeaseId: leaseId
+    });
+    const secondLeaseSession = await createSession('https://example.com/second.mp4', {
+        ownerId: 81,
+        playbackLeaseId: leaseId
+    });
+    assert.equal(getSession(firstLeaseSession.id, 81), undefined, 'A replacement must retire the prior session.');
+    assert.ok(getSession(secondLeaseSession.id, 81), 'The newest session must retain the playback lease.');
+    assert.equal(firstLeaseSession.retired, true);
+
+    const otherTabSession = await createSession('https://example.com/other-tab.mp4', {
+        ownerId: 81,
+        playbackLeaseId: 'controlled_playback_lease_0002'
+    });
+    assert.equal(await releasePlaybackLease(81, leaseId), 1);
+    assert.equal(getSession(secondLeaseSession.id, 81), undefined);
+    assert.ok(getSession(otherTabSession.id, 81), 'Releasing one tab must not stop another tab.');
+    await removeSession(otherTabSession.id, 81);
 
     const ownerSessions = [];
     try {

@@ -22,6 +22,9 @@ const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
 
 // Session storage
 const sessions = new Map();
+const leaseLocks = new Map();
+
+const PLAYBACK_LEASE_ID_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 
 // Cache directory for transcoded segments
 const CACHE_DIR = process.env.NODECAST_CACHE_DIR
@@ -40,6 +43,43 @@ const MAX_ACTIVE_SESSIONS_PER_USER = 4;
  */
 function generateSessionId() {
     return crypto.randomBytes(8).toString('hex');
+}
+
+function normalizePlaybackLeaseId(value) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !PLAYBACK_LEASE_ID_PATTERN.test(value)) {
+        const error = new Error('playbackLeaseId must be a valid opaque identifier');
+        error.statusCode = 400;
+        throw error;
+    }
+    return value;
+}
+
+function getLeaseKey(ownerId, playbackLeaseId) {
+    if (ownerId === null || ownerId === undefined || !playbackLeaseId) return null;
+    return `${String(ownerId)}:${playbackLeaseId}`;
+}
+
+function getLeaseTag(playbackLeaseId) {
+    if (!playbackLeaseId) return null;
+    return crypto.createHash('sha256').update(playbackLeaseId).digest('hex').slice(0, 10);
+}
+
+async function withLeaseLock(leaseKey, task) {
+    if (!leaseKey) return task();
+
+    const previous = leaseLocks.get(leaseKey) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => { release = resolve; });
+    leaseLocks.set(leaseKey, current);
+
+    await previous.catch(() => {});
+    try {
+        return await task();
+    } finally {
+        release();
+        if (leaseLocks.get(leaseKey) === current) leaseLocks.delete(leaseKey);
+    }
 }
 
 /**
@@ -65,6 +105,7 @@ class TranscodeSession extends EventEmitter {
         this.dir = path.join(CACHE_DIR, this.id);
         this.playlistPath = path.join(this.dir, 'stream.m3u8');
         this.process = null;
+        this.retired = false;
         this.segments = new Map(); // segment index -> { ready: boolean, path: string }
         this.status = 'pending'; // pending | starting | running | stopped | error
         this.error = null;
@@ -72,6 +113,8 @@ class TranscodeSession extends EventEmitter {
         this.mediaStartTime = Math.max(0, Number(options.seekOffset) || 0);
         this.lastAccess = Date.now();
         this.ownerId = options.ownerId ?? null;
+        this.playbackLeaseId = normalizePlaybackLeaseId(options.playbackLeaseId);
+        this.playbackLeaseTag = getLeaseTag(this.playbackLeaseId);
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
             ffprobePath: options.ffprobePath || 'ffprobe',
@@ -92,6 +135,11 @@ class TranscodeSession extends EventEmitter {
      * Start the transcoding process
      */
     async start() {
+        if (this.retired) {
+            const error = new Error('Transcode session was replaced before startup completed');
+            error.statusCode = 409;
+            throw error;
+        }
         if (this.status === 'running') {
             return;
         }
@@ -161,6 +209,14 @@ class TranscodeSession extends EventEmitter {
                 this.error = err.message;
                 this.emit('error', err);
             });
+
+            // A rapid replacement can retire a pending session between the
+            // initial check and process creation. Never let that process outlive
+            // the lease that created it.
+            if (this.retired && this.process) {
+                this.process.kill('SIGKILL');
+                this.status = 'stopped';
+            }
 
         } catch (err) {
             this.status = 'error';
@@ -713,6 +769,7 @@ class TranscodeSession extends EventEmitter {
      * Delete session directory and all segments
      */
     async cleanup() {
+        this.retired = true;
         await this.stop();
         try {
             await fs.rm(this.dir, { recursive: true, force: true });
@@ -732,22 +789,40 @@ class TranscodeSession extends EventEmitter {
  */
 async function createSession(url, options = {}) {
     const ownerId = options.ownerId ?? null;
-    const activeSessions = Array.from(sessions.values()).filter(
-        session => !['stopped', 'error'].includes(session.status)
-    );
-    const ownerSessions = activeSessions.filter(session => session.ownerId === ownerId);
-    if (
-        activeSessions.length >= MAX_ACTIVE_SESSIONS
-        || ownerSessions.length >= MAX_ACTIVE_SESSIONS_PER_USER
-    ) {
-        const error = new Error('Too many transcode sessions are already running. Try again shortly.');
-        error.statusCode = 429;
-        throw error;
-    }
-    await ensureCacheDir();
-    const session = new TranscodeSession(url, options);
-    sessions.set(session.id, session);
-    return session;
+    const playbackLeaseId = normalizePlaybackLeaseId(options.playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, playbackLeaseId);
+
+    return withLeaseLock(leaseKey, async () => {
+        if (leaseKey) {
+            const replacedSessions = Array.from(sessions.values()).filter(session => (
+                session.ownerId === ownerId
+                && session.playbackLeaseId === playbackLeaseId
+            ));
+            for (const replacedSession of replacedSessions) {
+                await removeSession(replacedSession.id, ownerId, 'replaced');
+            }
+        }
+
+        const activeSessions = Array.from(sessions.values()).filter(
+            session => !['stopped', 'error'].includes(session.status)
+        );
+        const ownerSessions = activeSessions.filter(session => session.ownerId === ownerId);
+        if (
+            activeSessions.length >= MAX_ACTIVE_SESSIONS
+            || ownerSessions.length >= MAX_ACTIVE_SESSIONS_PER_USER
+        ) {
+            const error = new Error('Too many transcode sessions are already running. Try again shortly.');
+            error.statusCode = 429;
+            throw error;
+        }
+        await ensureCacheDir();
+        const session = new TranscodeSession(url, { ...options, playbackLeaseId });
+        sessions.set(session.id, session);
+        if (session.playbackLeaseTag) {
+            console.log(`[TranscodeSession ${session.id}] Acquired playback lease ${session.playbackLeaseTag}`);
+        }
+        return session;
+    });
 }
 
 /**
@@ -780,14 +855,33 @@ async function getOrCreateSession(url, options = {}) {
 /**
  * Stop and remove a session
  */
-async function removeSession(sessionId, ownerId = null) {
-    const session = getSession(sessionId, ownerId);
+async function removeSession(sessionId, ownerId = null, reason = 'requested') {
+    const session = sessions.get(sessionId);
+    if (session && ownerId !== null && session.ownerId !== ownerId) return false;
     if (session) {
+        console.log(`[TranscodeSession ${session.id}] Removing session (${reason})`);
         await session.cleanup();
         sessions.delete(sessionId);
         return true;
     }
     return false;
+}
+
+async function releasePlaybackLease(ownerId, playbackLeaseId) {
+    const normalizedLeaseId = normalizePlaybackLeaseId(playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, normalizedLeaseId);
+    if (!leaseKey) return 0;
+
+    return withLeaseLock(leaseKey, async () => {
+        const ownedSessions = Array.from(sessions.values()).filter(session => (
+            session.ownerId === ownerId
+            && session.playbackLeaseId === normalizedLeaseId
+        ));
+        for (const session of ownedSessions) {
+            await removeSession(session.id, ownerId, 'lease released');
+        }
+        return ownedSessions.length;
+    });
 }
 
 /**
@@ -798,7 +892,7 @@ async function cleanupStaleSessions() {
     for (const [id, session] of sessions) {
         if (now - session.lastAccess > SESSION_TIMEOUT_MS) {
             console.log(`[TranscodeSession] Cleaning up stale session ${id}`);
-            await removeSession(id);
+            await removeSession(id, null, 'stale');
         }
     }
 }
@@ -824,7 +918,8 @@ function getAllSessions() {
         status: s.status,
         startTime: s.startTime,
         lastAccess: s.lastAccess,
-        idleMs: Date.now() - s.lastAccess
+        idleMs: Date.now() - s.lastAccess,
+        playbackLeaseTag: s.playbackLeaseTag
     }));
 }
 
@@ -834,6 +929,8 @@ module.exports = {
     getSession,
     getOrCreateSession,
     removeSession,
+    releasePlaybackLease,
+    normalizePlaybackLeaseId,
     cleanupStaleSessions,
     startCleanupInterval,
     getAllSessions,
