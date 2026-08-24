@@ -1057,7 +1057,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#player-quality-menu')).toBeVisible();
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('480p');
-    await expect(page.locator('#player-transcode-status')).toContainText('Up to 480p');
+    await expect(page.locator('#player-transcode-status')).toContainText('Transcoding (Video)');
     await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
         timeout: 30_000
     }).toBe(true);

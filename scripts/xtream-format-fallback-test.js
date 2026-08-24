@@ -4,8 +4,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const calls = [];
+const heartbeatCalls = [];
+const beaconCalls = [];
 const context = {
     AbortController,
+    Blob,
     API: {
         proxy: {
             xtream: {
@@ -18,15 +21,26 @@ const context = {
     },
     console,
     document: {},
-    fetch,
+    fetch: async (...args) => {
+        heartbeatCalls.push(args);
+        return { ok: true };
+    },
     Hls: {},
     localStorage: {},
-    navigator: { userAgent: '' },
-    NodeCastUrl: {},
+    navigator: {
+        userAgent: '',
+        sendBeacon: (...args) => {
+            beaconCalls.push(args);
+            return true;
+        }
+    },
+    NodeCastUrl: { resolve: value => value },
     PlaybackQuality: {},
     URL,
     URLSearchParams,
-    window: {}
+    window: {},
+    clearInterval: () => {},
+    setInterval: () => 42
 };
 
 vm.createContext(context);
@@ -39,6 +53,17 @@ vm.runInContext(
 async function run() {
     const player = Object.create(context.window.VideoPlayer.prototype);
     player._xtreamStreamFormats = new Map();
+
+    player.playbackLeaseId = 'controlled_playback_lease_heartbeat';
+    player.currentSessionId = 'controlled-session';
+    player.playbackLeaseHeartbeatTimer = null;
+    player.startPlaybackLeaseHeartbeat();
+    assert.equal(heartbeatCalls.length, 1);
+    assert.equal(heartbeatCalls[0][0], '/api/transcode/lease/heartbeat');
+    assert.equal(player.playbackLeaseHeartbeatTimer, 42);
+    player.releasePlaybackLease();
+    assert.equal(beaconCalls.length, 1, 'Closing a tab must use an unload-safe lease release.');
+    assert.equal(beaconCalls[0][0], '/api/transcode/lease/release');
 
     const xtreamChannel = {
         sourceType: 'xtream',
