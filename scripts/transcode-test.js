@@ -21,6 +21,8 @@ const {
     getSession,
     removeSession,
     releasePlaybackLease,
+    refreshPlaybackLease,
+    cleanupStaleSessions,
     normalizePlaybackLeaseId
 } = require('../server/services/transcodeSession');
 const { parseMaxResolutionOverride } = require('../server/services/playbackQuality');
@@ -195,6 +197,26 @@ async function main() {
     assert.equal(getSession(secondLeaseSession.id, 81), undefined);
     assert.ok(getSession(otherTabSession.id, 81), 'Releasing one tab must not stop another tab.');
     await removeSession(otherTabSession.id, 81);
+
+    const activeLeaseSession = await createSession('https://example.com/active-tab.mp4', {
+        ownerId: 82,
+        playbackLeaseId: 'controlled_playback_lease_active'
+    });
+    const abandonedLeaseSession = await createSession('https://example.com/closed-tab.mp4', {
+        ownerId: 82,
+        playbackLeaseId: 'controlled_playback_lease_closed'
+    });
+    activeLeaseSession.lastPlaybackLeaseHeartbeat = Date.now() - (10 * 60 * 1000);
+    abandonedLeaseSession.lastPlaybackLeaseHeartbeat = Date.now() - (10 * 60 * 1000);
+    assert.equal(await refreshPlaybackLease(82, activeLeaseSession.playbackLeaseId), 1);
+    await cleanupStaleSessions();
+    assert.ok(getSession(activeLeaseSession.id, 82), 'A current tab heartbeat must retain paused playback.');
+    assert.equal(
+        getSession(abandonedLeaseSession.id, 82),
+        undefined,
+        'An abandoned browser lease must be reclaimed without waiting for the general session timeout.'
+    );
+    await removeSession(activeLeaseSession.id, 82);
 
     const ownerSessions = [];
     try {

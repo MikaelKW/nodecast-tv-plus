@@ -182,6 +182,24 @@ router.post('/lease/release', async (req, res) => {
 });
 
 /**
+ * Keep the managed playback lease alive while its browser tab exists.
+ * POST /api/transcode/lease/heartbeat
+ */
+router.post('/lease/heartbeat', async (req, res) => {
+    try {
+        const refreshed = await transcodeSession.refreshPlaybackLease(
+            req.user.id,
+            req.body?.playbackLeaseId
+        );
+        res.json({ success: true, refreshed });
+    } catch (err) {
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Failed to refresh playback session'
+        });
+    }
+});
+
+/**
  * Get HLS playlist for a session
  * GET /api/transcode/:sessionId/stream.m3u8
  */

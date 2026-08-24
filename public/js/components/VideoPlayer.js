@@ -27,6 +27,7 @@ class VideoPlayer {
         this._pendingConnectionRequest = null;
         this._xtreamStreamFormats = new Map();
         this.playbackLeaseId = this.getPlaybackLeaseId();
+        this.playbackLeaseHeartbeatTimer = null;
         this.currentChannel = null;
         this.overlayTimer = null;
         this.overlayDuration = 5000; // 5 seconds
@@ -66,13 +67,47 @@ class VideoPlayer {
     }
 
     releasePlaybackLease() {
+        this.stopPlaybackLeaseHeartbeat();
         this.currentSessionId = null;
-        fetch(NodeCastUrl.resolve('/api/transcode/lease/release'), {
+        const url = NodeCastUrl.resolve('/api/transcode/lease/release');
+        const body = JSON.stringify({ playbackLeaseId: this.playbackLeaseId });
+        if (typeof navigator.sendBeacon === 'function') {
+            const accepted = navigator.sendBeacon(
+                url,
+                new Blob([body], { type: 'application/json' })
+            );
+            if (accepted) return;
+        }
+        fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ playbackLeaseId: this.playbackLeaseId }),
+            body,
             keepalive: true
         }).catch(() => {});
+    }
+
+    stopPlaybackLeaseHeartbeat() {
+        if (this.playbackLeaseHeartbeatTimer) {
+            clearInterval(this.playbackLeaseHeartbeatTimer);
+            this.playbackLeaseHeartbeatTimer = null;
+        }
+    }
+
+    startPlaybackLeaseHeartbeat() {
+        this.stopPlaybackLeaseHeartbeat();
+        const heartbeat = () => {
+            if (!this.currentSessionId) {
+                this.stopPlaybackLeaseHeartbeat();
+                return;
+            }
+            fetch(NodeCastUrl.resolve('/api/transcode/lease/heartbeat'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ playbackLeaseId: this.playbackLeaseId })
+            }).catch(() => {});
+        };
+        heartbeat();
+        this.playbackLeaseHeartbeatTimer = setInterval(heartbeat, 20000);
     }
 
     /**
@@ -908,6 +943,7 @@ class VideoPlayer {
             throw new DOMException('Playback request was replaced', 'AbortError');
         }
         this.currentSessionId = session.sessionId;
+        this.startPlaybackLeaseHeartbeat();
         return NodeCastUrl.resolve(session.playlistUrl);
     }
 
@@ -995,6 +1031,7 @@ class VideoPlayer {
      * Stop and cleanup current transcode session
      */
     async stopTranscodeSession() {
+        this.stopPlaybackLeaseHeartbeat();
         if (this.currentSessionId) {
             const sessionId = this.currentSessionId;
             this.currentSessionId = null;

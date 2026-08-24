@@ -33,8 +33,11 @@ const CACHE_DIR = process.env.NODECAST_CACHE_DIR
 
 // Session settings
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle timeout
+// Browser timers may be throttled in background tabs. A generous lease grace
+// keeps intentional paused playback alive while still reclaiming abandoned tabs.
+const PLAYBACK_LEASE_TIMEOUT_MS = 150 * 1000;
 const SEGMENT_DURATION = 4; // seconds per HLS segment
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+const CLEANUP_INTERVAL_MS = 15 * 1000;
 const MAX_ACTIVE_SESSIONS = 12;
 const MAX_ACTIVE_SESSIONS_PER_USER = 4;
 const LIVE_RESTART_DELAY_MS = 250;
@@ -121,6 +124,7 @@ class TranscodeSession extends EventEmitter {
         this.ownerId = options.ownerId ?? null;
         this.playbackLeaseId = normalizePlaybackLeaseId(options.playbackLeaseId);
         this.playbackLeaseTag = getLeaseTag(this.playbackLeaseId);
+        this.lastPlaybackLeaseHeartbeat = this.playbackLeaseId ? Date.now() : null;
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
             ffprobePath: options.ffprobePath || 'ffprobe',
@@ -698,6 +702,12 @@ class TranscodeSession extends EventEmitter {
         this.lastAccess = Date.now();
     }
 
+    refreshPlaybackLease() {
+        if (!this.playbackLeaseId) return false;
+        this.lastPlaybackLeaseHeartbeat = Date.now();
+        return true;
+    }
+
     /**
      * Check if playlist exists and is ready
      */
@@ -938,15 +948,33 @@ async function releasePlaybackLease(ownerId, playbackLeaseId) {
     });
 }
 
+async function refreshPlaybackLease(ownerId, playbackLeaseId) {
+    const normalizedLeaseId = normalizePlaybackLeaseId(playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, normalizedLeaseId);
+    if (!leaseKey) return 0;
+
+    return withLeaseLock(leaseKey, async () => {
+        const ownedSessions = Array.from(sessions.values()).filter(session => (
+            session.ownerId === ownerId
+            && session.playbackLeaseId === normalizedLeaseId
+        ));
+        for (const session of ownedSessions) session.refreshPlaybackLease();
+        return ownedSessions.length;
+    });
+}
+
 /**
  * Cleanup stale sessions (idle for too long)
  */
 async function cleanupStaleSessions() {
     const now = Date.now();
     for (const [id, session] of sessions) {
-        if (now - session.lastAccess > SESSION_TIMEOUT_MS) {
+        const abandonedPlaybackLease = session.playbackLeaseId
+            && now - session.lastPlaybackLeaseHeartbeat > PLAYBACK_LEASE_TIMEOUT_MS;
+        const staleSession = now - session.lastAccess > SESSION_TIMEOUT_MS;
+        if (abandonedPlaybackLease || staleSession) {
             console.log(`[TranscodeSession] Cleaning up stale session ${id}`);
-            await removeSession(id, null, 'stale');
+            await removeSession(id, null, abandonedPlaybackLease ? 'abandoned playback lease' : 'stale');
         }
     }
 }
@@ -973,7 +1001,10 @@ function getAllSessions() {
         startTime: s.startTime,
         lastAccess: s.lastAccess,
         idleMs: Date.now() - s.lastAccess,
-        playbackLeaseTag: s.playbackLeaseTag
+        playbackLeaseTag: s.playbackLeaseTag,
+        playbackLeaseIdleMs: s.lastPlaybackLeaseHeartbeat === null
+            ? null
+            : Date.now() - s.lastPlaybackLeaseHeartbeat
     }));
 }
 
@@ -984,6 +1015,7 @@ module.exports = {
     getOrCreateSession,
     removeSession,
     releasePlaybackLease,
+    refreshPlaybackLease,
     normalizePlaybackLeaseId,
     cleanupStaleSessions,
     startCleanupInterval,
