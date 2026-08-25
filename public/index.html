@@ -1076,6 +1076,11 @@
         <section class="watch-video-section">
           <video id="watch-video" playsinline></video>
 
+          <!-- Browser-controlled subtitle presentation for consistent inline and desktop fullscreen rendering. -->
+          <div class="watch-subtitle-overlay hidden" id="watch-subtitle-overlay" aria-live="off" aria-atomic="true">
+            <div class="watch-subtitle-stack" id="watch-subtitle-stack"></div>
+          </div>
+
           <!-- Player Controls Overlay -->
           <div class="watch-overlay" id="watch-overlay">
             <!-- Top Bar: Back + Title -->

@@ -66,6 +66,8 @@ class WatchPage {
         this.captionsMenu = document.getElementById('watch-captions-menu');
         this.captionsList = document.getElementById('watch-captions-list');
         this.audioList = document.getElementById('watch-audio-list');
+        this.subtitleOverlay = document.getElementById('watch-subtitle-overlay');
+        this.subtitleStack = document.getElementById('watch-subtitle-stack');
 
         // Transcode Status
         this.transcodeStatusEx = document.getElementById('watch-transcode-status');
@@ -109,6 +111,10 @@ class WatchPage {
         this.subtitleLoadingEnabled = false;
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
+        this.activeSubtitleTrack = null;
+        this.subtitleOverlaySignature = '';
+        this.nativeSubtitleContexts = new Set();
+        this.subtitleCueChangeHandler = () => this.renderSubtitleOverlay();
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -196,16 +202,36 @@ class WatchPage {
 
         // Fullscreen
         this.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
-        document.addEventListener('fullscreenchange', () => this.updateScrollHintVisibility());
-        document.addEventListener('webkitfullscreenchange', () => this.updateScrollHintVisibility());
+        const handleFullscreenChange = () => {
+            this.updateScrollHintVisibility();
+            this.updateSubtitleOverlayGeometry();
+            this.renderSubtitleOverlay();
+        };
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
         this.video?.addEventListener('webkitbeginfullscreen', () => {
             this.nativeVideoFullscreen = true;
+            this.setNativeSubtitleContext('ios-fullscreen', true);
             this.updateScrollHintVisibility();
         });
         this.video?.addEventListener('webkitendfullscreen', () => {
             this.nativeVideoFullscreen = false;
+            this.setNativeSubtitleContext('ios-fullscreen', false);
             this.updateScrollHintVisibility();
         });
+        this.video?.addEventListener('enterpictureinpicture', () => {
+            this.setNativeSubtitleContext('picture-in-picture', true);
+        });
+        this.video?.addEventListener('leavepictureinpicture', () => {
+            this.setNativeSubtitleContext('picture-in-picture', false);
+        });
+        this.video?.addEventListener('webkitpresentationmodechanged', () => {
+            this.setNativeSubtitleContext(
+                'picture-in-picture',
+                this.video.webkitPresentationMode === 'picture-in-picture'
+            );
+        });
+        window.addEventListener('resize', () => this.updateSubtitleOverlayGeometry());
 
         // Picture-in-Picture
         const pipBtn = document.getElementById('watch-pip');
@@ -246,10 +272,12 @@ class WatchPage {
         this.video?.addEventListener('timeupdate', () => {
             this.updateProgress();
             this.ensureSelectedSubtitleWindow();
+            this.renderSubtitleOverlay();
         });
         this.video?.addEventListener('seeking', () => this.ensureSelectedSubtitleWindow({ prioritize: true }));
         this.video?.addEventListener('loadedmetadata', () => {
             this.onMetadataLoaded();
+            this.updateSubtitleOverlayGeometry();
             this.scheduleSelectedSubtitleRestore();
         });
         this.video?.addEventListener('play', () => this.onPlay());
@@ -1131,6 +1159,8 @@ class WatchPage {
         // resetting the media element so its final seeking event cannot start
         // a new subtitle extraction after the player has been closed.
         this.subtitleLoadingEnabled = false;
+        this.setActiveSubtitleTrack(null);
+        this.nativeSubtitleContexts.clear();
         this.stopTranscodeSession();
         this.cancelProbeSubtitleLoads();
         this.updateTranscodeStatus('hidden');
@@ -1309,7 +1339,13 @@ class WatchPage {
                 container.webkitRequestFullscreen();
             } else if (this.video?.webkitEnterFullscreen) {
                 // iOS Safari: use native video fullscreen
-                this.video.webkitEnterFullscreen();
+                this.setNativeSubtitleContext('ios-fullscreen', true);
+                try {
+                    this.video.webkitEnterFullscreen();
+                } catch (error) {
+                    this.setNativeSubtitleContext('ios-fullscreen', false);
+                    throw error;
+                }
             }
         }
     }
@@ -1511,7 +1547,117 @@ class WatchPage {
 
     // === Audio and subtitles ===
 
+    usesNativeSubtitleRenderer() {
+        return this.nativeSubtitleContexts.size > 0;
+    }
+
+    setNativeSubtitleContext(context, enabled) {
+        if (enabled) {
+            this.nativeSubtitleContexts.add(context);
+        } else {
+            this.nativeSubtitleContexts.delete(context);
+        }
+        this.applySubtitleRenderingMode();
+    }
+
+    setActiveSubtitleTrack(track) {
+        if (this.activeSubtitleTrack !== track) {
+            if (this.activeSubtitleTrack) this.activeSubtitleTrack.mode = 'hidden';
+            this.activeSubtitleTrack?.removeEventListener?.('cuechange', this.subtitleCueChangeHandler);
+            this.activeSubtitleTrack = track || null;
+            this.subtitleOverlaySignature = '';
+            this.activeSubtitleTrack?.addEventListener?.('cuechange', this.subtitleCueChangeHandler);
+        }
+        this.applySubtitleRenderingMode();
+    }
+
+    applySubtitleRenderingMode() {
+        if (!this.activeSubtitleTrack) {
+            this.clearSubtitleOverlay();
+            return;
+        }
+
+        // Browser-managed video surfaces (notably iPhone native fullscreen
+        // and Picture-in-Picture) cannot contain the HTML overlay. Only those
+        // surfaces receive native cues; inline and desktop fullscreen keep the
+        // track hidden while the shared overlay renders its active cues.
+        this.activeSubtitleTrack.mode = this.usesNativeSubtitleRenderer() ? 'showing' : 'hidden';
+        this.renderSubtitleOverlay();
+    }
+
+    clearSubtitleOverlay() {
+        this.subtitleOverlaySignature = '';
+        this.subtitleStack?.replaceChildren();
+        this.subtitleOverlay?.classList.add('hidden');
+    }
+
+    appendSubtitleCueContent(container, cue) {
+        // Text is assigned through textContent so provider-supplied subtitle
+        // payloads cannot introduce HTML into the page. Line breaks remain
+        // visible through the overlay's white-space rule.
+        container.textContent = String(cue?.text || '');
+    }
+
+    renderSubtitleOverlay() {
+        if (!this.subtitleOverlay || !this.subtitleStack || !this.activeSubtitleTrack
+            || this.usesNativeSubtitleRenderer()) {
+            this.clearSubtitleOverlay();
+            return;
+        }
+
+        const cues = Array.from(this.activeSubtitleTrack.activeCues || [])
+            .filter(cue => String(cue?.text || '').length > 0)
+            .sort((left, right) => (
+                (Number(left.startTime) || 0) - (Number(right.startTime) || 0)
+                || (Number(left.endTime) || 0) - (Number(right.endTime) || 0)
+            ));
+        const signature = cues.map(cue => (
+            `${Number(cue.startTime) || 0}|${Number(cue.endTime) || 0}|${String(cue.text || '')}`
+        )).join('\u001e');
+
+        if (signature === this.subtitleOverlaySignature) return;
+        this.subtitleOverlaySignature = signature;
+        this.subtitleStack.replaceChildren();
+
+        for (const cue of cues) {
+            const cueElement = document.createElement('span');
+            cueElement.className = 'watch-subtitle-cue';
+            this.appendSubtitleCueContent(cueElement, cue);
+            this.subtitleStack.appendChild(cueElement);
+        }
+
+        this.subtitleOverlay.classList.toggle('hidden', cues.length === 0);
+        if (cues.length > 0) this.updateSubtitleOverlayGeometry();
+    }
+
+    updateSubtitleOverlayGeometry() {
+        if (!this.video || !this.subtitleOverlay) return;
+        const container = this.video.parentElement;
+        const containerWidth = Number(container?.clientWidth) || Number(this.video.clientWidth) || 0;
+        const containerHeight = Number(container?.clientHeight) || Number(this.video.clientHeight) || 0;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+
+        const videoWidth = Number(this.video.videoWidth) || 0;
+        const videoHeight = Number(this.video.videoHeight) || 0;
+        let renderedWidth = containerWidth;
+        let renderedHeight = containerHeight;
+        if (videoWidth > 0 && videoHeight > 0) {
+            const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
+            renderedWidth = videoWidth * scale;
+            renderedHeight = videoHeight * scale;
+        }
+
+        this.subtitleOverlay.style.left = `${Math.max(0, (containerWidth - renderedWidth) / 2)}px`;
+        this.subtitleOverlay.style.top = `${Math.max(0, (containerHeight - renderedHeight) / 2)}px`;
+        this.subtitleOverlay.style.width = `${renderedWidth}px`;
+        this.subtitleOverlay.style.height = `${renderedHeight}px`;
+        const bottomOffset = Math.max(24, Math.min(72, renderedHeight * 0.07));
+        this.subtitleOverlay.style.setProperty('--subtitle-bottom-offset', `${bottomOffset}px`);
+    }
+
     resetMediaTracks() {
+        this.setActiveSubtitleTrack(null);
+        this.nativeSubtitleContexts.clear();
         this.clearSubtitleRestoreTimers();
         this.cancelProbeSubtitleLoads();
         this.video?.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
@@ -1635,7 +1781,11 @@ class WatchPage {
         // Reattaching HLS can recreate the media timeline. Cancel extraction
         // tied to the old track elements before replacing them.
         this.cancelProbeSubtitleLoads();
-        this.video.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
+        const existingProbeTracks = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'));
+        if (existingProbeTracks.some(track => track.track === this.activeSubtitleTrack)) {
+            this.setActiveSubtitleTrack(null);
+        }
+        existingProbeTracks.forEach(track => track.remove());
         if (!this.subtitleStreamUrl) {
             this.updateCaptionsTracks();
             return;
@@ -1900,7 +2050,7 @@ class WatchPage {
             renderedCues.add(cueKey);
         }
 
-        if (track.mode !== 'showing') track.mode = 'showing';
+        this.setActiveSubtitleTrack(track);
         return cues.length > 0;
     }
 
@@ -2091,7 +2241,7 @@ class WatchPage {
                 const label = track.label || track.language || `Track ${i + 1}`;
                 const probeTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
                     .find(element => element.track === track);
-                const isActive = track.mode === 'showing' || (
+                const isActive = track === this.activeSubtitleTrack || track.mode === 'showing' || (
                     probeTrack && Number(probeTrack.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex
                 );
                 const option = document.createElement('button');
@@ -2116,6 +2266,7 @@ class WatchPage {
         // A language change or Off selection supersedes any extraction that
         // has not finished yet. Keep at most one subtitle scan active.
         this.cancelProbeSubtitleLoads();
+        this.setActiveSubtitleTrack(null);
 
         // Disable all tracks
         for (let i = 0; i < tracks.length; i++) {
@@ -2140,7 +2291,7 @@ class WatchPage {
             } else {
                 this.clearSubtitleRestoreTimers();
                 this.selectedSubtitleStreamIndex = null;
-                tracks[index].mode = 'showing';
+                this.setActiveSubtitleTrack(tracks[index]);
             }
         } else {
             this.clearSubtitleRestoreTimers();
