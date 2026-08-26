@@ -1350,25 +1350,41 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
     await expect.poll(async () => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
+        track.mode === 'hidden' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 30_000 }).toBe(true);
     expect(subtitleRequests).toHaveLength(2);
     expect(subtitleRequests.every(requestUrl => (
         new URL(requestUrl).searchParams.get('duration') === '60'
     ))).toBe(true);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
-    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
-    ))), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.evaluate(() => ({
+        hiddenTrackActive: Array.from(window.app.pages.watch.video.textTracks).some(track => (
+            track.mode === 'hidden' && Array.from(track.activeCues || []).some(cue => (
+                cue.text.includes('English controlled subtitle')
+            ))
+        )),
+        overlayVisible: !window.app.pages.watch.subtitleOverlay.classList.contains('hidden'),
+        overlayText: window.app.pages.watch.subtitleStack.textContent
+    })), { timeout: 10_000 }).toMatchObject({
+        hiddenTrackActive: true,
+        overlayVisible: true,
+        overlayText: expect.stringContaining('English controlled subtitle')
+    });
     await page.evaluate(() => {
         const watch = window.app.pages.watch;
         watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
     });
-    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => (
-            cue.text.includes('[Controlled background sound]')
-        ))
-    ))), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.evaluate(() => ({
+        hiddenTrackActive: Array.from(window.app.pages.watch.video.textTracks).some(track => (
+            track.mode === 'hidden' && Array.from(track.activeCues || []).some(cue => (
+                cue.text.includes('[Controlled background sound]')
+            ))
+        )),
+        overlayText: window.app.pages.watch.subtitleStack.textContent
+    })), { timeout: 10_000 }).toMatchObject({
+        hiddenTrackActive: true,
+        overlayText: expect.stringContaining('[Controlled background sound]')
+    });
     const stableSubtitleCues = await page.evaluate(() => {
         const watch = window.app.pages.watch;
         const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
@@ -1395,13 +1411,33 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
     expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
 
+    // Chromium may clear a hidden TextTrack's native cues while replacing an
+    // HLS media timeline. NodeCast must reconcile that browser-owned state
+    // with its parsed cue cache instead of treating the cues as still present.
+    const restoredClearedSubtitleCues = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === watch.selectedSubtitleStreamIndex);
+        const track = trackElement.track;
+        for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+        const restored = watch.activateProbeSubtitleTrack(trackElement);
+        return {
+            restored,
+            cueCount: track.cues?.length || 0,
+            cueText: Array.from(track.cues || []).map(cue => cue.text)
+        };
+    });
+    expect(restoredClearedSubtitleCues.restored).toBe(true);
+    expect(restoredClearedSubtitleCues.cueCount).toBeGreaterThanOrEqual(3);
+    expect(restoredClearedSubtitleCues.cueText).toContain('English controlled subtitle');
+
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
     await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(3);
     expect(new URL(subtitleRequests[2]).searchParams.get('start')).toBe('0');
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
+        track.mode === 'hidden' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
     ))), { timeout: 30_000 }).toBe(true);
 
     // Seeking and then leaving immediately while paused must persist the seek
