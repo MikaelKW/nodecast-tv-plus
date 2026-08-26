@@ -1411,6 +1411,26 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
     expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
 
+    // Chromium may clear a hidden TextTrack's native cues while replacing an
+    // HLS media timeline. NodeCast must reconcile that browser-owned state
+    // with its parsed cue cache instead of treating the cues as still present.
+    const restoredClearedSubtitleCues = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === watch.selectedSubtitleStreamIndex);
+        const track = trackElement.track;
+        for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+        const restored = watch.activateProbeSubtitleTrack(trackElement);
+        return {
+            restored,
+            cueCount: track.cues?.length || 0,
+            cueText: Array.from(track.cues || []).map(cue => cue.text)
+        };
+    });
+    expect(restoredClearedSubtitleCues.restored).toBe(true);
+    expect(restoredClearedSubtitleCues.cueCount).toBeGreaterThanOrEqual(3);
+    expect(restoredClearedSubtitleCues.cueText).toContain('English controlled subtitle');
+
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();

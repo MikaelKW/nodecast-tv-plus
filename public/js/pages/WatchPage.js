@@ -280,7 +280,11 @@ class WatchPage {
             this.updateSubtitleOverlayGeometry();
             this.scheduleSelectedSubtitleRestore();
         });
-        this.video?.addEventListener('play', () => this.onPlay());
+        this.video?.addEventListener('play', () => {
+            this.onPlay();
+            this.scheduleSelectedSubtitleRestore();
+        });
+        this.video?.addEventListener('seeked', () => this.scheduleSelectedSubtitleRestore());
         this.video?.addEventListener('pause', () => this.onPause());
         this.video?.addEventListener('ended', () => this.onEnded());
         this.video?.addEventListener('error', (e) => this.onError(e));
@@ -1702,7 +1706,7 @@ class WatchPage {
     scheduleSelectedSubtitleRestore() {
         this.clearSubtitleRestoreTimers();
         if (!Number.isInteger(this.selectedSubtitleStreamIndex)) return;
-        for (const delay of [0, 150, 500, 1000]) {
+        for (const delay of [0, 150, 500, 1000, 2500]) {
             this.subtitleRestoreTimers.push(setTimeout(() => {
                 this.restoreSelectedSubtitleTrack();
                 this.updateCaptionsTracks();
@@ -2008,7 +2012,12 @@ class WatchPage {
         let renderedCues = this.probeSubtitleRenderedCues.get(trackElement);
         const renderedOffset = this.probeSubtitleRenderedOffsets.get(trackElement);
 
-        if (!renderedCues || renderedOffset !== timelineKey) {
+        // Replacing an HLS media session can clear a TextTrack's native cue
+        // list without replacing its <track> element. Reconcile that browser
+        // state with NodeCast's parsed cue set so a later media-ready event can
+        // restore the cues instead of treating them as already rendered.
+        const nativeCueCount = Number(track.cues?.length || 0);
+        if (!renderedCues || renderedOffset !== timelineKey || nativeCueCount !== renderedCues.size) {
             track.mode = 'hidden';
             for (const existingCue of Array.from(track.cues || [])) {
                 track.removeCue(existingCue);
