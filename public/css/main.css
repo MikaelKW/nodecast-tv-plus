@@ -1522,6 +1522,8 @@ video::cue {
 @media (max-width: 600px) {
   .interface-page-select {
     width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
   }
 
   .theme-options {
@@ -5333,6 +5335,11 @@ kbd {
 
   .account-actions .btn {
     width: 100%;
+  }
+
+  .subtitle-preferences-actions .btn {
+    width: fit-content;
+    max-width: 100%;
   }
 }
 

@@ -258,6 +258,42 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
         .toHaveAttribute('aria-label', 'Show password');
 
+    // Viewer accounts must be able to manage their own Preferences without
+    // exposing administrator-only source, interface, playback, transcoding,
+    // content, user, or server-information controls.
+    const viewerContext = await page.context().browser().newContext({
+        baseURL: new URL(page.url()).origin
+    });
+    const viewerPage = await viewerContext.newPage();
+    await viewerPage.goto('/login.html');
+    await viewerPage.locator('#username').fill('confirmed-viewer');
+    await viewerPage.locator('#password').fill(newPassword);
+    await viewerPage.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await viewerPage.waitForURL(url => !url.pathname.endsWith('/login.html'));
+    await viewerPage.waitForFunction(() => window.app?.currentUser?.role === 'viewer');
+    const viewerSettingsLink = viewerPage.locator('.nav-link[data-page="settings"]');
+    await expect(viewerSettingsLink).toBeVisible();
+    await viewerSettingsLink.click();
+    await expect(viewerPage.locator('#page-settings')).toHaveClass(/active/);
+    await expect(viewerPage.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(viewerPage.locator('.tab[data-tab="preferences"]')).toBeVisible();
+    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
+        await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
+    }
+    await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
+    await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
+    await viewerPage.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect(viewerPage.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
+    await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: 'en',
+        mode: 'preferred'
+    });
+    await viewerContext.close();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: '',
+        mode: 'off'
+    });
+
     // About uses a fixed server-side GitHub endpoint. Keep the browser test
     // deterministic while covering current, update-available, and disabled UI states.
     let automaticUpdateChecks = true;

@@ -103,8 +103,14 @@
         const first = list => list.length > 0 ? list[0] : null;
 
         if (preferences.mode === MODES.PREFERRED) {
-            return first(matching.filter(track => track.default))
-                || first(matching.filter(track => track.forced))
+            // A forced track normally contains only dialogue that differs from
+            // the main audio language. "Always preferred" should choose the
+            // complete matching subtitle track when one exists, even if an
+            // earlier matching forced track is marked as default.
+            const complete = matching.filter(track => !track.forced);
+            return first(complete.filter(track => track.default))
+                || first(complete)
+                || first(matching.filter(track => track.default))
                 || first(matching);
         }
 

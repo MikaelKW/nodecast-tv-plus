@@ -65,6 +65,13 @@ const tracks = [
 ];
 
 assert.equal(selectPreferredSubtitleTrack(tracks, { language: 'no', mode: MODES.PREFERRED }).position, 2);
+assert.equal(selectPreferredSubtitleTrack([
+    { position: 0, language: 'nor', default: true, forced: true },
+    { position: 1, language: 'nor', default: false, forced: false }
+], { language: 'no', mode: MODES.PREFERRED }).position, 1);
+assert.equal(selectPreferredSubtitleTrack([
+    { position: 0, language: 'nor', default: true, forced: true }
+], { language: 'no', mode: MODES.PREFERRED }).position, 0);
 assert.equal(selectPreferredSubtitleTrack(tracks, { language: 'en', mode: MODES.FORCED }).position, 3);
 assert.equal(selectPreferredSubtitleTrack(tracks, { language: 'no', mode: MODES.DEFAULT }).position, 2);
 assert.equal(selectPreferredSubtitleTrack(tracks, { language: 'fr', mode: MODES.DEFAULT }).position, 2);

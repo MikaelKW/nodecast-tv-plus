@@ -198,14 +198,6 @@ class App {
             // The server has migrated any legacy token into an HttpOnly cookie.
             localStorage.removeItem('authToken');
 
-            // Hide settings for viewers
-            if (this.currentUser.role === 'viewer') {
-                const settingsLink = document.querySelector('.nav-link[data-page="settings"]');
-                if (settingsLink) {
-                    settingsLink.style.display = 'none';
-                }
-            }
-
             this.setupAccountMenu();
 
         } catch (err) {

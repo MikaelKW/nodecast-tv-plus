@@ -959,7 +959,26 @@ class SettingsPage {
         }
     }
 
+    isViewer() {
+        return this.app.currentUser?.role === 'viewer';
+    }
+
+    configureRoleVisibility() {
+        const viewer = this.isViewer();
+        this.tabs.forEach(tab => {
+            const visible = !viewer || tab.dataset.tab === 'preferences';
+            tab.classList.toggle('hidden', !visible);
+            tab.setAttribute('aria-hidden', String(!visible));
+        });
+
+        const usersTab = document.getElementById('users-tab');
+        if (usersTab) usersTab.style.display = !viewer && this.app.currentUser?.role === 'admin'
+            ? 'block'
+            : 'none';
+    }
+
     switchTab(tabName) {
+        if (this.isViewer() && tabName !== 'preferences') tabName = 'preferences';
         this.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         this.tabContents.forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
 
@@ -992,12 +1011,13 @@ class SettingsPage {
         const visibilityGeneration = ++this.visibilityGeneration;
         this.cancelSyncStatusRequest();
 
-        // Show users tab for admin
-        if (this.app.currentUser && this.app.currentUser.role === 'admin') {
-            const usersTab = document.getElementById('users-tab');
-            if (usersTab) {
-                usersTab.style.display = 'block';
-            }
+        this.configureRoleVisibility();
+        if (this.isViewer()) {
+            // Global source, playback, interface, transcoding, and user
+            // controls remain administrator-only. Viewer accounts can still
+            // manage the preferences stored on their own account.
+            this.switchTab('preferences');
+            return;
         }
 
         // Load sources when page is shown
