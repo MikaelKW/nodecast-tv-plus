@@ -51,8 +51,69 @@ class SettingsPage {
 
         language.addEventListener('change', () => this.updateSubtitleModeAvailability());
         mode.addEventListener('change', () => this.updateSubtitleModeDescription());
+        for (const control of this.getSubtitleAppearanceControls()) {
+            control.addEventListener('input', () => this.updateSubtitleAppearancePreview());
+            control.addEventListener('change', () => this.updateSubtitleAppearancePreview());
+        }
+        document.getElementById('reset-subtitle-appearance')?.addEventListener('click', () => {
+            this.setSubtitleAppearanceControls(SubtitlePreferences.DEFAULT_APPEARANCE);
+            const status = document.getElementById('subtitle-preferences-status');
+            if (status) status.textContent = 'Default appearance selected. Save subtitle preferences to apply it.';
+        });
         form.addEventListener('submit', event => this.saveSubtitlePreferences(event));
         this.loadSubtitlePreferences();
+    }
+
+    getSubtitleAppearanceControls() {
+        return [
+            'subtitle-text-scale',
+            'subtitle-text-color',
+            'subtitle-background-color',
+            'subtitle-background-opacity',
+            'subtitle-edge-style',
+            'subtitle-vertical-position'
+        ].map(id => document.getElementById(id)).filter(Boolean);
+    }
+
+    readSubtitleAppearanceControls() {
+        return SubtitlePreferences.normalizeAppearance({
+            textScale: document.getElementById('subtitle-text-scale')?.value,
+            textColor: document.getElementById('subtitle-text-color')?.value,
+            backgroundColor: document.getElementById('subtitle-background-color')?.value,
+            backgroundOpacity: document.getElementById('subtitle-background-opacity')?.value,
+            edgeStyle: document.getElementById('subtitle-edge-style')?.value,
+            verticalPosition: document.getElementById('subtitle-vertical-position')?.value
+        });
+    }
+
+    setSubtitleAppearanceControls(value) {
+        const appearance = SubtitlePreferences.normalizeAppearance(value);
+        const values = {
+            'subtitle-text-scale': appearance.textScale,
+            'subtitle-text-color': appearance.textColor,
+            'subtitle-background-color': appearance.backgroundColor,
+            'subtitle-background-opacity': appearance.backgroundOpacity,
+            'subtitle-edge-style': appearance.edgeStyle,
+            'subtitle-vertical-position': appearance.verticalPosition
+        };
+        for (const [id, controlValue] of Object.entries(values)) {
+            const control = document.getElementById(id);
+            if (control) control.value = String(controlValue);
+        }
+        this.updateSubtitleAppearancePreview();
+    }
+
+    updateSubtitleAppearancePreview() {
+        const appearance = this.readSubtitleAppearanceControls();
+        const preview = document.getElementById('subtitle-appearance-preview');
+        SubtitlePreferences.applyAppearanceStyles(preview, appearance);
+
+        const textScale = document.getElementById('subtitle-text-scale-value');
+        const opacity = document.getElementById('subtitle-background-opacity-value');
+        const position = document.getElementById('subtitle-vertical-position-value');
+        if (textScale) textScale.textContent = `${appearance.textScale}%`;
+        if (opacity) opacity.textContent = `${appearance.backgroundOpacity}%`;
+        if (position) position.textContent = `${appearance.verticalPosition}% from bottom`;
     }
 
     loadSubtitlePreferences() {
@@ -65,6 +126,7 @@ class SettingsPage {
 
         language.value = this.subtitlePreferences.language;
         mode.value = this.subtitlePreferences.mode;
+        this.setSubtitleAppearanceControls(this.subtitlePreferences.appearance);
         this.updateSubtitleModeAvailability();
     }
 
@@ -99,7 +161,8 @@ class SettingsPage {
         const status = document.getElementById('subtitle-preferences-status');
         const preferences = SubtitlePreferences.normalizePreferences({
             language: document.getElementById('preferred-subtitle-language')?.value,
-            mode: document.getElementById('automatic-subtitle-mode')?.value
+            mode: document.getElementById('automatic-subtitle-mode')?.value,
+            appearance: this.readSubtitleAppearanceControls()
         });
 
         if (button) button.disabled = true;

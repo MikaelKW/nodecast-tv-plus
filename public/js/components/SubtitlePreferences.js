@@ -10,8 +10,28 @@
         PREFERRED: 'preferred'
     });
 
-    const DEFAULT_PREFERENCES = Object.freeze({ language: '', mode: MODES.OFF });
+    const EDGE_STYLES = Object.freeze({
+        NONE: 'none',
+        SHADOW: 'shadow',
+        OUTLINE: 'outline'
+    });
+
+    const DEFAULT_APPEARANCE = Object.freeze({
+        textScale: 100,
+        textColor: '#ffffff',
+        backgroundColor: '#000000',
+        backgroundOpacity: 0,
+        edgeStyle: EDGE_STYLES.OUTLINE,
+        verticalPosition: 7
+    });
+
+    const DEFAULT_PREFERENCES = Object.freeze({
+        language: '',
+        mode: MODES.OFF,
+        appearance: DEFAULT_APPEARANCE
+    });
     const VALID_MODES = new Set(Object.values(MODES));
+    const VALID_EDGE_STYLES = new Set(Object.values(EDGE_STYLES));
     const LANGUAGE_ALIASES = Object.freeze({
         eng: 'en',
         nor: 'no',
@@ -70,6 +90,44 @@
         return LANGUAGE_ALIASES[primary] || primary;
     }
 
+    function clampInteger(value, fallback, minimum, maximum, step = 1) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return fallback;
+        const bounded = Math.max(minimum, Math.min(maximum, number));
+        return Math.round(bounded / step) * step;
+    }
+
+    function normalizeColor(value, fallback) {
+        const color = String(value || '').trim().toLowerCase();
+        return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+    }
+
+    function normalizeAppearance(value) {
+        const candidate = value && typeof value === 'object' ? value : {};
+        const edgeStyle = VALID_EDGE_STYLES.has(candidate.edgeStyle)
+            ? candidate.edgeStyle
+            : DEFAULT_APPEARANCE.edgeStyle;
+        return {
+            textScale: clampInteger(candidate.textScale, DEFAULT_APPEARANCE.textScale, 75, 175, 5),
+            textColor: normalizeColor(candidate.textColor, DEFAULT_APPEARANCE.textColor),
+            backgroundColor: normalizeColor(candidate.backgroundColor, DEFAULT_APPEARANCE.backgroundColor),
+            backgroundOpacity: clampInteger(
+                candidate.backgroundOpacity,
+                DEFAULT_APPEARANCE.backgroundOpacity,
+                0,
+                100,
+                5
+            ),
+            edgeStyle,
+            verticalPosition: clampInteger(
+                candidate.verticalPosition,
+                DEFAULT_APPEARANCE.verticalPosition,
+                4,
+                30
+            )
+        };
+    }
+
     function normalizePreferences(value) {
         const candidate = value && typeof value === 'object' ? value : {};
         const language = normalizeLanguage(candidate.language);
@@ -77,8 +135,62 @@
         if (mode === MODES.PREFERRED && !language) mode = MODES.OFF;
         return {
             language,
-            mode
+            mode,
+            appearance: normalizeAppearance(candidate.appearance)
         };
+    }
+
+    function hexToRgb(value) {
+        const color = normalizeColor(value, '#000000').slice(1);
+        return {
+            red: parseInt(color.slice(0, 2), 16),
+            green: parseInt(color.slice(2, 4), 16),
+            blue: parseInt(color.slice(4, 6), 16)
+        };
+    }
+
+    function formatDecimal(value) {
+        return String(Number(Number(value).toFixed(3)));
+    }
+
+    function getAppearanceCssVariables(value) {
+        const appearance = normalizeAppearance(value);
+        const scale = appearance.textScale / 100;
+        const text = hexToRgb(appearance.textColor);
+        const background = hexToRgb(appearance.backgroundColor);
+        const luminance = (0.2126 * text.red + 0.7152 * text.green + 0.0722 * text.blue) / 255;
+        const edgeColor = luminance < 0.45 ? '255, 255, 255' : '0, 0, 0';
+        const outline = [
+            `-2px -2px 2px rgba(${edgeColor}, 0.95)`,
+            `2px -2px 2px rgba(${edgeColor}, 0.95)`,
+            `-2px 2px 2px rgba(${edgeColor}, 0.95)`,
+            `2px 2px 2px rgba(${edgeColor}, 0.95)`,
+            `0 0 4px rgb(${edgeColor})`
+        ].join(', ');
+        const shadow = `0 2px 4px rgba(${edgeColor}, 0.95), 0 0 2px rgba(${edgeColor}, 0.9)`;
+        const textShadow = appearance.edgeStyle === EDGE_STYLES.NONE
+            ? 'none'
+            : appearance.edgeStyle === EDGE_STYLES.SHADOW ? shadow : outline;
+        return {
+            '--subtitle-text-color': appearance.textColor,
+            '--subtitle-background-color': `rgba(${background.red}, ${background.green}, ${background.blue}, ${formatDecimal(appearance.backgroundOpacity / 100)})`,
+            '--subtitle-text-shadow': textShadow,
+            '--subtitle-font-min-size': `${formatDecimal(20 * scale)}px`,
+            '--subtitle-font-fluid-size': `${formatDecimal(2.1 * scale)}vw`,
+            '--subtitle-font-max-size': `${formatDecimal(42 * scale)}px`,
+            '--subtitle-cue-padding': appearance.backgroundOpacity > 0 ? '0.06em 0.24em' : '0',
+            '--subtitle-cue-radius': appearance.backgroundOpacity > 0 ? '0.12em' : '0',
+            '--subtitle-position-percent': `${appearance.verticalPosition}%`
+        };
+    }
+
+    function applyAppearanceStyles(element, value) {
+        if (!element?.style?.setProperty) return normalizeAppearance(value);
+        const appearance = normalizeAppearance(value);
+        for (const [property, propertyValue] of Object.entries(getAppearanceCssVariables(appearance))) {
+            element.style.setProperty(property, propertyValue);
+        }
+        return appearance;
     }
 
     function languageMatches(trackLanguage, preferredLanguage) {
@@ -131,9 +243,14 @@
 
     return {
         MODES,
+        EDGE_STYLES,
         DEFAULT_PREFERENCES,
+        DEFAULT_APPEARANCE,
         normalizeLanguage,
+        normalizeAppearance,
         normalizePreferences,
+        getAppearanceCssVariables,
+        applyAppearanceStyles,
         languageMatches,
         selectPreferredSubtitleTrack
     };
