@@ -67,6 +67,9 @@ test('subtitle refresh preserves existing WebKit cues and overlapping dialogue',
         <div id="watch-captions-list"></div>
     `);
     await page.addScriptTag({
+        path: path.resolve(__dirname, '../../public/js/components/SubtitlePreferences.js')
+    });
+    await page.addScriptTag({
         path: path.resolve(__dirname, '../../public/js/pages/WatchPage.js')
     });
 
@@ -138,6 +141,9 @@ test('HTML subtitle overlay renders active cues safely and uses native cues only
         </div>
         <div id="watch-captions-list"></div>
     `);
+    await page.addScriptTag({
+        path: path.resolve(__dirname, '../../public/js/components/SubtitlePreferences.js')
+    });
     await page.addScriptTag({
         path: path.resolve(__dirname, '../../public/js/pages/WatchPage.js')
     });
