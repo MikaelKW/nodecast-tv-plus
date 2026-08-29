@@ -153,7 +153,10 @@ function analyzeProbeResult(probeResult, url) {
             index: s.index,
             language: s.tags?.language || 'und',
             title: s.tags?.title || s.tags?.language || `Track ${s.index}`,
-            codec: s.codec_name
+            codec: s.codec_name,
+            default: Boolean(s.disposition?.default),
+            forced: Boolean(s.disposition?.forced),
+            hearingImpaired: Boolean(s.disposition?.hearing_impaired)
         }));
 
     // Determine what processing is needed
