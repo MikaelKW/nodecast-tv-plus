@@ -10,6 +10,7 @@ class SettingsPage {
         this.isVisible = false;
         this.visibilityGeneration = 0;
         this.syncStatusRequest = null;
+        this.subtitlePreferences = SubtitlePreferences.normalizePreferences(app.currentUser?.subtitlePreferences);
 
         this.init();
     }
@@ -29,6 +30,9 @@ class SettingsPage {
         // Interface and navigation settings
         this.initInterfaceSettings();
 
+        // Account-specific playback preferences
+        this.initSubtitlePreferences();
+
         // Transcoding settings
         this.initTranscodingSettings();
 
@@ -37,6 +41,82 @@ class SettingsPage {
 
         // Version and release information
         this.initAboutSettings();
+    }
+
+    initSubtitlePreferences() {
+        const form = document.getElementById('subtitle-preferences-form');
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        if (!form || !language || !mode) return;
+
+        language.addEventListener('change', () => this.updateSubtitleModeAvailability());
+        mode.addEventListener('change', () => this.updateSubtitleModeDescription());
+        form.addEventListener('submit', event => this.saveSubtitlePreferences(event));
+        this.loadSubtitlePreferences();
+    }
+
+    loadSubtitlePreferences() {
+        this.subtitlePreferences = SubtitlePreferences.normalizePreferences(
+            this.app.currentUser?.subtitlePreferences || this.subtitlePreferences
+        );
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        if (!language || !mode) return;
+
+        language.value = this.subtitlePreferences.language;
+        mode.value = this.subtitlePreferences.mode;
+        this.updateSubtitleModeAvailability();
+    }
+
+    updateSubtitleModeAvailability() {
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        const preferredOption = mode?.querySelector('option[value="preferred"]');
+        if (!language || !mode || !preferredOption) return;
+
+        const unavailable = !SubtitlePreferences.normalizeLanguage(language.value);
+        preferredOption.disabled = unavailable;
+        if (unavailable && mode.value === 'preferred') mode.value = 'off';
+        this.updateSubtitleModeDescription();
+    }
+
+    updateSubtitleModeDescription() {
+        const descriptions = {
+            off: 'Playback starts with subtitles off. You can still select a track manually.',
+            default: 'Uses compatible default or forced track flags when they are available.',
+            forced: 'Uses a forced track matching the preferred language when available.',
+            preferred: 'Uses the preferred language whenever a matching track is available.'
+        };
+        const mode = document.getElementById('automatic-subtitle-mode')?.value || 'off';
+        const target = document.getElementById('automatic-subtitle-mode-description');
+        if (target) target.textContent = descriptions[mode];
+    }
+
+    async saveSubtitlePreferences(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = form.querySelector('[type="submit"]');
+        const status = document.getElementById('subtitle-preferences-status');
+        const preferences = SubtitlePreferences.normalizePreferences({
+            language: document.getElementById('preferred-subtitle-language')?.value,
+            mode: document.getElementById('automatic-subtitle-mode')?.value
+        });
+
+        if (button) button.disabled = true;
+        if (status) status.textContent = '';
+        try {
+            const result = await API.account.updateSubtitlePreferences(preferences);
+            this.subtitlePreferences = SubtitlePreferences.normalizePreferences(result.subtitlePreferences);
+            this.app.currentUser = {
+                ...this.app.currentUser,
+                subtitlePreferences: this.subtitlePreferences
+            };
+            if (status) status.textContent = 'Subtitle preferences saved.';
+        } catch (error) {
+            if (status) status.textContent = error.message;
+        } finally {
+            if (button) button.disabled = false;
+        }
     }
 
     initAppearanceSettings() {
@@ -897,6 +977,10 @@ class SettingsPage {
             this.loadAboutInformation();
         }
 
+        if (tabName === 'preferences') {
+            this.loadSubtitlePreferences();
+        }
+
         // Load hardware info when switching to transcode tab
         if (tabName === 'transcode') {
             this.loadHardwareInfo();
@@ -920,6 +1004,7 @@ class SettingsPage {
         await this.app.sourceManager.loadSources();
         if (!this.isVisible || visibilityGeneration !== this.visibilityGeneration) return;
         this.renderInterfaceSettings(this.app.navigationSettings);
+        this.loadSubtitlePreferences();
 
         // Refresh ALL player settings from server
         if (this.app.player?.settings) {

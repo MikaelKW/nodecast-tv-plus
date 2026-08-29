@@ -197,6 +197,10 @@ const API = {
         resetTwoFactor: (id, data) => API.request('DELETE', `/auth/2fa/admin/${id}`, data, { redirectOnUnauthorized: false })
     },
 
+    account: {
+        updateSubtitlePreferences: (data) => API.request('PUT', '/auth/me/subtitle-preferences', data)
+    },
+
     twoFactor: {
         status: () => API.request('GET', '/auth/2fa/status'),
         enroll: (data) => API.request('POST', '/auth/2fa/enroll', data, { redirectOnUnauthorized: false }),

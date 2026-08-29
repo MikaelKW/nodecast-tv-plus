@@ -98,7 +98,7 @@
           </button>
           <div class="account-menu-popover hidden" id="account-menu-popover" role="menu">
             <button type="button" class="account-menu-item" id="account-security-link" role="menuitem">
-              Account security
+              Account
             </button>
             <button type="button" class="account-menu-item account-menu-logout" id="logout-btn" role="menuitem">
               Logout
@@ -425,6 +425,7 @@
           <div class="tabs">
             <button class="tab active" data-tab="sources">Sources</button>
             <button class="tab" data-tab="interface">Interface</button>
+            <button class="tab" data-tab="preferences">Preferences</button>
             <button class="tab" data-tab="player">Player</button>
             <button class="tab" data-tab="transcode">Transcoding</button>
             <button class="tab" data-tab="content">Manage Content</button>
@@ -565,6 +566,83 @@
                 <span id="interface-settings-status" class="hint hidden" role="status"></span>
               </div>
             </form>
+          </div>
+
+          <!-- Preferences Tab -->
+          <div id="tab-preferences" class="tab-content">
+            <div class="settings-section">
+              <h3>Personal preferences</h3>
+              <p class="preference-scope-note">
+                <strong>Account-specific settings:</strong> Changes made here apply only to the currently signed-in
+                account. They do not change the global settings for other accounts.
+              </p>
+            </div>
+
+            <div class="settings-section" aria-labelledby="subtitle-preferences-heading">
+              <h3 id="subtitle-preferences-heading">Subtitle preferences</h3>
+              <p class="hint">Choose which subtitle track Movies and Series should select when playback starts.</p>
+              <form id="subtitle-preferences-form" class="account-form">
+                <div class="form-group">
+                  <label for="preferred-subtitle-language">Preferred subtitle language</label>
+                  <select id="preferred-subtitle-language" class="form-input">
+                    <option value="">Not set (use track flags)</option>
+                    <option value="en">English</option>
+                    <option value="no">Norwegian</option>
+                    <option value="nb">Norwegian Bokmål</option>
+                    <option value="nn">Norwegian Nynorsk</option>
+                    <option value="da">Danish</option>
+                    <option value="sv">Swedish</option>
+                    <option value="fi">Finnish</option>
+                    <option value="is">Icelandic</option>
+                    <option value="de">German</option>
+                    <option value="fr">French</option>
+                    <option value="es">Spanish</option>
+                    <option value="it">Italian</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="nl">Dutch</option>
+                    <option value="pl">Polish</option>
+                    <option value="cs">Czech</option>
+                    <option value="sk">Slovak</option>
+                    <option value="hu">Hungarian</option>
+                    <option value="ro">Romanian</option>
+                    <option value="bg">Bulgarian</option>
+                    <option value="hr">Croatian</option>
+                    <option value="sr">Serbian</option>
+                    <option value="sl">Slovenian</option>
+                    <option value="et">Estonian</option>
+                    <option value="lv">Latvian</option>
+                    <option value="lt">Lithuanian</option>
+                    <option value="uk">Ukrainian</option>
+                    <option value="ru">Russian</option>
+                    <option value="tr">Turkish</option>
+                    <option value="el">Greek</option>
+                    <option value="ar">Arabic</option>
+                    <option value="he">Hebrew</option>
+                    <option value="hi">Hindi</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                  </select>
+                  <p class="hint subtitle-preference-requirement" id="preferred-subtitle-language-requirement">
+                    Choose a preferred language to enable Always preferred.
+                  </p>
+                </div>
+                <div class="form-group">
+                  <label for="automatic-subtitle-mode">Automatic subtitle mode</label>
+                  <select id="automatic-subtitle-mode" class="form-input">
+                    <option value="off">No subtitles</option>
+                    <option value="default">Default</option>
+                    <option value="forced">Forced only</option>
+                    <option value="preferred">Always preferred</option>
+                  </select>
+                  <p class="hint" id="automatic-subtitle-mode-description"></p>
+                </div>
+                <div id="subtitle-preferences-status" class="account-message" role="status"></div>
+                <div class="account-actions">
+                  <button type="submit" class="btn btn-primary">Save subtitle preferences</button>
+                </div>
+              </form>
+            </div>
           </div>
 
           <!-- Player Tab -->
@@ -1007,10 +1085,10 @@
         </div>
       </div>
 
-      <!-- Account Security Page -->
+      <!-- Account Page -->
       <div id="page-account" class="page">
         <div class="account-container">
-          <h2>Account Security</h2>
+          <h2>Account</h2>
           <p class="hint">Manage sign-in protection for this account.</p>
 
           <section class="account-security-card" aria-labelledby="two-factor-heading">
@@ -1045,7 +1123,7 @@
           <ul class="mfa-onboarding-benefits">
             <li>Uses a standard authenticator app.</li>
             <li>Provides one-time recovery codes for safe backup access.</li>
-            <li>Can be disabled later from Account security.</li>
+            <li>Can be disabled later from Account.</li>
           </ul>
           <div class="mfa-onboarding-actions">
             <button type="button" class="btn btn-primary" id="mfa-onboarding-continue">Continue</button>
@@ -1059,7 +1137,7 @@
             aria-labelledby="mfa-onboarding-skip-heading" aria-describedby="mfa-onboarding-skip-description">
             <h3 id="mfa-onboarding-skip-heading">Set up MFA later</h3>
             <p id="mfa-onboarding-skip-description">
-              Open the account menu marked with your username initial, then choose <strong>Account security</strong>
+              Open the account menu marked with your username initial, then choose <strong>Account</strong>
               whenever you are ready to enable MFA.
             </p>
             <div class="mfa-onboarding-actions">
@@ -1378,6 +1456,7 @@
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
   <script src="js/api.js?v=3"></script>
+  <script src="js/components/SubtitlePreferences.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
   <script src="js/components/VideoPlayer.js?v=8"></script>
   <script src="js/components/ChannelList.js?v=4"></script>
@@ -1388,10 +1467,10 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=4"></script>
   <script src="js/pages/SeriesPage.js?v=2"></script>
-  <script src="js/pages/Settings.js?v=4"></script>
-  <script src="js/pages/Account.js?v=2"></script>
+  <script src="js/pages/Settings.js?v=5"></script>
+  <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
-  <script src="js/pages/WatchPage.js?v=7"></script>
+  <script src="js/pages/WatchPage.js?v=8"></script>
   <script src="js/app.js?v=6"></script>
 </body>
 

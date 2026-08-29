@@ -1,6 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { constants, existsSync, mkdirSync } = require('fs');
+const { normalizePreferences } = require('../public/js/components/SubtitlePreferences');
 
 // Ensure data directory exists (sync is fine for startup)
 const dataDir = process.env.NODECAST_DATA_DIR
@@ -469,7 +470,8 @@ function toPublicUser(user) {
     email: user.email || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
-    twoFactorEnabled: Boolean(user.totp?.enabled)
+    twoFactorEnabled: Boolean(user.totp?.enabled),
+    subtitlePreferences: normalizePreferences(user.subtitlePreferences)
   };
 }
 
@@ -552,6 +554,7 @@ const users = {
       role: userData.role || 'viewer',
       oidcId: userData.oidcId || null,
       email: userData.email || null,
+      subtitlePreferences: normalizePreferences(userData.subtitlePreferences),
       createdAt: new Date().toISOString()
     };
 
