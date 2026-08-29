@@ -1600,6 +1600,19 @@ class WatchPage {
         this.subtitleOverlay?.classList.add('hidden');
     }
 
+    getSubtitleAppearance() {
+        return SubtitlePreferences.normalizeAppearance(
+            this.app?.currentUser?.subtitlePreferences?.appearance
+        );
+    }
+
+    applySubtitleAppearance() {
+        return SubtitlePreferences.applyAppearanceStyles(
+            this.subtitleOverlay,
+            this.getSubtitleAppearance()
+        );
+    }
+
     appendSubtitleCueContent(container, cue) {
         // Text is assigned through textContent so provider-supplied subtitle
         // payloads cannot introduce HTML into the page. Line breaks remain
@@ -1613,6 +1626,8 @@ class WatchPage {
             this.clearSubtitleOverlay();
             return;
         }
+
+        this.applySubtitleAppearance();
 
         const cues = Array.from(this.activeSubtitleTrack.activeCues || [])
             .filter(cue => String(cue?.text || '').length > 0)
@@ -1641,6 +1656,7 @@ class WatchPage {
 
     updateSubtitleOverlayGeometry() {
         if (!this.video || !this.subtitleOverlay) return;
+        const appearance = this.applySubtitleAppearance();
         const container = this.video.parentElement;
         const containerWidth = Number(container?.clientWidth) || Number(this.video.clientWidth) || 0;
         const containerHeight = Number(container?.clientHeight) || Number(this.video.clientHeight) || 0;
@@ -1660,7 +1676,8 @@ class WatchPage {
         this.subtitleOverlay.style.top = `${Math.max(0, (containerHeight - renderedHeight) / 2)}px`;
         this.subtitleOverlay.style.width = `${renderedWidth}px`;
         this.subtitleOverlay.style.height = `${renderedHeight}px`;
-        const bottomOffset = Math.max(24, Math.min(72, renderedHeight * 0.07));
+        const positionRatio = appearance.verticalPosition / 100;
+        const bottomOffset = Math.max(12, Math.min(renderedHeight * 0.3, renderedHeight * positionRatio));
         this.subtitleOverlay.style.setProperty('--subtitle-bottom-offset', `${bottomOffset}px`);
     }
 

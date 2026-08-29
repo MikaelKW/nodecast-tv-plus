@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=13">
+  <link rel="stylesheet" href="css/main.css?v=14">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -637,6 +637,59 @@
                   </select>
                   <p class="hint" id="automatic-subtitle-mode-description"></p>
                 </div>
+                <fieldset class="subtitle-appearance-settings">
+                  <legend>Subtitle appearance</legend>
+                  <p class="hint">Preview account-specific subtitle styling before saving it.</p>
+                  <div class="subtitle-appearance-preview" id="subtitle-appearance-preview" aria-label="Subtitle appearance preview">
+                    <div class="subtitle-preview-overlay">
+                      <div class="watch-subtitle-stack">
+                        <span class="watch-subtitle-cue">Subtitle preview</span>
+                        <span class="watch-subtitle-cue">A second line for comparison</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="subtitle-appearance-controls">
+                    <div class="form-group subtitle-range-control">
+                      <label for="subtitle-text-scale">Text size</label>
+                      <div class="subtitle-range-row">
+                        <input type="range" id="subtitle-text-scale" min="75" max="175" step="5" value="100">
+                        <output id="subtitle-text-scale-value" for="subtitle-text-scale">100%</output>
+                      </div>
+                    </div>
+                    <div class="form-group subtitle-color-control">
+                      <label for="subtitle-text-color">Text colour</label>
+                      <input type="color" id="subtitle-text-color" value="#ffffff">
+                    </div>
+                    <div class="form-group subtitle-color-control">
+                      <label for="subtitle-background-color">Background colour</label>
+                      <input type="color" id="subtitle-background-color" value="#000000">
+                    </div>
+                    <div class="form-group subtitle-range-control">
+                      <label for="subtitle-background-opacity">Background opacity</label>
+                      <div class="subtitle-range-row">
+                        <input type="range" id="subtitle-background-opacity" min="0" max="100" step="5" value="0">
+                        <output id="subtitle-background-opacity-value" for="subtitle-background-opacity">0%</output>
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <label for="subtitle-edge-style">Text edge</label>
+                      <select id="subtitle-edge-style" class="form-input">
+                        <option value="outline">Outline</option>
+                        <option value="shadow">Shadow</option>
+                        <option value="none">None</option>
+                      </select>
+                    </div>
+                    <div class="form-group subtitle-range-control">
+                      <label for="subtitle-vertical-position">Vertical position</label>
+                      <div class="subtitle-range-row">
+                        <input type="range" id="subtitle-vertical-position" min="4" max="30" step="1" value="7">
+                        <output id="subtitle-vertical-position-value" for="subtitle-vertical-position">7% from bottom</output>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="hint">Appearance controls apply to NodeCast's Movie and Series subtitle overlay. Browser-managed native fullscreen, including iPhone fullscreen, may use the browser's own subtitle style.</p>
+                  <button type="button" class="btn btn-secondary" id="reset-subtitle-appearance">Reset appearance</button>
+                </fieldset>
                 <div id="subtitle-preferences-status" class="account-message" role="status"></div>
                 <div class="account-actions subtitle-preferences-actions">
                   <button type="submit" class="btn btn-primary">Save subtitle preferences</button>
@@ -1456,7 +1509,7 @@
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
   <script src="js/api.js?v=3"></script>
-  <script src="js/components/SubtitlePreferences.js?v=2"></script>
+  <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
   <script src="js/components/VideoPlayer.js?v=8"></script>
   <script src="js/components/ChannelList.js?v=4"></script>
@@ -1467,10 +1520,10 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=4"></script>
   <script src="js/pages/SeriesPage.js?v=2"></script>
-  <script src="js/pages/Settings.js?v=6"></script>
+  <script src="js/pages/Settings.js?v=7"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
-  <script src="js/pages/WatchPage.js?v=8"></script>
+  <script src="js/pages/WatchPage.js?v=9"></script>
   <script src="js/app.js?v=7"></script>
 </body>
 

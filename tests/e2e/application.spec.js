@@ -142,6 +142,58 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         'Choose a preferred language to enable Always preferred.'
     );
     await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await expect(page.locator('#subtitle-text-scale')).toHaveValue('100');
+    await expect(page.locator('#subtitle-background-opacity')).toHaveValue('0');
+    await expect(page.locator('#subtitle-edge-style')).toHaveValue('outline');
+    await expect(page.locator('#subtitle-vertical-position')).toHaveValue('7');
+    await expect(page.locator('#subtitle-appearance-preview')).toBeVisible();
+
+    const customSubtitleAppearance = {
+        textScale: 125,
+        textColor: '#000000',
+        backgroundColor: '#123456',
+        backgroundOpacity: 60,
+        edgeStyle: 'shadow',
+        verticalPosition: 18
+    };
+    const setAppearanceControl = (selector, value) => page.locator(selector).evaluate((element, nextValue) => {
+        element.value = String(nextValue);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+    await setAppearanceControl('#subtitle-text-scale', customSubtitleAppearance.textScale);
+    await setAppearanceControl('#subtitle-text-color', customSubtitleAppearance.textColor);
+    await setAppearanceControl('#subtitle-background-color', customSubtitleAppearance.backgroundColor);
+    await setAppearanceControl('#subtitle-background-opacity', customSubtitleAppearance.backgroundOpacity);
+    await page.locator('#subtitle-edge-style').selectOption(customSubtitleAppearance.edgeStyle);
+    await setAppearanceControl('#subtitle-vertical-position', customSubtitleAppearance.verticalPosition);
+    await expect(page.locator('#subtitle-text-scale-value')).toHaveText('125%');
+    await expect(page.locator('#subtitle-background-opacity-value')).toHaveText('60%');
+    await expect(page.locator('#subtitle-vertical-position-value')).toHaveText('18% from bottom');
+    expect(await page.locator('#subtitle-appearance-preview').evaluate(element => ({
+        textColor: element.style.getPropertyValue('--subtitle-text-color'),
+        background: element.style.getPropertyValue('--subtitle-background-color'),
+        edge: element.style.getPropertyValue('--subtitle-text-shadow'),
+        position: element.style.getPropertyValue('--subtitle-position-percent')
+    }))).toEqual({
+        textColor: '#000000',
+        background: 'rgba(18, 52, 86, 0.6)',
+        edge: expect.stringContaining('255, 255, 255'),
+        position: '18%'
+    });
+    await page.getByRole('button', { name: 'Reset appearance' }).click();
+    await expect(page.locator('#subtitle-text-scale')).toHaveValue('100');
+    await expect(page.locator('#subtitle-background-opacity')).toHaveValue('0');
+    await expect(page.locator('#subtitle-edge-style')).toHaveValue('outline');
+    await expect(page.locator('#subtitle-vertical-position')).toHaveValue('7');
+    await expect(page.locator('#subtitle-preferences-status')).toContainText('Save subtitle preferences');
+
+    await setAppearanceControl('#subtitle-text-scale', customSubtitleAppearance.textScale);
+    await setAppearanceControl('#subtitle-text-color', customSubtitleAppearance.textColor);
+    await setAppearanceControl('#subtitle-background-color', customSubtitleAppearance.backgroundColor);
+    await setAppearanceControl('#subtitle-background-opacity', customSubtitleAppearance.backgroundOpacity);
+    await page.locator('#subtitle-edge-style').selectOption(customSubtitleAppearance.edgeStyle);
+    await setAppearanceControl('#subtitle-vertical-position', customSubtitleAppearance.verticalPosition);
     await page.locator('#preferred-subtitle-language').selectOption('no');
     await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeEnabled();
     await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
@@ -150,7 +202,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: 'no',
-        mode: 'preferred'
+        mode: 'preferred',
+        appearance: customSubtitleAppearance
     });
     await page.locator('#preferred-subtitle-language').selectOption('');
     await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
@@ -159,7 +212,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.getByRole('button', { name: 'Save subtitle preferences' }).click();
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: '',
-        mode: 'off'
+        mode: 'off',
+        appearance: customSubtitleAppearance
     });
 
     await page.locator('#account-menu-trigger').click();
@@ -286,12 +340,21 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(viewerPage.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
     await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: 'en',
-        mode: 'preferred'
+        mode: 'preferred',
+        appearance: {
+            textScale: 100,
+            textColor: '#ffffff',
+            backgroundColor: '#000000',
+            backgroundOpacity: 0,
+            edgeStyle: 'outline',
+            verticalPosition: 7
+        }
     });
     await viewerContext.close();
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: '',
-        mode: 'off'
+        mode: 'off',
+        appearance: customSubtitleAppearance
     });
 
     // About uses a fixed server-side GitHub endpoint. Keep the browser test
@@ -1449,6 +1512,28 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         overlayVisible: true,
         overlayText: expect.stringContaining('English controlled subtitle')
     });
+    const playbackSubtitleAppearance = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const cue = watch.subtitleStack.querySelector('.watch-subtitle-cue');
+        const cueStyle = getComputedStyle(cue);
+        const stackStyle = getComputedStyle(watch.subtitleStack);
+        return {
+            textColor: stackStyle.color,
+            backgroundColor: cueStyle.backgroundColor,
+            textShadow: stackStyle.textShadow,
+            minimumSize: watch.subtitleOverlay.style.getPropertyValue('--subtitle-font-min-size'),
+            position: watch.subtitleOverlay.style.getPropertyValue('--subtitle-position-percent'),
+            bottomOffset: parseFloat(watch.subtitleOverlay.style.getPropertyValue('--subtitle-bottom-offset'))
+        };
+    });
+    expect(playbackSubtitleAppearance).toMatchObject({
+        textColor: 'rgb(0, 0, 0)',
+        backgroundColor: 'rgba(18, 52, 86, 0.6)',
+        textShadow: expect.stringContaining('rgba(255, 255, 255'),
+        minimumSize: '25px',
+        position: '18%'
+    });
+    expect(playbackSubtitleAppearance.bottomOffset).toBeGreaterThan(12);
     await page.evaluate(() => {
         const watch = window.app.pages.watch;
         watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
