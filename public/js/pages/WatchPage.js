@@ -104,6 +104,8 @@ class WatchPage {
         this.probeSubtitleRenderedOffsets = new WeakMap();
         this.subtitleLoadControllers = new Set();
         this.selectedSubtitleStreamIndex = null;
+        this.subtitlePreferenceApplied = false;
+        this.subtitleSelectionExplicit = false;
         this.subtitleRestoreTimers = [];
         this.subtitleWindowDuration = 60;
         this.subtitleWindowStep = 50;
@@ -1029,7 +1031,10 @@ class WatchPage {
         this.hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
             console.log('[WatchPage] Subtitle tracks updated:', data.subtitleTracks);
             // Wait a moment for native text tracks to populate
-            setTimeout(() => this.updateCaptionsTracks(), 100);
+            setTimeout(() => {
+                this.applyAutomaticSubtitlePreference();
+                this.updateCaptionsTracks();
+            }, 100);
         });
 
         this.hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
@@ -1676,6 +1681,8 @@ class WatchPage {
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
         this.selectedSubtitleStreamIndex = null;
+        this.subtitlePreferenceApplied = false;
+        this.subtitleSelectionExplicit = false;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -1777,7 +1784,10 @@ class WatchPage {
         this.renderProbeSubtitleTracks();
 
         this.updateAudioTracks();
-        setTimeout(() => this.updateCaptionsTracks(), 100);
+        setTimeout(() => {
+            this.applyAutomaticSubtitlePreference();
+            this.updateCaptionsTracks();
+        }, 100);
     }
 
     renderProbeSubtitleTracks() {
@@ -1818,7 +1828,55 @@ class WatchPage {
             });
         }
 
+        this.applyAutomaticSubtitlePreference();
         this.updateCaptionsTracks();
+    }
+
+    getSubtitlePreferences() {
+        return SubtitlePreferences.normalizePreferences(this.app?.currentUser?.subtitlePreferences);
+    }
+
+    getSubtitleTrackDescriptors() {
+        if (!this.video) return [];
+        const hlsTracks = Array.isArray(this.hls?.subtitleTracks) ? this.hls.subtitleTracks : [];
+        return Array.from(this.video.textTracks).map((track, position) => {
+            const probeElement = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+                .find(element => element.track === track);
+            const probeIndex = Number(probeElement?.dataset.nodecastSubtitleIndex);
+            const probeTrack = Number.isInteger(probeIndex)
+                ? this.availableSubtitleTracks.find(candidate => candidate.index === probeIndex)
+                : null;
+            const hlsTrack = !probeTrack ? hlsTracks.find(candidate => {
+                const languageMatches = SubtitlePreferences.normalizeLanguage(candidate.lang || candidate.language)
+                    === SubtitlePreferences.normalizeLanguage(track.language);
+                const labelMatches = String(candidate.name || candidate.label || '').trim().toLowerCase()
+                    === String(track.label || '').trim().toLowerCase();
+                return languageMatches && (!track.label || !candidate.name || labelMatches);
+            }) : null;
+            return {
+                position,
+                kind: track.kind,
+                language: probeTrack?.language || hlsTrack?.lang || hlsTrack?.language || track.language,
+                label: probeTrack?.title || hlsTrack?.name || hlsTrack?.label || track.label,
+                default: Boolean(probeTrack?.default || hlsTrack?.default),
+                forced: Boolean(probeTrack?.forced || hlsTrack?.forced)
+            };
+        }).filter(track => track.kind === 'subtitles' || track.kind === 'captions');
+    }
+
+    applyAutomaticSubtitlePreference() {
+        if (this.subtitleSelectionExplicit || this.subtitlePreferenceApplied || !this.video) return false;
+        const tracks = this.getSubtitleTrackDescriptors();
+        if (tracks.length === 0) return false;
+
+        const selected = SubtitlePreferences.selectPreferredSubtitleTrack(
+            tracks,
+            this.getSubtitlePreferences()
+        );
+        this.subtitlePreferenceApplied = true;
+        if (!selected) return false;
+        this.selectCaptionTrack(selected.position, { automatic: true });
+        return true;
     }
 
     parseWebVttTimestamp(value) {
@@ -2267,8 +2325,14 @@ class WatchPage {
         offOption.classList.toggle('active', !anyActive);
     }
 
-    selectCaptionTrack(index) {
+    selectCaptionTrack(index, { automatic = false } = {}) {
         if (!this.video) return;
+
+        if (automatic) {
+            this.subtitlePreferenceApplied = true;
+        } else {
+            this.subtitleSelectionExplicit = true;
+        }
 
         const tracks = this.video.textTracks;
 

@@ -1522,6 +1522,8 @@ video::cue {
 @media (max-width: 600px) {
   .interface-page-select {
     width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
   }
 
   .theme-options {
@@ -1701,6 +1703,25 @@ video::cue {
   margin-bottom: var(--space-md);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--color-border);
+}
+
+.preference-scope-note {
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.preference-scope-note strong {
+  color: var(--color-text-primary);
+}
+
+.subtitle-preference-requirement {
+  margin-top: var(--space-xs);
+  color: var(--color-warning);
 }
 
 .setting-item {
@@ -5143,7 +5164,7 @@ kbd {
 }
 
 /* =====================================================
-   Account Security
+   Account
    ===================================================== */
 .account-container {
   width: min(760px, 100%);
@@ -5314,6 +5335,11 @@ kbd {
 
   .account-actions .btn {
     width: 100%;
+  }
+
+  .subtitle-preferences-actions .btn {
+    width: fit-content;
+    max-width: 100%;
   }
 }
 

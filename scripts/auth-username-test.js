@@ -122,6 +122,7 @@ async function run() {
         });
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
+        assert.deepEqual(setup.payload.user.subtitlePreferences, { language: '', mode: 'off' });
         assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
@@ -135,6 +136,24 @@ async function run() {
             assert.equal(login.payload.user.username, 'MobileUser');
             assert.ok(getCookie(login.response), 'Successful login must issue an authentication cookie.');
         }
+
+        const subtitlePreferences = await request(server.baseUrl, '/api/auth/me/subtitle-preferences', {
+            method: 'PUT',
+            cookie: adminCookie,
+            body: { language: 'NOR', mode: 'preferred', ignored: 'value' }
+        });
+        assert.equal(subtitlePreferences.response.status, 200);
+        assert.deepEqual(subtitlePreferences.payload.subtitlePreferences, {
+            language: 'no',
+            mode: 'preferred'
+        });
+
+        const currentUser = await request(server.baseUrl, '/api/auth/me', { cookie: adminCookie });
+        assert.equal(currentUser.response.status, 200);
+        assert.deepEqual(currentUser.payload.subtitlePreferences, {
+            language: 'no',
+            mode: 'preferred'
+        });
 
         const duplicate = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
@@ -210,6 +229,10 @@ async function run() {
             });
             assert.equal(exactLegacyLogin.response.status, 200, 'Legacy collisions must retain exact-case access.');
             assert.equal(exactLegacyLogin.payload.user.username, username);
+            assert.deepEqual(exactLegacyLogin.payload.user.subtitlePreferences, {
+                language: 'no',
+                mode: 'preferred'
+            });
         }
 
         const ambiguousLogin = await request(server.baseUrl, '/api/auth/login', {

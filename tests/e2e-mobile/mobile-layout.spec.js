@@ -128,7 +128,7 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
 
     await page.getByRole('button', { name: 'Skip for now' }).click();
     await expect(page.getByRole('dialog', { name: 'Set up MFA later' })).toBeVisible();
-    await expect(page.locator('#mfa-onboarding-skip-description')).toContainText('Account security');
+    await expect(page.locator('#mfa-onboarding-skip-description')).toContainText('Account');
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.locator('#mfa-onboarding-skip-dialog')).toBeHidden();
     await page.getByRole('button', { name: 'Skip for now' }).click();

@@ -126,11 +126,54 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#account-enroll-start-form')).toBeVisible();
     expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
 
+    // Subtitle preferences live under Settings > Preferences, clearly state
+    // their account-specific scope, persist on the server, and default to the
+    // historical behavior of starting with subtitles off.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+    await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
+    await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
+    await expect(page.locator('#preferred-subtitle-language')).toHaveValue('');
+    await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toContainText(
+        'Choose a preferred language to enable Always preferred.'
+    );
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await page.locator('#preferred-subtitle-language').selectOption('no');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeEnabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await page.locator('#automatic-subtitle-mode').selectOption('preferred');
+    await page.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect(page.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: 'no',
+        mode: 'preferred'
+    });
+    await page.locator('#preferred-subtitle-language').selectOption('');
+    await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await page.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: '',
+        mode: 'off'
+    });
+
+    await page.locator('#account-menu-trigger').click();
+    await page.locator('#account-security-link').click();
+    await expect(page).toHaveURL(/\/#account$/);
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+
     // Enroll through the same guided flow presented to local accounts, then
     // prove password sign-in stops at the server-side challenge until a fresh
     // authenticator code is supplied.
     await expect(page.locator('#account-menu-initial')).toHaveText('E');
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
+    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
+    await expect(page.locator('#account-enroll-start-form')).toBeVisible();
     await page.locator('#account-password').fill(password);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('#totp-qr-image')).toBeVisible();
@@ -214,6 +257,42 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Show password');
     await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
         .toHaveAttribute('aria-label', 'Show password');
+
+    // Viewer accounts must be able to manage their own Preferences without
+    // exposing administrator-only source, interface, playback, transcoding,
+    // content, user, or server-information controls.
+    const viewerContext = await page.context().browser().newContext({
+        baseURL: new URL(page.url()).origin
+    });
+    const viewerPage = await viewerContext.newPage();
+    await viewerPage.goto('/login.html');
+    await viewerPage.locator('#username').fill('confirmed-viewer');
+    await viewerPage.locator('#password').fill(newPassword);
+    await viewerPage.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await viewerPage.waitForURL(url => !url.pathname.endsWith('/login.html'));
+    await viewerPage.waitForFunction(() => window.app?.currentUser?.role === 'viewer');
+    const viewerSettingsLink = viewerPage.locator('.nav-link[data-page="settings"]');
+    await expect(viewerSettingsLink).toBeVisible();
+    await viewerSettingsLink.click();
+    await expect(viewerPage.locator('#page-settings')).toHaveClass(/active/);
+    await expect(viewerPage.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(viewerPage.locator('.tab[data-tab="preferences"]')).toBeVisible();
+    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
+        await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
+    }
+    await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
+    await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
+    await viewerPage.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect(viewerPage.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
+    await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: 'en',
+        mode: 'preferred'
+    });
+    await viewerContext.close();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: '',
+        mode: 'off'
+    });
 
     // About uses a fixed server-side GitHub endpoint. Keep the browser test
     // deterministic while covering current, update-available, and disabled UI states.
