@@ -384,6 +384,7 @@ class WatchPage {
         this.resetMediaTracks();
         this.playbackTimeOffset = 0;
         this.sourceDuration = 0;
+        this.resetDurationDisplay();
         this.currentTranscodeOptions = null;
         this.content = content;
         this.contentType = content.type;
@@ -733,9 +734,10 @@ class WatchPage {
             this.progressScrubbing = false;
         }
         const knownDuration = Number(qualitySourceInfo?.duration);
-        if (Number.isFinite(knownDuration) && knownDuration > 0) {
-            this.sourceDuration = knownDuration;
-        }
+        this.setSourceDuration(VodDuration.firstValid(
+            knownDuration,
+            VodDuration.fromContent(this.content)
+        ));
         this.qualityCapWarning = null;
         this.qualityCapPending = false;
 
@@ -1191,6 +1193,7 @@ class WatchPage {
         }
         this.playbackTimeOffset = 0;
         this.sourceDuration = 0;
+        this.resetDurationDisplay();
         this.currentTranscodeOptions = null;
         this.seekChanging = false;
         this.progressScrubbing = false;
@@ -1227,6 +1230,33 @@ class WatchPage {
         const mediaDuration = Number(this.video?.duration);
         if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaDuration;
         return Math.max(0, this.playbackTimeOffset + mediaDuration);
+    }
+
+    setSourceDuration(value) {
+        const duration = VodDuration.parse(value);
+        if (duration > 0) this.sourceDuration = duration;
+        this.updateDurationDisplay();
+    }
+
+    resetDurationDisplay() {
+        if (this.progressSlider) this.progressSlider.value = 0;
+        if (this.timeCurrent) this.timeCurrent.textContent = '0:00';
+        if (this.timeTotal) {
+            this.timeTotal.textContent = '';
+            this.timeTotal.classList.add('hidden');
+        }
+        if (this.durationEl) this.durationEl.textContent = '';
+    }
+
+    updateDurationDisplay() {
+        const duration = this.getPlaybackDuration();
+        const hasDuration = Number.isFinite(duration) && duration > 0;
+        const label = hasDuration ? this.formatTime(duration) : '';
+        if (this.timeTotal) {
+            this.timeTotal.textContent = label;
+            this.timeTotal.classList.toggle('hidden', !hasDuration);
+        }
+        if (this.durationEl) this.durationEl.textContent = label;
     }
 
     previewSeek(percent) {
@@ -1423,7 +1453,7 @@ class WatchPage {
     // === UI Updates ===
 
     updateProgress() {
-        if (!this.video || !this.video.duration) return;
+        if (!this.video) return;
 
         const currentTime = this.getCurrentPlaybackTime();
         if (Number.isFinite(this.pendingSeekProgress)
@@ -1438,6 +1468,7 @@ class WatchPage {
             this.progressSlider.value = percent;
             this.timeCurrent.textContent = this.formatTime(currentTime);
         }
+        this.updateDurationDisplay();
 
         // Show "Up Next" panel early for series (like streaming services do during credits)
         // Only show if auto-play next episode is enabled
@@ -1460,6 +1491,13 @@ class WatchPage {
     }
 
     onMetadataLoaded() {
+        const browserDuration = VodDuration.parse(this.video?.duration);
+        if (!this.currentSessionId && browserDuration > 0) {
+            this.setSourceDuration(browserDuration);
+        } else {
+            this.updateDurationDisplay();
+        }
+
         // Detect resolution
         if (this.video && this.video.videoHeight > 0) {
             this.currentStreamInfo = {
@@ -1467,9 +1505,6 @@ class WatchPage {
                 width: this.video.videoWidth,
                 height: this.video.videoHeight
             };
-            if (!this.currentSessionId && Number.isFinite(this.video.duration) && this.video.duration > 0) {
-                this.sourceDuration = this.video.duration;
-            }
             this.updateQualityBadge();
             this.updatePendingQualityCapWarning(this.video.videoHeight);
         }
@@ -1533,7 +1568,8 @@ class WatchPage {
     }
 
     formatTime(seconds) {
-        if (!seconds || isNaN(seconds)) return '0:00';
+        seconds = Number(seconds);
+        if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
@@ -1774,10 +1810,7 @@ class WatchPage {
     }
 
     applyProbeTracks(info, streamUrl) {
-        const probedDuration = Number(info?.duration);
-        if (Number.isFinite(probedDuration) && probedDuration > 0) {
-            this.sourceDuration = probedDuration;
-        }
+        this.setSourceDuration(info?.duration);
         const tracks = Array.isArray(info?.audioTracks)
             ? info.audioTracks.filter(track => Number.isInteger(Number(track.index)))
             : [];
@@ -2488,6 +2521,7 @@ class WatchPage {
         this.yearEl.textContent = this.content.year || '';
         this.ratingEl.textContent = this.content.rating ? `★ ${this.content.rating}` : '';
         this.descriptionEl.textContent = this.content.description || '';
+        this.updateDurationDisplay();
 
         // Update play button text
         if (this.playBtnText) {
@@ -2610,7 +2644,9 @@ class WatchPage {
                     year: movie.year,
                     rating: movie.rating,
                     sourceId: sourceId,
-                    categoryId: movie.category_id
+                    categoryId: movie.category_id,
+                    containerExtension: container,
+                    duration: movie.duration_secs ?? movie.duration
                 }, result.url);
             }
         } catch (e) {
@@ -2677,6 +2713,9 @@ class WatchPage {
         const seasonNum = episodeEl.dataset.season;
         const episodeNum = episodeEl.dataset.episode;
         const container = episodeEl.dataset.container || 'mp4';
+        const episode = this.seriesInfo?.episodes?.[seasonNum]?.find(ep => (
+            String(ep.id) === String(episodeId)
+        ));
 
         try {
             const result = await API.proxy.xtream.getStreamUrl(this.content.sourceId, episodeId, 'series', container);
@@ -2697,7 +2736,9 @@ class WatchPage {
                     seriesId: this.content.seriesId,
                     seriesInfo: this.seriesInfo,
                     currentSeason: seasonNum,
-                    currentEpisode: episodeNum
+                    currentEpisode: episodeNum,
+                    containerExtension: container,
+                    duration: episode?.duration_secs ?? episode?.duration
                 }, result.url);
             }
         } catch (e) {
@@ -2788,7 +2829,9 @@ class WatchPage {
                     seriesId: this.content.seriesId,
                     seriesInfo: this.seriesInfo,
                     currentSeason: nextEp.seasonNum,
-                    currentEpisode: nextEp.episode_num
+                    currentEpisode: nextEp.episode_num,
+                    containerExtension: container,
+                    duration: nextEp.duration_secs ?? nextEp.duration
                 }, result.url);
             }
         } catch (e) {
