@@ -457,6 +457,9 @@ class SeriesPage {
         const seasonMatch = seasonHeader.match(/Season (\d+)/);
         const seasonNum = seasonMatch ? seasonMatch[1] : '1';
         const episodeNum = episodeEl.querySelector('.episode-number')?.textContent?.replace('E', '') || '1';
+        const episode = Object.values(this.currentSeriesInfo?.episodes || {})
+            .flat()
+            .find(item => String(item.id) === String(episodeId));
 
         try {
             // Get stream URL for episode (use 'series' type)
@@ -481,7 +484,8 @@ class SeriesPage {
                         seriesInfo: this.currentSeriesInfo,
                         currentSeason: seasonNum,
                         currentEpisode: episodeNum,
-                        containerExtension: container
+                        containerExtension: container,
+                        duration: episode?.duration_secs ?? episode?.duration
                     }, result.url);
                 }
             }
