@@ -1338,6 +1338,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('#watch-time-total')).toHaveText('0:08');
+    await expect(page.locator('#watch-time-total')).toBeVisible();
+    await expect(page.locator('#watch-duration')).toHaveText('0:08');
     expect(subtitleRequests).toHaveLength(0);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await page.locator('.watch-video-section').hover();
@@ -1480,6 +1483,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(durationState.sourceDuration).toBeGreaterThan(19);
     expect(durationState.sourceDuration).toBeLessThan(21);
     expect(durationState.playbackDuration).toBeCloseTo(durationState.sourceDuration, 3);
+    await expect(page.locator('#watch-time-total')).toHaveText('0:20');
+    await expect(page.locator('#watch-time-total')).toBeVisible();
     const offsetAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
     await page.evaluate(() => window.app.pages.watch.seek(0));
     await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
@@ -1621,6 +1626,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(seekHistory.progress).toBeGreaterThanOrEqual(11);
     expect(seekHistory.progress).toBeLessThanOrEqual(12);
     expect(seekHistory.duration).toBeGreaterThan(19);
+    await expect(page.locator('#watch-time-total')).toBeHidden();
+    await expect(page.locator('#watch-time-total')).toHaveText('');
 
     await page.evaluate(async ({ url, sourceId, resumeTime }) => {
         await window.app.pages.watch.play({

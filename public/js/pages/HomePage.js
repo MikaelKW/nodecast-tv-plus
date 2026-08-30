@@ -449,7 +449,8 @@ class HomePage {
                     poster: item.stream_icon || item.data.poster,
                     sourceId: sourceId,
                     resumeTime: isResume ? item.progress : 0,
-                    containerExtension: container
+                    containerExtension: container,
+                    duration: item.duration ?? item.data?.duration_secs ?? item.data?.duration
                 };
 
                 // For episodes, try to restore series data for next episode functionality

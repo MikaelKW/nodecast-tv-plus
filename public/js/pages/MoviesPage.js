@@ -366,7 +366,8 @@ class MoviesPage {
                         rating: movie.rating,
                         sourceId: movie.sourceId,
                         categoryId: movie.category_id,
-                        containerExtension: container
+                        containerExtension: container,
+                        duration: movie.duration_secs ?? movie.duration
                     }, result.url);
                 }
             }
