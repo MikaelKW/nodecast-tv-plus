@@ -27,7 +27,7 @@ NodeCast TV Plus uses Semantic Versioning and publishes releases only from teste
 4. Verify the release page and the `linux/amd64` and `linux/arm64` images.
 5. Confirm the registry provides `X.Y.Z`, `X.Y`, and `latest` tags. The `latest` tag must point to the newest stable release, not an unreleased `main` build.
 
-Do not push a release tag separately and do not publish a tag before the release candidate is approved. This avoids duplicate image builds and prevents an unverified commit from becoming an immutable release.
+Do not push a release tag separately and do not publish a tag before the release candidate passes the required validation. This avoids duplicate image builds and prevents an unverified commit from becoming an immutable release.
 
 ## Validation commands
 
