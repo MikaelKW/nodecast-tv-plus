@@ -108,6 +108,27 @@ async function run() {
             return;
         }
 
+        if (request.url === '/ignored-range-fixed') {
+            assert.equal(request.headers.range, 'bytes=2-5');
+            response.writeHead(200, {
+                'Content-Type': 'video/mp4',
+                'Content-Length': '10',
+                // Some origins advertise byte ranges but still ignore the
+                // concrete request. The response semantics are authoritative.
+                'Accept-Ranges': 'bytes'
+            });
+            response.end('0123456789');
+            return;
+        }
+
+        if (request.url === '/ignored-range-chunked') {
+            assert.equal(request.headers.range, 'bytes=2-5');
+            response.writeHead(200, { 'Content-Type': 'video/mp4' });
+            response.write('01234');
+            response.end('56789');
+            return;
+        }
+
         if (request.url === '/playlist.m3u8') {
             response.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
             response.write('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n');
@@ -236,6 +257,16 @@ async function run() {
         assert.equal(rangeResponse.headers.get('content-range'), 'bytes 2-5/10');
         assert.equal(rangeResponse.headers.get('accept-ranges'), 'bytes');
         assert.equal(await rangeResponse.text(), '2345');
+
+        for (const pathName of ['/ignored-range-fixed', '/ignored-range-chunked']) {
+            const ignoredRangeResponse = await fetch(proxy(`${sourceBaseUrl}${pathName}`), {
+                headers: { Cookie: cookie, Range: 'bytes=2-5' }
+            });
+            assert.equal(ignoredRangeResponse.status, 200);
+            assert.equal(ignoredRangeResponse.headers.get('content-range'), null);
+            assert.equal(ignoredRangeResponse.headers.get('accept-ranges'), 'none');
+            assert.equal(await ignoredRangeResponse.text(), '0123456789');
+        }
 
         const manifestResponse = await fetch(proxy(`${sourceBaseUrl}/playlist.m3u8`), { headers: { Cookie: cookie } });
         assert.equal(manifestResponse.status, 200);

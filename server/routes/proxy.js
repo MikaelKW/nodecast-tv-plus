@@ -666,12 +666,19 @@ router.get('/stream', async (req, res) => {
             if (contentRange) {
                 res.set('Content-Range', contentRange);
             }
-            if (acceptRanges) {
+            const honoredRangeRequest = !rangeHeader || (
+                response.status === 206
+                && Boolean(contentRange)
+            );
+            if (rangeHeader && !honoredRangeRequest) {
+                // A known response size does not prove that the origin supports
+                // byte-range requests. Explicitly report the failed capability
+                // so browsers do not keep treating an origin that returned the
+                // complete object as seekable.
+                res.set('Accept-Ranges', 'none');
+                console.warn('[Proxy] Upstream ignored a byte-range request; seeking is unavailable for this response.');
+            } else if (acceptRanges) {
                 res.set('Accept-Ranges', acceptRanges);
-            } else if (contentLength && !contentRange) {
-                // If server supports content-length but didn't explicitly state accept-ranges,
-                // we can safely assume it supports byte ranges
-                res.set('Accept-Ranges', 'bytes');
             }
 
             // Set status code (206 for partial content when range request was made)
