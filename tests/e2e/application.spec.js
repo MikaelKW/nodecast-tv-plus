@@ -1150,6 +1150,70 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }
     await variantGroup.click();
     await expect(variantGroup).toHaveClass(/collapsed/);
+
+    // A search that matches a very large group must discover the complete
+    // count without walking every global result page while the group remains
+    // collapsed. Expanding it fetches one bounded category page instead.
+    const syntheticSearchRequests = [];
+    await page.route(`**/api/proxy/catalogue/${variantSource.id}/live/channels**`, async route => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get('query') !== 'Nordic Synthetic') {
+            await route.continue();
+            return;
+        }
+        syntheticSearchRequests.push(url.toString());
+        const categoryId = url.searchParams.get('category_id');
+        const items = categoryId
+            ? Array.from({ length: 500 }, (_, index) => ({
+                stream_id: `synthetic-${index}`,
+                name: `Nordic Synthetic ${String(index).padStart(3, '0')}`,
+                category_id: categoryId,
+                category_name: 'Quality Variants',
+                stream_icon: '',
+                container_extension: 'ts'
+            }))
+            : [{
+                stream_id: 'synthetic-discovery',
+                name: 'Nordic Synthetic discovery item',
+                category_id: '1',
+                category_name: 'Quality Variants',
+                stream_icon: '',
+                container_extension: 'ts'
+            }];
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                schemaVersion: 1,
+                revision: 1,
+                sourceId: variantSource.id,
+                contentType: 'live',
+                categoryId,
+                query: 'Nordic Synthetic',
+                matchGroups: categoryId ? undefined : [{ name: 'Quality Variants', count: 24000 }],
+                items,
+                hasMore: true,
+                nextCursor: 'synthetic-next-page'
+            })
+        });
+    });
+    await page.locator('#channel-search').fill('Nordic Synthetic');
+    const syntheticGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(syntheticGroup).toContainText('24000');
+    await expect(syntheticGroup).toHaveClass(/collapsed/);
+    await expect(page.locator('.channel-item')).toHaveCount(0);
+    await page.waitForTimeout(750);
+    expect(syntheticSearchRequests).toHaveLength(1);
+    expect(new URL(syntheticSearchRequests[0]).searchParams.get('limit')).toBe('1');
+    expect(new URL(syntheticSearchRequests[0]).searchParams.has('category_id')).toBe(false);
+    await syntheticGroup.click();
+    await expect.poll(() => syntheticSearchRequests.length).toBe(2);
+    expect(new URL(syntheticSearchRequests[1]).searchParams.has('category_id')).toBe(true);
+    await expect(page.locator('.channel-item')).toHaveCount(500);
+    await syntheticGroup.click();
+    await page.locator('#channel-search').fill('');
+    await page.unroute(`**/api/proxy/catalogue/${variantSource.id}/live/channels**`);
+
     await page.locator('#channel-search').fill('Quality Variant');
     const searchGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
     await expect(searchGroup).toContainText('4');
