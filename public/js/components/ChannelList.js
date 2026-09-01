@@ -1525,7 +1525,11 @@ class ChannelList {
                 }
                 completedSources += 1;
                 const { source, page } = result.value;
-                this.boundedSearchPages.set(String(source.id), page);
+                const previous = this.boundedSearchPages.get(String(source.id));
+                this.boundedSearchPages.set(String(source.id), {
+                    ...page,
+                    matchGroups: page.matchGroups || previous?.matchGroups || []
+                });
                 for (const item of page.items || []) {
                     nextItems.push(this._mapBoundedChannel(item, source));
                 }
@@ -1929,13 +1933,25 @@ class ChannelList {
         const groups = [];
         if (query) {
             const byGroup = new Map();
+            const matchCounts = new Map();
+            for (const page of this.boundedSearchPages.values()) {
+                for (const group of page.matchGroups || []) {
+                    const name = group.name || 'Uncategorized';
+                    matchCounts.set(name, (matchCounts.get(name) || 0) + (Number(group.count) || 0));
+                }
+            }
             for (const channel of this.boundedSearchResults) {
                 const name = channel.groupTitle || 'Uncategorized';
                 if (!byGroup.has(name)) byGroup.set(name, []);
                 byGroup.get(name).push(channel);
             }
             for (const [name, channels] of [...byGroup.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-                groups.push({ name, count: channels.length, channels, search: true });
+                groups.push({
+                    name,
+                    count: matchCounts.get(name) ?? channels.length,
+                    channels,
+                    search: true
+                });
             }
         } else {
             if (this.favoriteChannels.length > 0) {
@@ -1949,7 +1965,7 @@ class ChannelList {
             const isFavorites = group.favorites;
             const isSearch = group.search;
             const state = this.boundedGroupPages.get(groupName);
-            const collapsed = !isSearch && !isFavorites && this.collapsedGroups.has(groupName);
+            const collapsed = !isFavorites && this.collapsedGroups.has(groupName);
             const channels = group.channels || state?.channels || [];
             this.groupedChannels[groupName] = channels;
             if (!collapsed) {
@@ -1980,9 +1996,13 @@ class ChannelList {
 
             const header = groupEl.querySelector('.group-header');
             header.addEventListener('click', async () => {
-                if (isSearch || isFavorites) return;
+                if (isFavorites) return;
                 const anchor = this._captureBoundedScrollAnchor(header);
                 this.toggleGroup(groupName);
+                if (isSearch) {
+                    this.renderBounded({ preserveScrollPosition: true, scrollAnchor: anchor });
+                    return;
+                }
                 if (collapsed && !state?.channels?.length) {
                     await this.loadBoundedGroup(groupName, { scrollAnchor: anchor });
                 } else {

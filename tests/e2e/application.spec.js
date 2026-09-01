@@ -1148,8 +1148,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     for (const name of ['Quality Variant 4K', 'Quality Variant FHD', 'Quality Variant HD', 'Quality Variant SD']) {
         await expect(page.locator('.channel-name', { hasText: name, exact: true })).toBeVisible();
     }
+    await variantGroup.click();
+    await expect(variantGroup).toHaveClass(/collapsed/);
     await page.locator('#channel-search').fill('Quality Variant');
+    const searchGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(searchGroup).toContainText('4');
+    await expect(searchGroup).toHaveClass(/collapsed/);
+    await expect(page.locator('.channel-item')).toHaveCount(0);
+    await searchGroup.click();
+    await expect(searchGroup).not.toHaveClass(/collapsed/);
     await expect(page.locator('.channel-item')).toHaveCount(4);
+    await searchGroup.click();
+    await expect(searchGroup).toHaveClass(/collapsed/);
     await page.locator('#channel-search').fill('');
     await page.locator('#source-select').selectOption('');
     await page.locator('.group-header', { hasText: 'Local Test' }).click();
