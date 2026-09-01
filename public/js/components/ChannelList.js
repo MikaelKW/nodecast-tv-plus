@@ -30,8 +30,8 @@ class ChannelList {
         this.boundedGroups = [];
         this.boundedGroupIndex = new Map();
         this.boundedGroupPages = new Map();
-        this.boundedSearchResults = [];
         this.boundedSearchPages = new Map();
+        this.boundedSearchGroupPages = new Map();
         this.boundedSources = [];
         this.favoriteChannels = [];
         this.guideChannels = null;
@@ -1455,7 +1455,7 @@ class ChannelList {
             }
             this.boundedGroupPages.clear();
             this.boundedSearchPages.clear();
-            this.boundedSearchResults = [];
+            this.boundedSearchGroupPages.clear();
             this.favoriteChannels = (favoriteChannels || []).filter(channel =>
                 selectedSources.some(source => String(source.id) === String(channel.sourceId))
             );
@@ -1482,39 +1482,36 @@ class ChannelList {
         }
     }
 
-    async loadBoundedSearch({ append = false } = {}) {
+    async loadBoundedSearch() {
         const query = this.searchInput.value.trim();
         if (!this.isCatalogueReady) return;
         const requestId = ++this._boundedRequestId;
         if (!query) {
-            this.boundedSearchResults = [];
             this.boundedSearchPages.clear();
+            this.boundedSearchGroupPages.clear();
             this.renderBounded();
             return;
         }
 
-        this.isLoading = !append;
-        if (!append) {
-            this.boundedSearchResults = [];
-            this.boundedSearchPages.clear();
-        }
-        this.renderBounded({ preserveScrollPosition: append });
+        this.isLoading = true;
+        this.boundedSearchPages.clear();
+        this.boundedSearchGroupPages.clear();
+        this.renderBounded();
 
         try {
             const requests = this.boundedSources.map(async source => {
-                const previous = this.boundedSearchPages.get(String(source.id));
-                if (append && previous && !previous.hasMore) return null;
                 const page = await API.proxy.catalogue.liveChannels(source.id, {
                     query,
-                    cursor: append ? previous?.nextCursor : null,
-                    limit: 100
+                    // Search discovery only needs the complete per-group counts
+                    // carried by the first page. Matching channels are fetched
+                    // later, in bounded pages, when their group is expanded.
+                    limit: 1
                 });
                 return { source, page };
             });
             const results = await Promise.allSettled(requests);
             if (requestId !== this._boundedRequestId) return;
 
-            const nextItems = [];
             let completedSources = 0;
             for (const result of results) {
                 if (result.status !== 'fulfilled' || !result.value) {
@@ -1525,36 +1522,18 @@ class ChannelList {
                 }
                 completedSources += 1;
                 const { source, page } = result.value;
-                const previous = this.boundedSearchPages.get(String(source.id));
-                this.boundedSearchPages.set(String(source.id), {
-                    ...page,
-                    matchGroups: page.matchGroups || previous?.matchGroups || []
-                });
-                for (const item of page.items || []) {
-                    nextItems.push(this._mapBoundedChannel(item, source));
-                }
+                this.boundedSearchPages.set(String(source.id), page);
             }
             if (requests.length > 0 && completedSources === 0) {
                 throw new Error('Unable to search channels from any enabled source');
             }
-            const combined = append
-                ? [...this.boundedSearchResults, ...nextItems]
-                : nextItems;
-            const unique = new Map(combined.map(channel => [
-                `${channel.sourceId}:${channel.id}`,
-                channel
-            ]));
-            this.boundedSearchResults = [...unique.values()].sort((a, b) =>
-                a.name.localeCompare(b.name)
-            );
-            this._rememberBoundedChannels(this.boundedSearchResults);
             this.isLoading = false;
-            this.renderBounded({ preserveScrollPosition: append });
+            this.renderBounded();
         } catch (err) {
             if (requestId !== this._boundedRequestId) return;
             this.isLoading = false;
             this.loadError = err.message || 'Unable to search channels';
-            this.renderBounded({ preserveScrollPosition: append });
+            this.renderBounded();
         }
     }
 
@@ -1563,17 +1542,21 @@ class ChannelList {
         preserveScrollPosition = true,
         scrollAnchor = null
     } = {}) {
+        const query = this.searchInput.value.trim();
         const group = this.boundedGroupIndex.get(groupName);
         if (!group) return;
-        const current = this.boundedGroupPages.get(groupName) || {
+        const pageMap = query ? this.boundedSearchGroupPages : this.boundedGroupPages;
+        const current = pageMap.get(groupName) || {
             channels: [],
             parts: new Map(),
-            loading: false
+            loading: false,
+            query
         };
+        if (current.query !== query) return;
         if (current.loading) return;
         const hadChannels = current.channels.length > 0;
         current.loading = true;
-        this.boundedGroupPages.set(groupName, current);
+        pageMap.set(groupName, current);
         // Keep an already-rendered page in place while its continuation is
         // prepared. Rebuilding the entire sidebar here briefly blanked large
         // lists and doubled the amount of synchronous DOM work per page.
@@ -1591,8 +1574,9 @@ class ChannelList {
                 current.prefetchedBatch = null;
             }
             if (!batch) {
-                batch = await this._fetchBoundedGroupPage(groupName, current, { append });
+                batch = await this._fetchBoundedGroupPage(groupName, current, { append, query });
             }
+            if (this.searchInput.value.trim() !== query || pageMap.get(groupName) !== current) return;
             this._applyBoundedGroupPage(current, batch, { append });
             current.loading = false;
             current.error = null;
@@ -1616,7 +1600,7 @@ class ChannelList {
         }
     }
 
-    async _fetchBoundedGroupPage(groupName, current, { append = true } = {}) {
+    async _fetchBoundedGroupPage(groupName, current, { append = true, query = '' } = {}) {
         const group = this.boundedGroupIndex.get(groupName);
         if (!group) throw new Error('Channel group is no longer available');
 
@@ -1626,6 +1610,7 @@ class ChannelList {
             if (append && previous && !previous.hasMore) return null;
             const page = await API.proxy.catalogue.liveChannels(part.source.id, {
                 categoryId: part.categoryId,
+                query,
                 cursor: append ? previous?.nextCursor : null,
                 // A normal-sized group should feel complete as soon as it
                 // opens. Larger groups continue in bounded pages as the
@@ -1670,15 +1655,17 @@ class ChannelList {
     }
 
     _prefetchBoundedGroup(groupName) {
-        const current = this.boundedGroupPages.get(groupName);
+        const query = this.searchInput.value.trim();
+        const pageMap = query ? this.boundedSearchGroupPages : this.boundedGroupPages;
+        const current = pageMap.get(groupName);
         if (!current?.channels?.length || !current.hasMore || current.loading) return null;
         if (current.prefetchedBatch) return Promise.resolve(current.prefetchedBatch);
         if (current.prefetchPromise) return current.prefetchPromise;
 
         const expectedState = current;
-        current.prefetchPromise = this._fetchBoundedGroupPage(groupName, current, { append: true })
+        current.prefetchPromise = this._fetchBoundedGroupPage(groupName, current, { append: true, query })
             .then(batch => {
-                if (this.boundedGroupPages.get(groupName) !== expectedState) return null;
+                if (pageMap.get(groupName) !== expectedState || this.searchInput.value.trim() !== query) return null;
                 current.prefetchedBatch = batch;
                 return batch;
             })
@@ -1695,7 +1682,7 @@ class ChannelList {
     }
 
     _scheduleBoundedGroupLookahead() {
-        if (!this.boundedMode || this.searchInput.value.trim() || this.boundedLookaheadScrollScheduled) return;
+        if (!this.boundedMode || this.boundedLookaheadScrollScheduled) return;
         this.boundedLookaheadScrollScheduled = true;
         const schedule = typeof requestAnimationFrame === 'function'
             ? requestAnimationFrame
@@ -1707,7 +1694,10 @@ class ChannelList {
             for (const groupElement of expandedGroups) {
                 const header = groupElement.querySelector('.group-header[data-group]:not(.collapsed)');
                 if (!header || header.classList.contains('favorites-group')) continue;
-                const state = this.boundedGroupPages.get(header.dataset.group);
+                const pageMap = this.searchInput.value.trim()
+                    ? this.boundedSearchGroupPages
+                    : this.boundedGroupPages;
+                const state = pageMap.get(header.dataset.group);
                 if (!state?.hasMore || !state.channels?.length) continue;
                 const rect = groupElement.getBoundingClientRect();
                 if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) continue;
@@ -1793,27 +1783,19 @@ class ChannelList {
         this.boundedContinuationObserver?.disconnect();
         this.boundedContinuationObserver = null;
 
-        const sentinels = this.container.querySelectorAll(
-            '.bounded-load-sentinel, .bounded-search-sentinel'
-        );
+        const sentinels = this.container.querySelectorAll('.bounded-load-sentinel');
         if (sentinels.length === 0) return;
 
         if (typeof IntersectionObserver === 'undefined') {
             sentinels.forEach(sentinel => {
                 const button = document.createElement('button');
                 button.className = 'btn btn-secondary bounded-load-fallback';
-                button.textContent = sentinel.dataset.kind === 'search'
-                    ? 'Load more results'
-                    : 'Load remaining channels';
+                button.textContent = 'Load remaining channels';
                 button.addEventListener('click', () => {
-                    if (sentinel.dataset.kind === 'search') {
-                        this.loadBoundedSearch({ append: true });
-                    } else {
-                        this.loadBoundedGroup(sentinel.dataset.group, {
-                            append: sentinel.dataset.mode !== 'initial',
-                            preserveScrollPosition: true
-                        });
-                    }
+                    this.loadBoundedGroup(sentinel.dataset.group, {
+                        append: sentinel.dataset.mode !== 'initial',
+                        preserveScrollPosition: true
+                    });
                 });
                 sentinel.replaceChildren(button);
             });
@@ -1827,24 +1809,14 @@ class ChannelList {
             // them prevents a burst of large page requests and DOM updates.
             const entry = entries.find(candidate => candidate.isIntersecting);
             if (!entry) return;
-            const isSearch = entry.target.dataset.kind === 'search';
             const groupName = entry.target.dataset.group;
             const append = entry.target.dataset.mode !== 'initial';
             this.boundedContinuationObserver?.unobserve(entry.target);
             this.boundedObserverLoadInFlight = true;
             try {
-                if (isSearch) {
-                    await this.loadBoundedSearch({ append: true });
-                } else {
-                    await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
-                }
+                await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
             } catch (err) {
-                console.error(
-                    isSearch
-                        ? 'Unable to continue loading search results:'
-                        : `Unable to continue loading group ${groupName}:`,
-                    err
-                );
+                console.error(`Unable to continue loading group ${groupName}:`, err);
             } finally {
                 this.boundedObserverLoadInFlight = false;
                 // A render performed while the serialized load was active may
@@ -1932,7 +1904,6 @@ class ChannelList {
 
         const groups = [];
         if (query) {
-            const byGroup = new Map();
             const matchCounts = new Map();
             for (const page of this.boundedSearchPages.values()) {
                 for (const group of page.matchGroups || []) {
@@ -1940,16 +1911,10 @@ class ChannelList {
                     matchCounts.set(name, (matchCounts.get(name) || 0) + (Number(group.count) || 0));
                 }
             }
-            for (const channel of this.boundedSearchResults) {
-                const name = channel.groupTitle || 'Uncategorized';
-                if (!byGroup.has(name)) byGroup.set(name, []);
-                byGroup.get(name).push(channel);
-            }
-            for (const [name, channels] of [...byGroup.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+            for (const [name, count] of [...matchCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
                 groups.push({
                     name,
-                    count: matchCounts.get(name) ?? channels.length,
-                    channels,
+                    count,
                     search: true
                 });
             }
@@ -1964,7 +1929,9 @@ class ChannelList {
             const groupName = group.name;
             const isFavorites = group.favorites;
             const isSearch = group.search;
-            const state = this.boundedGroupPages.get(groupName);
+            const state = isSearch
+                ? this.boundedSearchGroupPages.get(groupName)
+                : this.boundedGroupPages.get(groupName);
             const collapsed = !isFavorites && this.collapsedGroups.has(groupName);
             const channels = group.channels || state?.channels || [];
             this.groupedChannels[groupName] = channels;
@@ -1990,7 +1957,7 @@ class ChannelList {
                 ${collapsed ? '' : channels.map(channel => this._boundedChannelHtml(channel, groupName)).join('')}
                 ${!collapsed && state?.loading ? '<div class="loading"></div>' : ''}
                 ${!collapsed && state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p><button class="btn btn-secondary bounded-load-retry">Try again</button></div>` : ''}
-                ${!collapsed && !isSearch && !isFavorites && !state ? `<div class="bounded-load-sentinel" data-mode="initial" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
+                ${!collapsed && !isFavorites && !state ? `<div class="bounded-load-sentinel" data-mode="initial" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
                 ${!collapsed && state?.hasMore && !state.loading && !state.error ? `<div class="bounded-load-sentinel" data-mode="append" data-group="${this.escapeHtml(groupName)}"><div class="loading"></div></div>` : ''}
               </div>`;
 
@@ -1999,10 +1966,6 @@ class ChannelList {
                 if (isFavorites) return;
                 const anchor = this._captureBoundedScrollAnchor(header);
                 this.toggleGroup(groupName);
-                if (isSearch) {
-                    this.renderBounded({ preserveScrollPosition: true, scrollAnchor: anchor });
-                    return;
-                }
                 if (collapsed && !state?.channels?.length) {
                     await this.loadBoundedGroup(groupName, { scrollAnchor: anchor });
                 } else {
@@ -2017,18 +1980,10 @@ class ChannelList {
             list.appendChild(groupEl);
         }
 
-        if (query && this.boundedSearchResults.length === 0) {
+        if (query && groups.length === 0) {
             list.innerHTML = '<div class="empty-state"><p>No channels match your search</p><p class="hint">Try a different search term</p></div>';
         } else if (!query && groups.length === 0) {
             list.innerHTML = '<div class="empty-state"><p>No channels loaded</p><p class="hint">Add a source in Settings to get started</p></div>';
-        }
-
-        if (query && [...this.boundedSearchPages.values()].some(page => page.hasMore)) {
-            const sentinel = document.createElement('div');
-            sentinel.className = 'bounded-search-sentinel';
-            sentinel.dataset.kind = 'search';
-            sentinel.innerHTML = '<div class="loading"></div>';
-            list.appendChild(sentinel);
         }
 
         fragment.appendChild(list);
