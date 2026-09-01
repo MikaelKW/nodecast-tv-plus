@@ -152,6 +152,30 @@ function getLiveChannelPage(sourceId, options = {}) {
         params.push(pattern, pattern);
     }
 
+    // The first search page carries complete per-group counts so the client
+    // can keep rendering bounded result pages without presenting the number
+    // currently loaded as though it were the total number of matches.
+    let matchGroups;
+    if (query && !cursor) {
+        const countRows = db.prepare(`
+            SELECT
+                COALESCE(c.name, 'Uncategorized') AS category_name,
+                COUNT(*) AS item_count
+            FROM playlist_items p
+            LEFT JOIN categories c
+                ON c.source_id = p.source_id
+               AND c.type = p.type
+               AND c.category_id = p.category_id
+            WHERE ${where.join('\n              AND ')}
+            GROUP BY COALESCE(c.name, 'Uncategorized')
+            ORDER BY category_name COLLATE NOCASE
+        `).all(...params);
+        matchGroups = countRows.map(row => ({
+            name: row.category_name,
+            count: row.item_count
+        }));
+    }
+
     if (cursor) {
         where.push(`(
             p.name COLLATE NOCASE > ? COLLATE NOCASE
@@ -191,6 +215,7 @@ function getLiveChannelPage(sourceId, options = {}) {
         contentType: 'live',
         categoryId,
         query,
+        matchGroups,
         items: pageRows.map(formatLiveChannel),
         hasMore,
         nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null
