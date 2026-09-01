@@ -18,6 +18,7 @@
         "test:xtream-api": "node scripts/xtream-api-compatibility-test.js",
         "test:variants": "node scripts/channel-variant-test.js",
         "test:catalogue-resilience": "node scripts/channel-catalogue-resilience-test.js",
+        "test:catalogue-search": "node scripts/catalogue-search-test.js",
         "test:transcode": "node scripts/transcode-test.js",
         "test:subtitle": "node scripts/subtitle-test.js",
         "test:vod-duration": "node scripts/vod-duration-test.js",
@@ -41,7 +42,7 @@
         "test:resource-controls": "node scripts/resource-controls-test.js",
         "test:updates": "node scripts/release-update-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:health && npm run test:proxy && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:catalogue-search && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
