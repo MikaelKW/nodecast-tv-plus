@@ -320,6 +320,14 @@ Common adjustments under **Settings > Transcoding**:
 
 HLS is preferred. Raw MPEG-TS streams are automatically remuxed when required. RTMP and RTSP cannot be played directly by web browsers.
 
+### Personal subtitle preferences
+
+Open **Settings > Preferences** to choose a preferred subtitle language and automatic mode for Movies and Series: **No subtitles**, **Default**, **Forced only**, or **Always preferred**. Select a language to enable **Always preferred**; tracks can still be changed manually during playback.
+
+Subtitle appearance controls include text size and color, background color and opacity, edge style, and vertical position, with a live preview. These settings apply only to the signed-in account, including viewer accounts; they do not change global server settings.
+
+The HTML subtitle overlay uses these controls during ordinary playback and web fullscreen. iPhone/iPad native fullscreen and other browser-controlled playback surfaces use native subtitle rendering, which may not honor the same appearance settings.
+
 <details>
 <summary><strong>Browser codec support and stream types</strong></summary>
 
