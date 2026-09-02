@@ -2,7 +2,7 @@ const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
 const { parseBoundedInteger } = require('../services/requestControls');
-const { getDb } = require('../db/sqlite');
+const { getDb, catalogueRevisions } = require('../db/sqlite');
 const auth = require('../auth');
 
 router.use(auth.requireAuth);
@@ -37,6 +37,11 @@ const limitRecentContent = rateLimit({
 function requireSourceId(value) {
     const sourceId = Number(value);
     return Number.isSafeInteger(sourceId) && sourceId > 0 ? sourceId : null;
+}
+
+function bumpCatalogueRevision(sourceId) {
+    const normalized = requireSourceId(sourceId);
+    if (normalized) catalogueRevisions.bump(normalized);
 }
 
 function contentTypes(value) {
@@ -170,6 +175,7 @@ router.post('/hide', auth.requireAdmin, limitVisibilityWrites, async (req, res) 
         if (mapping.table === 'playlist_items') {
             reconcileCategories(sourceId, mapping.type, [itemId]);
         }
+        bumpCatalogueRevision(sourceId);
 
         res.json({ success: true });
     } catch (err) {
@@ -200,6 +206,7 @@ router.post('/show', auth.requireAdmin, limitVisibilityWrites, async (req, res) 
         if (mapping.table === 'playlist_items') {
             reconcileCategories(sourceId, mapping.type, [itemId]);
         }
+        bumpCatalogueRevision(sourceId);
 
         res.json({ success: true });
     } catch (err) {
@@ -273,6 +280,9 @@ router.post('/hide/bulk', auth.requireAdmin, limitVisibilityWrites, async (req, 
         });
 
         runBulk(items);
+        for (const sourceId of new Set(items.map(item => requireSourceId(item?.sourceId)).filter(Boolean))) {
+            catalogueRevisions.bump(sourceId);
+        }
         res.json({ success: true, count: items.length });
     } catch (err) {
         if (err.code === 'SQLITE_BUSY') {
@@ -326,6 +336,9 @@ router.post('/show/bulk', auth.requireAdmin, limitVisibilityWrites, async (req, 
         });
 
         runBulk(items);
+        for (const sourceId of new Set(items.map(item => requireSourceId(item?.sourceId)).filter(Boolean))) {
+            catalogueRevisions.bump(sourceId);
+        }
         res.json({ success: true, count: items.length });
     } catch (err) {
         if (err.code === 'SQLITE_BUSY') {
@@ -359,6 +372,8 @@ router.post('/show/all', auth.requireAdmin, async (req, res) => {
             }
         })();
 
+        catalogueRevisions.bump(sourceId);
+
         console.log('[Channels] Show all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
     } catch (err) {
@@ -389,6 +404,8 @@ router.post('/hide/all', auth.requireAdmin, async (req, res) => {
                 itemCount += itemResult.changes;
             }
         })();
+
+        catalogueRevisions.bump(sourceId);
 
         console.log('[Channels] Hide all completed:', { sourceId, contentType: types[0], catCount, itemCount });
         res.json({ success: true, categoriesUpdated: catCount, itemsUpdated: itemCount });
@@ -508,6 +525,7 @@ router.post('/visibility/apply', auth.requireAdmin, async (req, res) => {
         });
 
         const result = apply();
+        catalogueRevisions.bump(sourceId);
         console.log('[Channels] Visibility applied:', {
             sourceId,
             contentType: types[0],

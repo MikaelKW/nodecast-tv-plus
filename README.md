@@ -1,4 +1,12 @@
 <p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/img/logo-banner.png" />
+    <source media="(prefers-color-scheme: light)" srcset="public/img/logo-banner-light.png" />
+    <img src="public/img/logo-banner-light.png" alt="NodeCast TV Plus" height="80" />
+  </picture>
+</p>
+
+<p align="center">
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml"><img src="https://github.com/MikaelKW/nodecast-tv-plus/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
   <a href="https://github.com/MikaelKW/nodecast-tv-plus/releases"><img src="https://img.shields.io/github/v/release/MikaelKW/nodecast-tv-plus?display_name=tag" alt="Latest release" /></a>
   <a href="https://hub.docker.com/r/mikaelkw/nodecast-tv-plus"><img src="https://img.shields.io/badge/Docker%20Hub-nodecast--tv--plus-2496ED?logo=docker&logoColor=white" alt="Docker Hub" /></a>
@@ -311,6 +319,14 @@ Common adjustments under **Settings > Transcoding**:
 | Constant buffering | Lower the maximum resolution or quality preset, check available CPU/GPU and network capacity, and compare HLS with MPEG-TS output when the Xtream provider offers both. |
 
 HLS is preferred. Raw MPEG-TS streams are automatically remuxed when required. RTMP and RTSP cannot be played directly by web browsers.
+
+### Personal subtitle preferences
+
+Open **Settings > Preferences** to choose a preferred subtitle language and automatic mode for Movies and Series: **No subtitles**, **Default**, **Forced only**, or **Always preferred**. Select a language to enable **Always preferred**; tracks can still be changed manually during playback.
+
+Subtitle appearance controls include text size and color, background color and opacity, edge style, and vertical position, with a live preview. These settings apply only to the signed-in account, including viewer accounts; they do not change global server settings.
+
+The HTML subtitle overlay uses these controls during ordinary playback and web fullscreen. iPhone/iPad native fullscreen and other browser-controlled playback surfaces use native subtitle rendering, which may not honor the same appearance settings.
 
 <details>
 <summary><strong>Browser codec support and stream types</strong></summary>

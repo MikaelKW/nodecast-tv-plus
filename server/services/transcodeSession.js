@@ -22,6 +22,9 @@ const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
 
 // Session storage
 const sessions = new Map();
+const leaseLocks = new Map();
+
+const PLAYBACK_LEASE_ID_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 
 // Cache directory for transcoded segments
 const CACHE_DIR = process.env.NODECAST_CACHE_DIR
@@ -30,16 +33,59 @@ const CACHE_DIR = process.env.NODECAST_CACHE_DIR
 
 // Session settings
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes idle timeout
+// Browser timers may be throttled in background tabs. A generous lease grace
+// keeps intentional paused playback alive while still reclaiming abandoned tabs.
+const PLAYBACK_LEASE_TIMEOUT_MS = 150 * 1000;
 const SEGMENT_DURATION = 4; // seconds per HLS segment
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+const CLEANUP_INTERVAL_MS = 15 * 1000;
 const MAX_ACTIVE_SESSIONS = 12;
 const MAX_ACTIVE_SESSIONS_PER_USER = 4;
+const LIVE_RESTART_DELAY_MS = 250;
+const LIVE_STABLE_RUN_MS = 10 * 1000;
+const MAX_RAPID_LIVE_RESTARTS = 4;
 
 /**
  * Generate a unique session ID
  */
 function generateSessionId() {
     return crypto.randomBytes(8).toString('hex');
+}
+
+function normalizePlaybackLeaseId(value) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !PLAYBACK_LEASE_ID_PATTERN.test(value)) {
+        const error = new Error('playbackLeaseId must be a valid opaque identifier');
+        error.statusCode = 400;
+        throw error;
+    }
+    return value;
+}
+
+function getLeaseKey(ownerId, playbackLeaseId) {
+    if (ownerId === null || ownerId === undefined || !playbackLeaseId) return null;
+    return `${String(ownerId)}:${playbackLeaseId}`;
+}
+
+function getLeaseTag(playbackLeaseId) {
+    if (!playbackLeaseId) return null;
+    return crypto.createHash('sha256').update(playbackLeaseId).digest('hex').slice(0, 10);
+}
+
+async function withLeaseLock(leaseKey, task) {
+    if (!leaseKey) return task();
+
+    const previous = leaseLocks.get(leaseKey) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => { release = resolve; });
+    leaseLocks.set(leaseKey, current);
+
+    await previous.catch(() => {});
+    try {
+        return await task();
+    } finally {
+        release();
+        if (leaseLocks.get(leaseKey) === current) leaseLocks.delete(leaseKey);
+    }
 }
 
 /**
@@ -65,6 +111,10 @@ class TranscodeSession extends EventEmitter {
         this.dir = path.join(CACHE_DIR, this.id);
         this.playlistPath = path.join(this.dir, 'stream.m3u8');
         this.process = null;
+        this.restartTimer = null;
+        this.processStartedAt = 0;
+        this.rapidLiveRestartCount = 0;
+        this.retired = false;
         this.segments = new Map(); // segment index -> { ready: boolean, path: string }
         this.status = 'pending'; // pending | starting | running | stopped | error
         this.error = null;
@@ -72,6 +122,9 @@ class TranscodeSession extends EventEmitter {
         this.mediaStartTime = Math.max(0, Number(options.seekOffset) || 0);
         this.lastAccess = Date.now();
         this.ownerId = options.ownerId ?? null;
+        this.playbackLeaseId = normalizePlaybackLeaseId(options.playbackLeaseId);
+        this.playbackLeaseTag = getLeaseTag(this.playbackLeaseId);
+        this.lastPlaybackLeaseHeartbeat = this.playbackLeaseId ? Date.now() : null;
         this.options = {
             ffmpegPath: options.ffmpegPath || 'ffmpeg',
             ffprobePath: options.ffprobePath || 'ffprobe',
@@ -92,7 +145,12 @@ class TranscodeSession extends EventEmitter {
      * Start the transcoding process
      */
     async start() {
-        if (this.status === 'running') {
+        if (this.retired) {
+            const error = new Error('Transcode session was replaced before startup completed');
+            error.statusCode = 409;
+            throw error;
+        }
+        if (this.status === 'running' || this.process) {
             return;
         }
 
@@ -112,21 +170,23 @@ class TranscodeSession extends EventEmitter {
         const args = this.buildFFmpegArgs();
 
         try {
-            this.process = spawn(this.options.ffmpegPath, args, {
+            const activeProcess = spawn(this.options.ffmpegPath, args, {
                 cwd: this.dir,
                 windowsHide: true
             });
+            this.process = activeProcess;
+            this.processStartedAt = Date.now();
 
             this.status = 'running';
 
             // Handle stdout (should be empty for file output)
-            this.process.stdout.on('data', (data) => {
+            activeProcess.stdout.on('data', (data) => {
                 console.log(`[TranscodeSession ${this.id}] stdout: ${data}`);
             });
 
             // Handle stderr (FFmpeg progress/errors)
             let stderrBuffer = '';
-            this.process.stderr.on('data', (data) => {
+            activeProcess.stderr.on('data', (data) => {
                 stderrBuffer += data.toString();
                 // Log periodically to avoid spam
                 const lines = stderrBuffer.split('\n');
@@ -141,8 +201,12 @@ class TranscodeSession extends EventEmitter {
             });
 
             // Handle process exit
-            this.process.on('exit', (code) => {
-                if (code === 0 || code === null) {
+            activeProcess.on('exit', (code) => {
+                if (this.process === activeProcess) this.process = null;
+
+                if (this.options.livePlayback === true && !this.retired) {
+                    this.scheduleLiveRestart(code);
+                } else if (code === 0 || code === null) {
                     console.log(`[TranscodeSession ${this.id}] FFmpeg completed successfully`);
                     this.status = 'stopped';
                 } else if (code !== 255) { // 255 is often from SIGKILL
@@ -150,23 +214,63 @@ class TranscodeSession extends EventEmitter {
                     this.status = 'error';
                     this.error = `FFmpeg exited with code ${code}`;
                 }
-                this.process = null;
                 this.emit('exit', code);
             });
 
             // Handle spawn errors
-            this.process.on('error', (err) => {
+            activeProcess.on('error', (err) => {
                 console.error(`[TranscodeSession ${this.id}] FFmpeg error:`, err);
                 this.status = 'error';
                 this.error = err.message;
                 this.emit('error', err);
             });
 
+            // A rapid replacement can retire a pending session between the
+            // initial check and process creation. Never let that process outlive
+            // the lease that created it.
+            if (this.retired && this.process) {
+                this.process.kill('SIGKILL');
+                this.status = 'stopped';
+            }
+
         } catch (err) {
             this.status = 'error';
             this.error = err.message;
             throw err;
         }
+    }
+
+    scheduleLiveRestart(code) {
+        if (this.retired || this.restartTimer) return;
+
+        const runDuration = Date.now() - this.processStartedAt;
+        if (runDuration >= LIVE_STABLE_RUN_MS) {
+            this.rapidLiveRestartCount = 0;
+        } else {
+            this.rapidLiveRestartCount += 1;
+        }
+
+        if (this.rapidLiveRestartCount > MAX_RAPID_LIVE_RESTARTS) {
+            this.status = 'error';
+            this.error = 'Live input repeatedly disconnected before playback stabilized';
+            console.error(`[TranscodeSession ${this.id}] ${this.error}`);
+            return;
+        }
+
+        this.status = 'reconnecting';
+        console.warn(
+            `[TranscodeSession ${this.id}] Live input ended (code ${code ?? 'signal'}); reopening a fresh connection`
+        );
+        this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            if (this.retired) return;
+            this.start().catch(error => {
+                this.status = 'error';
+                this.error = error.message;
+                console.error(`[TranscodeSession ${this.id}] Live input restart failed: ${redactText(error.message)}`);
+            });
+        }, LIVE_RESTART_DELAY_MS);
+        this.restartTimer.unref?.();
     }
 
     /**
@@ -196,12 +300,15 @@ class TranscodeSession extends EventEmitter {
         }
 
         // Input options (common)
+        const reconnectArgs = this.options.livePlayback === true
+            ? []
+            : appendHttpReconnectArgs([]);
         args.push(
             '-probesize', '2000000',
             '-analyzeduration', '3000000',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
-            ...appendHttpReconnectArgs([])
+            ...reconnectArgs
         );
 
         args.push('-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST);
@@ -308,11 +415,14 @@ class TranscodeSession extends EventEmitter {
             // lead so ffprobe reports the real source time of the first packet.
             args.push('-muxpreload', '0', '-muxdelay', '0');
         }
+        const hlsFlags = this.options.livePlayback === true
+            ? 'independent_segments+append_list+omit_endlist'
+            : 'independent_segments+append_list';
         args.push(
             '-f', 'hls',
             '-hls_time', String(SEGMENT_DURATION),
             '-hls_list_size', '0', // Keep all segments in playlist
-            '-hls_flags', 'independent_segments+append_list',
+            '-hls_flags', hlsFlags,
             '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', path.join(this.dir, 'seg%04d.ts'),
             this.playlistPath
@@ -559,6 +669,10 @@ class TranscodeSession extends EventEmitter {
      * Stop the transcoding process
      */
     async stop() {
+        if (this.restartTimer) {
+            clearTimeout(this.restartTimer);
+            this.restartTimer = null;
+        }
         const activeProcess = this.process;
         if (activeProcess) {
             console.log(`[TranscodeSession ${this.id}] Stopping FFmpeg process`);
@@ -586,6 +700,12 @@ class TranscodeSession extends EventEmitter {
      */
     touch() {
         this.lastAccess = Date.now();
+    }
+
+    refreshPlaybackLease() {
+        if (!this.playbackLeaseId) return false;
+        this.lastPlaybackLeaseHeartbeat = Date.now();
+        return true;
     }
 
     /**
@@ -713,6 +833,7 @@ class TranscodeSession extends EventEmitter {
      * Delete session directory and all segments
      */
     async cleanup() {
+        this.retired = true;
         await this.stop();
         try {
             await fs.rm(this.dir, { recursive: true, force: true });
@@ -732,22 +853,40 @@ class TranscodeSession extends EventEmitter {
  */
 async function createSession(url, options = {}) {
     const ownerId = options.ownerId ?? null;
-    const activeSessions = Array.from(sessions.values()).filter(
-        session => !['stopped', 'error'].includes(session.status)
-    );
-    const ownerSessions = activeSessions.filter(session => session.ownerId === ownerId);
-    if (
-        activeSessions.length >= MAX_ACTIVE_SESSIONS
-        || ownerSessions.length >= MAX_ACTIVE_SESSIONS_PER_USER
-    ) {
-        const error = new Error('Too many transcode sessions are already running. Try again shortly.');
-        error.statusCode = 429;
-        throw error;
-    }
-    await ensureCacheDir();
-    const session = new TranscodeSession(url, options);
-    sessions.set(session.id, session);
-    return session;
+    const playbackLeaseId = normalizePlaybackLeaseId(options.playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, playbackLeaseId);
+
+    return withLeaseLock(leaseKey, async () => {
+        if (leaseKey) {
+            const replacedSessions = Array.from(sessions.values()).filter(session => (
+                session.ownerId === ownerId
+                && session.playbackLeaseId === playbackLeaseId
+            ));
+            for (const replacedSession of replacedSessions) {
+                await removeSession(replacedSession.id, ownerId, 'replaced');
+            }
+        }
+
+        const activeSessions = Array.from(sessions.values()).filter(
+            session => !['stopped', 'error'].includes(session.status)
+        );
+        const ownerSessions = activeSessions.filter(session => session.ownerId === ownerId);
+        if (
+            activeSessions.length >= MAX_ACTIVE_SESSIONS
+            || ownerSessions.length >= MAX_ACTIVE_SESSIONS_PER_USER
+        ) {
+            const error = new Error('Too many transcode sessions are already running. Try again shortly.');
+            error.statusCode = 429;
+            throw error;
+        }
+        await ensureCacheDir();
+        const session = new TranscodeSession(url, { ...options, playbackLeaseId });
+        sessions.set(session.id, session);
+        if (session.playbackLeaseTag) {
+            console.log(`[TranscodeSession ${session.id}] Acquired playback lease ${session.playbackLeaseTag}`);
+        }
+        return session;
+    });
 }
 
 /**
@@ -780,14 +919,48 @@ async function getOrCreateSession(url, options = {}) {
 /**
  * Stop and remove a session
  */
-async function removeSession(sessionId, ownerId = null) {
-    const session = getSession(sessionId, ownerId);
+async function removeSession(sessionId, ownerId = null, reason = 'requested') {
+    const session = sessions.get(sessionId);
+    if (session && ownerId !== null && session.ownerId !== ownerId) return false;
     if (session) {
+        console.log(`[TranscodeSession ${session.id}] Removing session (${reason})`);
         await session.cleanup();
         sessions.delete(sessionId);
         return true;
     }
     return false;
+}
+
+async function releasePlaybackLease(ownerId, playbackLeaseId) {
+    const normalizedLeaseId = normalizePlaybackLeaseId(playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, normalizedLeaseId);
+    if (!leaseKey) return 0;
+
+    return withLeaseLock(leaseKey, async () => {
+        const ownedSessions = Array.from(sessions.values()).filter(session => (
+            session.ownerId === ownerId
+            && session.playbackLeaseId === normalizedLeaseId
+        ));
+        for (const session of ownedSessions) {
+            await removeSession(session.id, ownerId, 'lease released');
+        }
+        return ownedSessions.length;
+    });
+}
+
+async function refreshPlaybackLease(ownerId, playbackLeaseId) {
+    const normalizedLeaseId = normalizePlaybackLeaseId(playbackLeaseId);
+    const leaseKey = getLeaseKey(ownerId, normalizedLeaseId);
+    if (!leaseKey) return 0;
+
+    return withLeaseLock(leaseKey, async () => {
+        const ownedSessions = Array.from(sessions.values()).filter(session => (
+            session.ownerId === ownerId
+            && session.playbackLeaseId === normalizedLeaseId
+        ));
+        for (const session of ownedSessions) session.refreshPlaybackLease();
+        return ownedSessions.length;
+    });
 }
 
 /**
@@ -796,9 +969,12 @@ async function removeSession(sessionId, ownerId = null) {
 async function cleanupStaleSessions() {
     const now = Date.now();
     for (const [id, session] of sessions) {
-        if (now - session.lastAccess > SESSION_TIMEOUT_MS) {
+        const abandonedPlaybackLease = session.playbackLeaseId
+            && now - session.lastPlaybackLeaseHeartbeat > PLAYBACK_LEASE_TIMEOUT_MS;
+        const staleSession = now - session.lastAccess > SESSION_TIMEOUT_MS;
+        if (abandonedPlaybackLease || staleSession) {
             console.log(`[TranscodeSession] Cleaning up stale session ${id}`);
-            await removeSession(id);
+            await removeSession(id, null, abandonedPlaybackLease ? 'abandoned playback lease' : 'stale');
         }
     }
 }
@@ -824,7 +1000,11 @@ function getAllSessions() {
         status: s.status,
         startTime: s.startTime,
         lastAccess: s.lastAccess,
-        idleMs: Date.now() - s.lastAccess
+        idleMs: Date.now() - s.lastAccess,
+        playbackLeaseTag: s.playbackLeaseTag,
+        playbackLeaseIdleMs: s.lastPlaybackLeaseHeartbeat === null
+            ? null
+            : Date.now() - s.lastPlaybackLeaseHeartbeat
     }));
 }
 
@@ -834,6 +1014,9 @@ module.exports = {
     getSession,
     getOrCreateSession,
     removeSession,
+    releasePlaybackLease,
+    refreshPlaybackLease,
+    normalizePlaybackLeaseId,
     cleanupStaleSessions,
     startCleanupInterval,
     getAllSessions,

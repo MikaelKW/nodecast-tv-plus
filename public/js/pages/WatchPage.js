@@ -66,6 +66,8 @@ class WatchPage {
         this.captionsMenu = document.getElementById('watch-captions-menu');
         this.captionsList = document.getElementById('watch-captions-list');
         this.audioList = document.getElementById('watch-audio-list');
+        this.subtitleOverlay = document.getElementById('watch-subtitle-overlay');
+        this.subtitleStack = document.getElementById('watch-subtitle-stack');
 
         // Transcode Status
         this.transcodeStatusEx = document.getElementById('watch-transcode-status');
@@ -102,6 +104,8 @@ class WatchPage {
         this.probeSubtitleRenderedOffsets = new WeakMap();
         this.subtitleLoadControllers = new Set();
         this.selectedSubtitleStreamIndex = null;
+        this.subtitlePreferenceApplied = false;
+        this.subtitleSelectionExplicit = false;
         this.subtitleRestoreTimers = [];
         this.subtitleWindowDuration = 60;
         this.subtitleWindowStep = 50;
@@ -109,6 +113,10 @@ class WatchPage {
         this.subtitleLoadingEnabled = false;
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
+        this.activeSubtitleTrack = null;
+        this.subtitleOverlaySignature = '';
+        this.nativeSubtitleContexts = new Set();
+        this.subtitleCueChangeHandler = () => this.renderSubtitleOverlay();
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -196,16 +204,36 @@ class WatchPage {
 
         // Fullscreen
         this.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
-        document.addEventListener('fullscreenchange', () => this.updateScrollHintVisibility());
-        document.addEventListener('webkitfullscreenchange', () => this.updateScrollHintVisibility());
+        const handleFullscreenChange = () => {
+            this.updateScrollHintVisibility();
+            this.updateSubtitleOverlayGeometry();
+            this.renderSubtitleOverlay();
+        };
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
         this.video?.addEventListener('webkitbeginfullscreen', () => {
             this.nativeVideoFullscreen = true;
+            this.setNativeSubtitleContext('ios-fullscreen', true);
             this.updateScrollHintVisibility();
         });
         this.video?.addEventListener('webkitendfullscreen', () => {
             this.nativeVideoFullscreen = false;
+            this.setNativeSubtitleContext('ios-fullscreen', false);
             this.updateScrollHintVisibility();
         });
+        this.video?.addEventListener('enterpictureinpicture', () => {
+            this.setNativeSubtitleContext('picture-in-picture', true);
+        });
+        this.video?.addEventListener('leavepictureinpicture', () => {
+            this.setNativeSubtitleContext('picture-in-picture', false);
+        });
+        this.video?.addEventListener('webkitpresentationmodechanged', () => {
+            this.setNativeSubtitleContext(
+                'picture-in-picture',
+                this.video.webkitPresentationMode === 'picture-in-picture'
+            );
+        });
+        window.addEventListener('resize', () => this.updateSubtitleOverlayGeometry());
 
         // Picture-in-Picture
         const pipBtn = document.getElementById('watch-pip');
@@ -246,13 +274,19 @@ class WatchPage {
         this.video?.addEventListener('timeupdate', () => {
             this.updateProgress();
             this.ensureSelectedSubtitleWindow();
+            this.renderSubtitleOverlay();
         });
         this.video?.addEventListener('seeking', () => this.ensureSelectedSubtitleWindow({ prioritize: true }));
         this.video?.addEventListener('loadedmetadata', () => {
             this.onMetadataLoaded();
+            this.updateSubtitleOverlayGeometry();
             this.scheduleSelectedSubtitleRestore();
         });
-        this.video?.addEventListener('play', () => this.onPlay());
+        this.video?.addEventListener('play', () => {
+            this.onPlay();
+            this.scheduleSelectedSubtitleRestore();
+        });
+        this.video?.addEventListener('seeked', () => this.scheduleSelectedSubtitleRestore());
         this.video?.addEventListener('pause', () => this.onPause());
         this.video?.addEventListener('ended', () => this.onEnded());
         this.video?.addEventListener('error', (e) => this.onError(e));
@@ -350,6 +384,7 @@ class WatchPage {
         this.resetMediaTracks();
         this.playbackTimeOffset = 0;
         this.sourceDuration = 0;
+        this.resetDurationDisplay();
         this.currentTranscodeOptions = null;
         this.content = content;
         this.contentType = content.type;
@@ -479,7 +514,7 @@ class WatchPage {
     async startQualityPlayback(url, resolution, streamInfo = null) {
         const label = PlaybackQuality.getLabel(resolution);
         console.log(`[WatchPage] Applying session quality cap: ${label}`);
-        this.updateTranscodeStatus('transcoding', `Up to ${label}`);
+        this.updateTranscodeStatus('transcoding', 'Transcoding (Video)');
         const playlistUrl = await this.startTranscodeSession(url, {
             videoMode: 'encode',
             maxResolution: resolution,
@@ -699,9 +734,10 @@ class WatchPage {
             this.progressScrubbing = false;
         }
         const knownDuration = Number(qualitySourceInfo?.duration);
-        if (Number.isFinite(knownDuration) && knownDuration > 0) {
-            this.sourceDuration = knownDuration;
-        }
+        this.setSourceDuration(VodDuration.firstValid(
+            knownDuration,
+            VodDuration.fromContent(this.content)
+        ));
         this.qualityCapWarning = null;
         this.qualityCapPending = false;
 
@@ -997,7 +1033,10 @@ class WatchPage {
         this.hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
             console.log('[WatchPage] Subtitle tracks updated:', data.subtitleTracks);
             // Wait a moment for native text tracks to populate
-            setTimeout(() => this.updateCaptionsTracks(), 100);
+            setTimeout(() => {
+                this.applyAutomaticSubtitlePreference();
+                this.updateCaptionsTracks();
+            }, 100);
         });
 
         this.hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
@@ -1131,6 +1170,8 @@ class WatchPage {
         // resetting the media element so its final seeking event cannot start
         // a new subtitle extraction after the player has been closed.
         this.subtitleLoadingEnabled = false;
+        this.setActiveSubtitleTrack(null);
+        this.nativeSubtitleContexts.clear();
         this.stopTranscodeSession();
         this.cancelProbeSubtitleLoads();
         this.updateTranscodeStatus('hidden');
@@ -1152,6 +1193,7 @@ class WatchPage {
         }
         this.playbackTimeOffset = 0;
         this.sourceDuration = 0;
+        this.resetDurationDisplay();
         this.currentTranscodeOptions = null;
         this.seekChanging = false;
         this.progressScrubbing = false;
@@ -1188,6 +1230,33 @@ class WatchPage {
         const mediaDuration = Number(this.video?.duration);
         if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaDuration;
         return Math.max(0, this.playbackTimeOffset + mediaDuration);
+    }
+
+    setSourceDuration(value) {
+        const duration = VodDuration.parse(value);
+        if (duration > 0) this.sourceDuration = duration;
+        this.updateDurationDisplay();
+    }
+
+    resetDurationDisplay() {
+        if (this.progressSlider) this.progressSlider.value = 0;
+        if (this.timeCurrent) this.timeCurrent.textContent = '0:00';
+        if (this.timeTotal) {
+            this.timeTotal.textContent = '';
+            this.timeTotal.classList.add('hidden');
+        }
+        if (this.durationEl) this.durationEl.textContent = '';
+    }
+
+    updateDurationDisplay() {
+        const duration = this.getPlaybackDuration();
+        const hasDuration = Number.isFinite(duration) && duration > 0;
+        const label = hasDuration ? this.formatTime(duration) : '';
+        if (this.timeTotal) {
+            this.timeTotal.textContent = label;
+            this.timeTotal.classList.toggle('hidden', !hasDuration);
+        }
+        if (this.durationEl) this.durationEl.textContent = label;
     }
 
     previewSeek(percent) {
@@ -1309,7 +1378,13 @@ class WatchPage {
                 container.webkitRequestFullscreen();
             } else if (this.video?.webkitEnterFullscreen) {
                 // iOS Safari: use native video fullscreen
-                this.video.webkitEnterFullscreen();
+                this.setNativeSubtitleContext('ios-fullscreen', true);
+                try {
+                    this.video.webkitEnterFullscreen();
+                } catch (error) {
+                    this.setNativeSubtitleContext('ios-fullscreen', false);
+                    throw error;
+                }
             }
         }
     }
@@ -1378,7 +1453,7 @@ class WatchPage {
     // === UI Updates ===
 
     updateProgress() {
-        if (!this.video || !this.video.duration) return;
+        if (!this.video) return;
 
         const currentTime = this.getCurrentPlaybackTime();
         if (Number.isFinite(this.pendingSeekProgress)
@@ -1393,6 +1468,7 @@ class WatchPage {
             this.progressSlider.value = percent;
             this.timeCurrent.textContent = this.formatTime(currentTime);
         }
+        this.updateDurationDisplay();
 
         // Show "Up Next" panel early for series (like streaming services do during credits)
         // Only show if auto-play next episode is enabled
@@ -1415,6 +1491,13 @@ class WatchPage {
     }
 
     onMetadataLoaded() {
+        const browserDuration = VodDuration.parse(this.video?.duration);
+        if (!this.currentSessionId && browserDuration > 0) {
+            this.setSourceDuration(browserDuration);
+        } else {
+            this.updateDurationDisplay();
+        }
+
         // Detect resolution
         if (this.video && this.video.videoHeight > 0) {
             this.currentStreamInfo = {
@@ -1422,9 +1505,6 @@ class WatchPage {
                 width: this.video.videoWidth,
                 height: this.video.videoHeight
             };
-            if (!this.currentSessionId && Number.isFinite(this.video.duration) && this.video.duration > 0) {
-                this.sourceDuration = this.video.duration;
-            }
             this.updateQualityBadge();
             this.updatePendingQualityCapWarning(this.video.videoHeight);
         }
@@ -1488,7 +1568,8 @@ class WatchPage {
     }
 
     formatTime(seconds) {
-        if (!seconds || isNaN(seconds)) return '0:00';
+        seconds = Number(seconds);
+        if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
@@ -1511,7 +1592,134 @@ class WatchPage {
 
     // === Audio and subtitles ===
 
+    usesNativeSubtitleRenderer() {
+        return this.nativeSubtitleContexts.size > 0;
+    }
+
+    setNativeSubtitleContext(context, enabled) {
+        if (enabled) {
+            this.nativeSubtitleContexts.add(context);
+        } else {
+            this.nativeSubtitleContexts.delete(context);
+        }
+        this.applySubtitleRenderingMode();
+    }
+
+    setActiveSubtitleTrack(track) {
+        if (this.activeSubtitleTrack !== track) {
+            if (this.activeSubtitleTrack) this.activeSubtitleTrack.mode = 'hidden';
+            this.activeSubtitleTrack?.removeEventListener?.('cuechange', this.subtitleCueChangeHandler);
+            this.activeSubtitleTrack = track || null;
+            this.subtitleOverlaySignature = '';
+            this.activeSubtitleTrack?.addEventListener?.('cuechange', this.subtitleCueChangeHandler);
+        }
+        this.applySubtitleRenderingMode();
+    }
+
+    applySubtitleRenderingMode() {
+        if (!this.activeSubtitleTrack) {
+            this.clearSubtitleOverlay();
+            return;
+        }
+
+        // Browser-managed video surfaces (notably iPhone native fullscreen
+        // and Picture-in-Picture) cannot contain the HTML overlay. Only those
+        // surfaces receive native cues; inline and desktop fullscreen keep the
+        // track hidden while the shared overlay renders its active cues.
+        this.activeSubtitleTrack.mode = this.usesNativeSubtitleRenderer() ? 'showing' : 'hidden';
+        this.renderSubtitleOverlay();
+    }
+
+    clearSubtitleOverlay() {
+        this.subtitleOverlaySignature = '';
+        this.subtitleStack?.replaceChildren();
+        this.subtitleOverlay?.classList.add('hidden');
+    }
+
+    getSubtitleAppearance() {
+        return SubtitlePreferences.normalizeAppearance(
+            this.app?.currentUser?.subtitlePreferences?.appearance
+        );
+    }
+
+    applySubtitleAppearance() {
+        return SubtitlePreferences.applyAppearanceStyles(
+            this.subtitleOverlay,
+            this.getSubtitleAppearance()
+        );
+    }
+
+    appendSubtitleCueContent(container, cue) {
+        // Text is assigned through textContent so provider-supplied subtitle
+        // payloads cannot introduce HTML into the page. Line breaks remain
+        // visible through the overlay's white-space rule.
+        container.textContent = String(cue?.text || '');
+    }
+
+    renderSubtitleOverlay() {
+        if (!this.subtitleOverlay || !this.subtitleStack || !this.activeSubtitleTrack
+            || this.usesNativeSubtitleRenderer()) {
+            this.clearSubtitleOverlay();
+            return;
+        }
+
+        this.applySubtitleAppearance();
+
+        const cues = Array.from(this.activeSubtitleTrack.activeCues || [])
+            .filter(cue => String(cue?.text || '').length > 0)
+            .sort((left, right) => (
+                (Number(left.startTime) || 0) - (Number(right.startTime) || 0)
+                || (Number(left.endTime) || 0) - (Number(right.endTime) || 0)
+            ));
+        const signature = cues.map(cue => (
+            `${Number(cue.startTime) || 0}|${Number(cue.endTime) || 0}|${String(cue.text || '')}`
+        )).join('\u001e');
+
+        if (signature === this.subtitleOverlaySignature) return;
+        this.subtitleOverlaySignature = signature;
+        this.subtitleStack.replaceChildren();
+
+        for (const cue of cues) {
+            const cueElement = document.createElement('span');
+            cueElement.className = 'watch-subtitle-cue';
+            this.appendSubtitleCueContent(cueElement, cue);
+            this.subtitleStack.appendChild(cueElement);
+        }
+
+        this.subtitleOverlay.classList.toggle('hidden', cues.length === 0);
+        if (cues.length > 0) this.updateSubtitleOverlayGeometry();
+    }
+
+    updateSubtitleOverlayGeometry() {
+        if (!this.video || !this.subtitleOverlay) return;
+        const appearance = this.applySubtitleAppearance();
+        const container = this.video.parentElement;
+        const containerWidth = Number(container?.clientWidth) || Number(this.video.clientWidth) || 0;
+        const containerHeight = Number(container?.clientHeight) || Number(this.video.clientHeight) || 0;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+
+        const videoWidth = Number(this.video.videoWidth) || 0;
+        const videoHeight = Number(this.video.videoHeight) || 0;
+        let renderedWidth = containerWidth;
+        let renderedHeight = containerHeight;
+        if (videoWidth > 0 && videoHeight > 0) {
+            const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight);
+            renderedWidth = videoWidth * scale;
+            renderedHeight = videoHeight * scale;
+        }
+
+        this.subtitleOverlay.style.left = `${Math.max(0, (containerWidth - renderedWidth) / 2)}px`;
+        this.subtitleOverlay.style.top = `${Math.max(0, (containerHeight - renderedHeight) / 2)}px`;
+        this.subtitleOverlay.style.width = `${renderedWidth}px`;
+        this.subtitleOverlay.style.height = `${renderedHeight}px`;
+        const positionRatio = appearance.verticalPosition / 100;
+        const bottomOffset = Math.max(12, Math.min(renderedHeight * 0.3, renderedHeight * positionRatio));
+        this.subtitleOverlay.style.setProperty('--subtitle-bottom-offset', `${bottomOffset}px`);
+    }
+
     resetMediaTracks() {
+        this.setActiveSubtitleTrack(null);
+        this.nativeSubtitleContexts.clear();
         this.clearSubtitleRestoreTimers();
         this.cancelProbeSubtitleLoads();
         this.video?.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
@@ -1526,6 +1734,8 @@ class WatchPage {
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
         this.selectedSubtitleStreamIndex = null;
+        this.subtitlePreferenceApplied = false;
+        this.subtitleSelectionExplicit = false;
         this.audioTrackMode = 'none';
         this.selectedAudioTrackIndex = null;
         this.selectedHlsAudioTrack = -1;
@@ -1556,7 +1766,7 @@ class WatchPage {
     scheduleSelectedSubtitleRestore() {
         this.clearSubtitleRestoreTimers();
         if (!Number.isInteger(this.selectedSubtitleStreamIndex)) return;
-        for (const delay of [0, 150, 500, 1000]) {
+        for (const delay of [0, 150, 500, 1000, 2500]) {
             this.subtitleRestoreTimers.push(setTimeout(() => {
                 this.restoreSelectedSubtitleTrack();
                 this.updateCaptionsTracks();
@@ -1600,10 +1810,7 @@ class WatchPage {
     }
 
     applyProbeTracks(info, streamUrl) {
-        const probedDuration = Number(info?.duration);
-        if (Number.isFinite(probedDuration) && probedDuration > 0) {
-            this.sourceDuration = probedDuration;
-        }
+        this.setSourceDuration(info?.duration);
         const tracks = Array.isArray(info?.audioTracks)
             ? info.audioTracks.filter(track => Number.isInteger(Number(track.index)))
             : [];
@@ -1627,7 +1834,10 @@ class WatchPage {
         this.renderProbeSubtitleTracks();
 
         this.updateAudioTracks();
-        setTimeout(() => this.updateCaptionsTracks(), 100);
+        setTimeout(() => {
+            this.applyAutomaticSubtitlePreference();
+            this.updateCaptionsTracks();
+        }, 100);
     }
 
     renderProbeSubtitleTracks() {
@@ -1635,7 +1845,11 @@ class WatchPage {
         // Reattaching HLS can recreate the media timeline. Cancel extraction
         // tied to the old track elements before replacing them.
         this.cancelProbeSubtitleLoads();
-        this.video.querySelectorAll('track[data-nodecast-probe-track]').forEach(track => track.remove());
+        const existingProbeTracks = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'));
+        if (existingProbeTracks.some(track => track.track === this.activeSubtitleTrack)) {
+            this.setActiveSubtitleTrack(null);
+        }
+        existingProbeTracks.forEach(track => track.remove());
         if (!this.subtitleStreamUrl) {
             this.updateCaptionsTracks();
             return;
@@ -1664,7 +1878,55 @@ class WatchPage {
             });
         }
 
+        this.applyAutomaticSubtitlePreference();
         this.updateCaptionsTracks();
+    }
+
+    getSubtitlePreferences() {
+        return SubtitlePreferences.normalizePreferences(this.app?.currentUser?.subtitlePreferences);
+    }
+
+    getSubtitleTrackDescriptors() {
+        if (!this.video) return [];
+        const hlsTracks = Array.isArray(this.hls?.subtitleTracks) ? this.hls.subtitleTracks : [];
+        return Array.from(this.video.textTracks).map((track, position) => {
+            const probeElement = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
+                .find(element => element.track === track);
+            const probeIndex = Number(probeElement?.dataset.nodecastSubtitleIndex);
+            const probeTrack = Number.isInteger(probeIndex)
+                ? this.availableSubtitleTracks.find(candidate => candidate.index === probeIndex)
+                : null;
+            const hlsTrack = !probeTrack ? hlsTracks.find(candidate => {
+                const languageMatches = SubtitlePreferences.normalizeLanguage(candidate.lang || candidate.language)
+                    === SubtitlePreferences.normalizeLanguage(track.language);
+                const labelMatches = String(candidate.name || candidate.label || '').trim().toLowerCase()
+                    === String(track.label || '').trim().toLowerCase();
+                return languageMatches && (!track.label || !candidate.name || labelMatches);
+            }) : null;
+            return {
+                position,
+                kind: track.kind,
+                language: probeTrack?.language || hlsTrack?.lang || hlsTrack?.language || track.language,
+                label: probeTrack?.title || hlsTrack?.name || hlsTrack?.label || track.label,
+                default: Boolean(probeTrack?.default || hlsTrack?.default),
+                forced: Boolean(probeTrack?.forced || hlsTrack?.forced)
+            };
+        }).filter(track => track.kind === 'subtitles' || track.kind === 'captions');
+    }
+
+    applyAutomaticSubtitlePreference() {
+        if (this.subtitleSelectionExplicit || this.subtitlePreferenceApplied || !this.video) return false;
+        const tracks = this.getSubtitleTrackDescriptors();
+        if (tracks.length === 0) return false;
+
+        const selected = SubtitlePreferences.selectPreferredSubtitleTrack(
+            tracks,
+            this.getSubtitlePreferences()
+        );
+        this.subtitlePreferenceApplied = true;
+        if (!selected) return false;
+        this.selectCaptionTrack(selected.position, { automatic: true });
+        return true;
     }
 
     parseWebVttTimestamp(value) {
@@ -1858,7 +2120,12 @@ class WatchPage {
         let renderedCues = this.probeSubtitleRenderedCues.get(trackElement);
         const renderedOffset = this.probeSubtitleRenderedOffsets.get(trackElement);
 
-        if (!renderedCues || renderedOffset !== timelineKey) {
+        // Replacing an HLS media session can clear a TextTrack's native cue
+        // list without replacing its <track> element. Reconcile that browser
+        // state with NodeCast's parsed cue set so a later media-ready event can
+        // restore the cues instead of treating them as already rendered.
+        const nativeCueCount = Number(track.cues?.length || 0);
+        if (!renderedCues || renderedOffset !== timelineKey || nativeCueCount !== renderedCues.size) {
             track.mode = 'hidden';
             for (const existingCue of Array.from(track.cues || [])) {
                 track.removeCue(existingCue);
@@ -1900,7 +2167,7 @@ class WatchPage {
             renderedCues.add(cueKey);
         }
 
-        if (track.mode !== 'showing') track.mode = 'showing';
+        this.setActiveSubtitleTrack(track);
         return cues.length > 0;
     }
 
@@ -2091,7 +2358,7 @@ class WatchPage {
                 const label = track.label || track.language || `Track ${i + 1}`;
                 const probeTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
                     .find(element => element.track === track);
-                const isActive = track.mode === 'showing' || (
+                const isActive = track === this.activeSubtitleTrack || track.mode === 'showing' || (
                     probeTrack && Number(probeTrack.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex
                 );
                 const option = document.createElement('button');
@@ -2108,14 +2375,21 @@ class WatchPage {
         offOption.classList.toggle('active', !anyActive);
     }
 
-    selectCaptionTrack(index) {
+    selectCaptionTrack(index, { automatic = false } = {}) {
         if (!this.video) return;
+
+        if (automatic) {
+            this.subtitlePreferenceApplied = true;
+        } else {
+            this.subtitleSelectionExplicit = true;
+        }
 
         const tracks = this.video.textTracks;
 
         // A language change or Off selection supersedes any extraction that
         // has not finished yet. Keep at most one subtitle scan active.
         this.cancelProbeSubtitleLoads();
+        this.setActiveSubtitleTrack(null);
 
         // Disable all tracks
         for (let i = 0; i < tracks.length; i++) {
@@ -2140,7 +2414,7 @@ class WatchPage {
             } else {
                 this.clearSubtitleRestoreTimers();
                 this.selectedSubtitleStreamIndex = null;
-                tracks[index].mode = 'showing';
+                this.setActiveSubtitleTrack(tracks[index]);
             }
         } else {
             this.clearSubtitleRestoreTimers();
@@ -2247,6 +2521,7 @@ class WatchPage {
         this.yearEl.textContent = this.content.year || '';
         this.ratingEl.textContent = this.content.rating ? `★ ${this.content.rating}` : '';
         this.descriptionEl.textContent = this.content.description || '';
+        this.updateDurationDisplay();
 
         // Update play button text
         if (this.playBtnText) {
@@ -2369,7 +2644,9 @@ class WatchPage {
                     year: movie.year,
                     rating: movie.rating,
                     sourceId: sourceId,
-                    categoryId: movie.category_id
+                    categoryId: movie.category_id,
+                    containerExtension: container,
+                    duration: movie.duration_secs ?? movie.duration
                 }, result.url);
             }
         } catch (e) {
@@ -2436,6 +2713,9 @@ class WatchPage {
         const seasonNum = episodeEl.dataset.season;
         const episodeNum = episodeEl.dataset.episode;
         const container = episodeEl.dataset.container || 'mp4';
+        const episode = this.seriesInfo?.episodes?.[seasonNum]?.find(ep => (
+            String(ep.id) === String(episodeId)
+        ));
 
         try {
             const result = await API.proxy.xtream.getStreamUrl(this.content.sourceId, episodeId, 'series', container);
@@ -2456,7 +2736,9 @@ class WatchPage {
                     seriesId: this.content.seriesId,
                     seriesInfo: this.seriesInfo,
                     currentSeason: seasonNum,
-                    currentEpisode: episodeNum
+                    currentEpisode: episodeNum,
+                    containerExtension: container,
+                    duration: episode?.duration_secs ?? episode?.duration
                 }, result.url);
             }
         } catch (e) {
@@ -2547,7 +2829,9 @@ class WatchPage {
                     seriesId: this.content.seriesId,
                     seriesInfo: this.seriesInfo,
                     currentSeason: nextEp.seasonNum,
-                    currentEpisode: nextEp.episode_num
+                    currentEpisode: nextEp.episode_num,
+                    containerExtension: container,
+                    duration: nextEp.duration_secs ?? nextEp.duration
                 }, result.url);
             }
         } catch (e) {

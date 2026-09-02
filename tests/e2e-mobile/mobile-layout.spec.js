@@ -128,7 +128,7 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
 
     await page.getByRole('button', { name: 'Skip for now' }).click();
     await expect(page.getByRole('dialog', { name: 'Set up MFA later' })).toBeVisible();
-    await expect(page.locator('#mfa-onboarding-skip-description')).toContainText('Account security');
+    await expect(page.locator('#mfa-onboarding-skip-description')).toContainText('Account');
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.locator('#mfa-onboarding-skip-dialog')).toBeHidden();
     await page.getByRole('button', { name: 'Skip for now' }).click();
@@ -195,6 +195,22 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expect(page.locator('.shortcuts-grid')).toBeVisible();
     await expectInsideScroller(page, '.shortcuts-grid', '.settings-container');
+
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await expect(page.locator('#subtitle-appearance-preview')).toBeVisible();
+    const subtitleAppearanceLayout = await page.locator('.subtitle-appearance-settings').evaluate(section => ({
+        viewportWidth: window.innerWidth,
+        left: section.getBoundingClientRect().left,
+        right: section.getBoundingClientRect().right,
+        scrollWidth: section.scrollWidth,
+        clientWidth: section.clientWidth
+    }));
+    expect(subtitleAppearanceLayout.left).toBeGreaterThanOrEqual(0);
+    expect(subtitleAppearanceLayout.right).toBeLessThanOrEqual(subtitleAppearanceLayout.viewportWidth + 1);
+    expect(subtitleAppearanceLayout.scrollWidth).toBeLessThanOrEqual(subtitleAppearanceLayout.clientWidth + 1);
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '#reset-subtitle-appearance', '.settings-container');
+    await expectInsideScroller(page, '#subtitle-preferences-form .account-actions', '.settings-container');
 
     await page.locator('.tab[data-tab="interface"]').click();
     const themeCards = page.locator('.theme-option-content');

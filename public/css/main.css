@@ -1522,6 +1522,8 @@ video::cue {
 @media (max-width: 600px) {
   .interface-page-select {
     width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
   }
 
   .theme-options {
@@ -1701,6 +1703,108 @@ video::cue {
   margin-bottom: var(--space-md);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--color-border);
+}
+
+.preference-scope-note {
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.preference-scope-note strong {
+  color: var(--color-text-primary);
+}
+
+.subtitle-preference-requirement {
+  margin-top: var(--space-xs);
+  color: var(--color-warning);
+}
+
+.subtitle-appearance-settings {
+  width: 100%;
+  min-width: 0;
+  max-width: 760px;
+  box-sizing: border-box;
+  margin: var(--space-xl) 0 0;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.subtitle-appearance-settings legend {
+  padding: 0 var(--space-sm);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.subtitle-appearance-preview {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 680px;
+  aspect-ratio: 16 / 6;
+  min-height: 220px;
+  margin: var(--space-md) 0 var(--space-lg);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 70% 38%, rgba(105, 129, 170, 0.42), transparent 28%),
+    linear-gradient(145deg, #18253a 0%, #09111d 48%, #12161d 100%);
+}
+
+.subtitle-preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 5% var(--subtitle-position-percent, 7%);
+  pointer-events: none;
+}
+
+.subtitle-appearance-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md) var(--space-lg);
+}
+
+.subtitle-appearance-controls .form-group {
+  max-width: none;
+  margin: 0;
+}
+
+.subtitle-range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.subtitle-range-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.subtitle-range-row output {
+  min-width: 7rem;
+  color: var(--color-text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.subtitle-color-control input[type="color"] {
+  width: 64px;
+  height: 40px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
 }
 
 .setting-item {
@@ -3055,6 +3159,18 @@ kbd {
     font-size: 1rem;
   }
 
+  .subtitle-appearance-settings {
+    padding: var(--space-md);
+  }
+
+  .subtitle-appearance-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .subtitle-appearance-preview {
+    min-height: 190px;
+  }
+
   .tabs {
     gap: 2px;
     margin-bottom: var(--space-md);
@@ -3988,6 +4104,68 @@ kbd {
   height: 100%;
   object-fit: contain;
   background: #000;
+}
+
+/*
+ * Browser-independent Movie/Series subtitle presentation. JavaScript keeps
+ * this box aligned with the rendered video image rather than the surrounding
+ * letterbox area. iOS native fullscreen continues to use video::cue below.
+ */
+.watch-subtitle-overlay {
+  --subtitle-bottom-offset: 48px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 9;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 5% var(--subtitle-bottom-offset);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.watch-subtitle-overlay.hidden {
+  display: none;
+}
+
+.watch-subtitle-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  max-width: 90%;
+  color: var(--subtitle-text-color, #fff);
+  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+  font-size: clamp(
+    var(--subtitle-font-min-size, 20px),
+    var(--subtitle-font-fluid-size, 2.1vw),
+    var(--subtitle-font-max-size, 42px)
+  );
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+  text-shadow: var(--subtitle-text-shadow,
+    -2px -2px 2px rgba(0, 0, 0, 0.95),
+    2px -2px 2px rgba(0, 0, 0, 0.95),
+    -2px 2px 2px rgba(0, 0, 0, 0.95),
+    2px 2px 2px rgba(0, 0, 0, 0.95),
+    0 0 4px #000);
+}
+
+.watch-subtitle-cue {
+  display: block;
+  max-width: 100%;
+  padding: var(--subtitle-cue-padding, 0);
+  border-radius: var(--subtitle-cue-radius, 0);
+  background: var(--subtitle-background-color, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  overflow-wrap: break-word;
+  white-space: pre-line;
 }
 
 /* Player Overlay */
@@ -5093,7 +5271,7 @@ kbd {
 }
 
 /* =====================================================
-   Account Security
+   Account
    ===================================================== */
 .account-container {
   width: min(760px, 100%);
@@ -5264,6 +5442,11 @@ kbd {
 
   .account-actions .btn {
     width: 100%;
+  }
+
+  .subtitle-preferences-actions .btn {
+    width: fit-content;
+    max-width: 100%;
   }
 }
 
