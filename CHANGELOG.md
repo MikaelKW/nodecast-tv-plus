@@ -4,6 +4,43 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.6.0] - 2026-09-02
+
+This release improves large-catalogue responsiveness, live-session reliability, subtitle presentation and preferences, and VOD timeline feedback.
+
+### Added
+
+- Add an account-specific preferred subtitle language and automatic selection modes for Movies and Series under Settings > Preferences, available to viewer accounts as well as administrators ([#344]).
+- Add subtitle appearance controls for text size/color, background color/opacity, edge style, and vertical position, with a live preview ([#346]).
+- Add a repeatable large-catalogue benchmark and bounded catalogue/favourite regression coverage ([#334]).
+
+### Changed
+
+- Resolve Home favourites without first loading the complete Live TV catalogue, and load Live TV groups through bounded server-side queries with progressive scrolling and prefetching ([#334]).
+- Use a shared HTML subtitle overlay for consistent browser presentation while retaining native subtitles on platform-controlled fullscreen and picture-in-picture surfaces ([#341]).
+- Show total Movie and Series duration using available media/provider metadata without exposing invalid values when duration is unknown ([#349]).
+- Restore the adaptive README logo, configure weekly npm and GitHub Actions Dependabot updates, and clarify the release-validation requirement ([#355], [#357], [#359]).
+
+### Fixed
+
+- Preserve complete Live TV search counts and individual group expansion state; keep collapsed search groups unloaded and load expanded matches in bounded pages, including very large groups ([#365], [#367]).
+- Replace superseded tab-owned live sessions, reopen interrupted provider inputs without ranged resume, and bound rapid reconnect failures. Reclaim abandoned playback leases while allowing intentionally paused open tabs to remain active ([#339]).
+- Distinguish active video transcoding from the selected quality cap in the validated quality-change path ([#339]).
+- Preserve subtitle cues across media replacement and prefer a full matching-language track over forced-only alternatives in Always preferred mode ([#341], [#344]).
+- Report upstream byte-range capability accurately when a VOD provider ignores a range request, rather than advertising unsupported seeking. This does not make non-range media seekable ([#353]).
+
+### Security
+
+- Update the pinned runtime-image vulnerability scanner to Trivy 0.74.0 ([#351]).
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.5.4. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. The release migration gate covers supported upstream v2.1.1 and 2.1.4 baselines and the published Plus v2.5.4 image.
+- Large sources may still require substantial startup or synchronization I/O; this release reduces repeated catalogue work during browsing, not all source-import work.
+- iOS native fullscreen retains platform-controlled subtitle styling. Unsupported provider seeking and the deferred follow-ups are documented in the release notes.
+- To roll back, restore the pre-upgrade data backup and recreate the container with 2.5.4 and the original deployment secrets.
+
 ## [2.5.4] - 2026-08-15
 
 This focused stabilization release restores provider and browser compatibility, improves loading and content-visibility feedback, and strengthens route-specific request controls.
@@ -367,6 +404,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.6.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.4...v2.6.0
 [2.5.4]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.1...v2.5.2
@@ -430,6 +468,7 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#228]: https://github.com/MikaelKW/nodecast-tv-plus/pull/228
 [#230]: https://github.com/MikaelKW/nodecast-tv-plus/pull/230
 [#233]: https://github.com/MikaelKW/nodecast-tv-plus/pull/233
+[#235]: https://github.com/MikaelKW/nodecast-tv-plus/issues/235
 [#242]: https://github.com/MikaelKW/nodecast-tv-plus/pull/242
 [#244]: https://github.com/MikaelKW/nodecast-tv-plus/pull/244
 [#246]: https://github.com/MikaelKW/nodecast-tv-plus/pull/246
@@ -451,3 +490,16 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#318]: https://github.com/MikaelKW/nodecast-tv-plus/pull/318
 [#323]: https://github.com/MikaelKW/nodecast-tv-plus/issues/323
 [#326]: https://github.com/MikaelKW/nodecast-tv-plus/pull/326
+[#334]: https://github.com/MikaelKW/nodecast-tv-plus/pull/334
+[#339]: https://github.com/MikaelKW/nodecast-tv-plus/pull/339
+[#341]: https://github.com/MikaelKW/nodecast-tv-plus/pull/341
+[#344]: https://github.com/MikaelKW/nodecast-tv-plus/pull/344
+[#346]: https://github.com/MikaelKW/nodecast-tv-plus/pull/346
+[#349]: https://github.com/MikaelKW/nodecast-tv-plus/pull/349
+[#351]: https://github.com/MikaelKW/nodecast-tv-plus/pull/351
+[#353]: https://github.com/MikaelKW/nodecast-tv-plus/pull/353
+[#355]: https://github.com/MikaelKW/nodecast-tv-plus/pull/355
+[#357]: https://github.com/MikaelKW/nodecast-tv-plus/pull/357
+[#359]: https://github.com/MikaelKW/nodecast-tv-plus/pull/359
+[#365]: https://github.com/MikaelKW/nodecast-tv-plus/pull/365
+[#367]: https://github.com/MikaelKW/nodecast-tv-plus/pull/367
