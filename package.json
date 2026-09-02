@@ -49,10 +49,10 @@
         "bcryptjs": "^3.0.3",
         "better-sqlite3": "^12.5.0",
         "compression": "^1.8.1",
-        "dotenv": "^17.2.3",
+        "dotenv": "^17.4.2",
         "express": "^4.22.2",
-        "express-rate-limit": "^8.6.1",
-        "express-session": "^1.18.2",
+        "express-rate-limit": "^8.7.0",
+        "express-session": "^1.19.0",
         "jsonwebtoken": "^9.0.3",
         "otpauth": "^9.5.1",
         "passport": "^0.7.0",
@@ -60,7 +60,7 @@
         "passport-local": "^1.0.0",
         "passport-openidconnect": "^0.1.2",
         "qrcode": "^1.5.4",
-        "sax": "^1.4.3",
+        "sax": "^1.6.1",
         "xml2js": "^0.6.2"
     },
     "optionalDependencies": {
@@ -70,6 +70,6 @@
         "node": ">=18.0.0"
     },
     "devDependencies": {
-        "@playwright/test": "^1.61.1"
+        "@playwright/test": "^1.62.1"
     }
 }
