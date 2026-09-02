@@ -5,9 +5,27 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { DEFAULT_APPEARANCE } = require('../public/js/components/SubtitlePreferences');
 
 const projectRoot = path.join(__dirname, '..');
 const password = crypto.randomBytes(24).toString('base64url');
+const defaultSubtitlePreferences = {
+    language: '',
+    mode: 'off',
+    appearance: { ...DEFAULT_APPEARANCE }
+};
+const savedSubtitlePreferences = {
+    language: 'no',
+    mode: 'preferred',
+    appearance: {
+        textScale: 125,
+        textColor: '#f0e0d0',
+        backgroundColor: '#102030',
+        backgroundOpacity: 60,
+        edgeStyle: 'shadow',
+        verticalPosition: 18
+    }
+};
 
 function getFreePort() {
     return new Promise((resolve, reject) => {
@@ -122,6 +140,7 @@ async function run() {
         });
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
+        assert.deepEqual(setup.payload.user.subtitlePreferences, defaultSubtitlePreferences);
         assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
@@ -135,6 +154,30 @@ async function run() {
             assert.equal(login.payload.user.username, 'MobileUser');
             assert.ok(getCookie(login.response), 'Successful login must issue an authentication cookie.');
         }
+
+        const subtitlePreferences = await request(server.baseUrl, '/api/auth/me/subtitle-preferences', {
+            method: 'PUT',
+            cookie: adminCookie,
+            body: {
+                language: 'NOR',
+                mode: 'preferred',
+                appearance: {
+                    textScale: 123,
+                    textColor: '#F0E0D0',
+                    backgroundColor: '#102030',
+                    backgroundOpacity: 58,
+                    edgeStyle: 'shadow',
+                    verticalPosition: 18
+                },
+                ignored: 'value'
+            }
+        });
+        assert.equal(subtitlePreferences.response.status, 200);
+        assert.deepEqual(subtitlePreferences.payload.subtitlePreferences, savedSubtitlePreferences);
+
+        const currentUser = await request(server.baseUrl, '/api/auth/me', { cookie: adminCookie });
+        assert.equal(currentUser.response.status, 200);
+        assert.deepEqual(currentUser.payload.subtitlePreferences, savedSubtitlePreferences);
 
         const duplicate = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
@@ -210,6 +253,7 @@ async function run() {
             });
             assert.equal(exactLegacyLogin.response.status, 200, 'Legacy collisions must retain exact-case access.');
             assert.equal(exactLegacyLogin.payload.user.username, username);
+            assert.deepEqual(exactLegacyLogin.payload.user.subtitlePreferences, savedSubtitlePreferences);
         }
 
         const ambiguousLogin = await request(server.baseUrl, '/api/auth/login', {

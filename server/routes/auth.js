@@ -7,6 +7,7 @@ const authenticationConfig = require('../config/authentication');
 const { requestBasePath, withBasePath } = require('../config/basePath');
 const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
+const { normalizePreferences } = require('../../public/js/components/SubtitlePreferences');
 const {
     passwordIdentityLimiter,
     passwordIpLimiter
@@ -297,6 +298,21 @@ router.get('/me', auth.requireAuth, async (req, res) => {
     } catch (err) {
         console.error('Error in /me:', err);
         res.status(500).json({ error: 'Server error' });
+    }
+});
+
+/**
+ * Update subtitle preferences for the signed-in account.
+ * PUT /api/auth/me/subtitle-preferences
+ */
+router.put('/me/subtitle-preferences', auth.requireAuth, async (req, res) => {
+    try {
+        const subtitlePreferences = normalizePreferences(req.body);
+        const user = await db.users.update(req.user.id, { subtitlePreferences });
+        res.json({ subtitlePreferences: user.subtitlePreferences });
+    } catch (err) {
+        console.error('Error updating subtitle preferences:', err.message);
+        res.status(500).json({ error: 'Unable to save subtitle preferences' });
     }
 });
 

@@ -27,7 +27,11 @@ async function waitForSync(page, sourceId) {
 }
 
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
-    test.setTimeout(120_000);
+    // This scenario intentionally covers setup, source synchronization, media
+    // processing, responsive layouts, and the bounded catalogue contract in a
+    // single-use environment. Keep enough headroom for slower Windows runners
+    // without reducing any individual assertion timeout.
+    test.setTimeout(150_000);
     expect(isIgnorableGoogleFont404(
         'Failed to load resource: the server responded with a status of 404 ()',
         'https://fonts.gstatic.com/s/inter/v20/example.woff2'
@@ -122,11 +126,108 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#account-enroll-start-form')).toBeVisible();
     expect(await page.evaluate(() => NodeCastOnboarding.isMfaPending())).toBe(false);
 
+    // Subtitle preferences live under Settings > Preferences, clearly state
+    // their account-specific scope, persist on the server, and default to the
+    // historical behavior of starting with subtitles off.
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.getByRole('button', { name: 'Preferences', exact: true }).click();
+    await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
+    await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
+    await expect(page.locator('#preferred-subtitle-language')).toHaveValue('');
+    await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toContainText(
+        'Choose a preferred language to enable Always preferred.'
+    );
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await expect(page.locator('#subtitle-text-scale')).toHaveValue('100');
+    await expect(page.locator('#subtitle-background-opacity')).toHaveValue('0');
+    await expect(page.locator('#subtitle-edge-style')).toHaveValue('outline');
+    await expect(page.locator('#subtitle-vertical-position')).toHaveValue('7');
+    await expect(page.locator('#subtitle-appearance-preview')).toBeVisible();
+
+    const customSubtitleAppearance = {
+        textScale: 125,
+        textColor: '#000000',
+        backgroundColor: '#123456',
+        backgroundOpacity: 60,
+        edgeStyle: 'shadow',
+        verticalPosition: 18
+    };
+    const setAppearanceControl = (selector, value) => page.locator(selector).evaluate((element, nextValue) => {
+        element.value = String(nextValue);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+    await setAppearanceControl('#subtitle-text-scale', customSubtitleAppearance.textScale);
+    await setAppearanceControl('#subtitle-text-color', customSubtitleAppearance.textColor);
+    await setAppearanceControl('#subtitle-background-color', customSubtitleAppearance.backgroundColor);
+    await setAppearanceControl('#subtitle-background-opacity', customSubtitleAppearance.backgroundOpacity);
+    await page.locator('#subtitle-edge-style').selectOption(customSubtitleAppearance.edgeStyle);
+    await setAppearanceControl('#subtitle-vertical-position', customSubtitleAppearance.verticalPosition);
+    await expect(page.locator('#subtitle-text-scale-value')).toHaveText('125%');
+    await expect(page.locator('#subtitle-background-opacity-value')).toHaveText('60%');
+    await expect(page.locator('#subtitle-vertical-position-value')).toHaveText('18% from bottom');
+    expect(await page.locator('#subtitle-appearance-preview').evaluate(element => ({
+        textColor: element.style.getPropertyValue('--subtitle-text-color'),
+        background: element.style.getPropertyValue('--subtitle-background-color'),
+        edge: element.style.getPropertyValue('--subtitle-text-shadow'),
+        position: element.style.getPropertyValue('--subtitle-position-percent')
+    }))).toEqual({
+        textColor: '#000000',
+        background: 'rgba(18, 52, 86, 0.6)',
+        edge: expect.stringContaining('255, 255, 255'),
+        position: '18%'
+    });
+    await page.getByRole('button', { name: 'Reset appearance' }).click();
+    await expect(page.locator('#subtitle-text-scale')).toHaveValue('100');
+    await expect(page.locator('#subtitle-background-opacity')).toHaveValue('0');
+    await expect(page.locator('#subtitle-edge-style')).toHaveValue('outline');
+    await expect(page.locator('#subtitle-vertical-position')).toHaveValue('7');
+    await expect(page.locator('#subtitle-preferences-status')).toContainText('Save subtitle preferences');
+
+    await setAppearanceControl('#subtitle-text-scale', customSubtitleAppearance.textScale);
+    await setAppearanceControl('#subtitle-text-color', customSubtitleAppearance.textColor);
+    await setAppearanceControl('#subtitle-background-color', customSubtitleAppearance.backgroundColor);
+    await setAppearanceControl('#subtitle-background-opacity', customSubtitleAppearance.backgroundOpacity);
+    await page.locator('#subtitle-edge-style').selectOption(customSubtitleAppearance.edgeStyle);
+    await setAppearanceControl('#subtitle-vertical-position', customSubtitleAppearance.verticalPosition);
+    await page.locator('#preferred-subtitle-language').selectOption('no');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeEnabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await page.locator('#automatic-subtitle-mode').selectOption('preferred');
+    await page.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect(page.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: 'no',
+        mode: 'preferred',
+        appearance: customSubtitleAppearance
+    });
+    await page.locator('#preferred-subtitle-language').selectOption('');
+    await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
+    await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
+    await expect(page.locator('#preferred-subtitle-language-requirement')).toBeVisible();
+    await page.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: '',
+        mode: 'off',
+        appearance: customSubtitleAppearance
+    });
+
+    await page.locator('#account-menu-trigger').click();
+    await page.locator('#account-security-link').click();
+    await expect(page).toHaveURL(/\/#account$/);
+    await expect(page.locator('#page-account')).toHaveClass(/active/);
+
     // Enroll through the same guided flow presented to local accounts, then
     // prove password sign-in stops at the server-side challenge until a fresh
     // authenticator code is supplied.
     await expect(page.locator('#account-menu-initial')).toHaveText('E');
     await expect(page.locator('#two-factor-status-badge')).toHaveText('Not enabled');
+    await page.getByRole('button', { name: 'Enable two-factor authentication' }).click();
+    await expect(page.locator('#account-enroll-start-form')).toBeVisible();
     await page.locator('#account-password').fill(password);
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('#totp-qr-image')).toBeVisible();
@@ -210,6 +311,51 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(newPasswordToggle).toHaveAttribute('aria-label', 'Show password');
     await expect(page.locator('.password-visibility-toggle[aria-controls="new-password-confirmation"]'))
         .toHaveAttribute('aria-label', 'Show password');
+
+    // Viewer accounts must be able to manage their own Preferences without
+    // exposing administrator-only source, interface, playback, transcoding,
+    // content, user, or server-information controls.
+    const viewerContext = await page.context().browser().newContext({
+        baseURL: new URL(page.url()).origin
+    });
+    const viewerPage = await viewerContext.newPage();
+    await viewerPage.goto('/login.html');
+    await viewerPage.locator('#username').fill('confirmed-viewer');
+    await viewerPage.locator('#password').fill(newPassword);
+    await viewerPage.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await viewerPage.waitForURL(url => !url.pathname.endsWith('/login.html'));
+    await viewerPage.waitForFunction(() => window.app?.currentUser?.role === 'viewer');
+    const viewerSettingsLink = viewerPage.locator('.nav-link[data-page="settings"]');
+    await expect(viewerSettingsLink).toBeVisible();
+    await viewerSettingsLink.click();
+    await expect(viewerPage.locator('#page-settings')).toHaveClass(/active/);
+    await expect(viewerPage.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(viewerPage.locator('.tab[data-tab="preferences"]')).toBeVisible();
+    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
+        await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
+    }
+    await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
+    await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
+    await viewerPage.getByRole('button', { name: 'Save subtitle preferences' }).click();
+    await expect(viewerPage.locator('#subtitle-preferences-status')).toHaveText('Subtitle preferences saved.');
+    await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: 'en',
+        mode: 'preferred',
+        appearance: {
+            textScale: 100,
+            textColor: '#ffffff',
+            backgroundColor: '#000000',
+            backgroundOpacity: 0,
+            edgeStyle: 'outline',
+            verticalPosition: 7
+        }
+    });
+    await viewerContext.close();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
+        language: '',
+        mode: 'off',
+        appearance: customSubtitleAppearance
+    });
 
     // About uses a fixed server-side GitHub endpoint. Keep the browser test
     // deterministic while covering current, update-available, and disabled UI states.
@@ -541,23 +687,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await waitForSync(page, healthyAfterFailureSource.id);
 
     const retainedSourceLoad = await page.evaluate(async ({ failedId, healthyId }) => {
-        const originalCategories = API.proxy.xtream.liveCategories;
-        const originalStreams = API.proxy.xtream.liveStreams;
+        const originalSummary = API.proxy.catalogue.liveSummary;
         const originalConsoleError = console.error;
         const errors = [];
-        const failedChannelsBefore = window.app.channelList.channels.filter(channel =>
-            String(channel.sourceId) === String(failedId)
+        const groupsForSource = sourceId => window.app.channelList.boundedGroups.filter(group =>
+            group.parts.some(part => String(part.source.id) === String(sourceId))
         ).length;
+        const failedGroupsBefore = groupsForSource(failedId);
 
-        API.proxy.xtream.liveCategories = (sourceId, options) => (
+        API.proxy.catalogue.liveSummary = sourceId => (
             String(sourceId) === String(failedId)
                 ? Promise.reject(new Error('Controlled provider failure'))
-                : originalCategories(sourceId, options)
-        );
-        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => (
-            String(sourceId) === String(failedId)
-                ? Promise.reject(new Error('Controlled provider failure'))
-                : originalStreams(sourceId, categoryId, options)
+                : originalSummary(sourceId)
         );
         console.error = (...args) => errors.push(args.map(String).join(' '));
 
@@ -566,72 +707,55 @@ test('setup, source import, EPG, navigation, and playback work together', async 
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
             return {
-                failedChannelsBefore,
-                failedChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(failedId)
-                ).length,
-                healthyChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(healthyId)
-                ).length,
+                failedGroupsBefore,
+                failedGroups: groupsForSource(failedId),
+                healthyGroups: groupsForSource(healthyId),
                 errors
             };
         } finally {
-            API.proxy.xtream.liveCategories = originalCategories;
-            API.proxy.xtream.liveStreams = originalStreams;
+            API.proxy.catalogue.liveSummary = originalSummary;
             console.error = originalConsoleError;
         }
     }, { failedId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(retainedSourceLoad.failedChannelsBefore).toBeGreaterThan(0);
-    expect(retainedSourceLoad.failedChannels).toBe(retainedSourceLoad.failedChannelsBefore);
-    expect(retainedSourceLoad.healthyChannels).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedGroupsBefore).toBeGreaterThan(0);
+    expect(retainedSourceLoad.failedGroups).toBe(retainedSourceLoad.failedGroupsBefore);
+    expect(retainedSourceLoad.healthyGroups).toBeGreaterThan(0);
     expect(retainedSourceLoad.errors.some(message =>
         message.includes(`Error loading source ${m3uSource.id}`)
     )).toBe(true);
 
     const transientSourceLoad = await page.evaluate(async ({ recoveredId, healthyId }) => {
-        const originalCategories = API.proxy.xtream.liveCategories;
-        const originalStreams = API.proxy.xtream.liveStreams;
-        let categoryAttempts = 0;
-        let streamAttempts = 0;
+        const originalSummary = API.proxy.catalogue.liveSummary;
+        let summaryAttempts = 0;
 
-        API.proxy.xtream.liveCategories = (sourceId, options) => {
-            if (String(sourceId) === String(recoveredId) && categoryAttempts++ === 0) {
-                return Promise.reject(new Error('Controlled transient category failure'));
+        API.proxy.catalogue.liveSummary = sourceId => {
+            if (String(sourceId) === String(recoveredId) && summaryAttempts++ === 0) {
+                return Promise.reject(new Error('Controlled transient summary failure'));
             }
-            return originalCategories(sourceId, options);
-        };
-        API.proxy.xtream.liveStreams = (sourceId, categoryId, options) => {
-            if (String(sourceId) === String(recoveredId) && streamAttempts++ === 0) {
-                return Promise.reject(new Error('Controlled transient stream failure'));
-            }
-            return originalStreams(sourceId, categoryId, options);
+            return originalSummary(sourceId);
         };
 
         try {
             await window.app.channelList.loadSources();
             window.app.channelList.sourceSelect.value = '';
             await window.app.channelList.loadChannels();
+            const groupsForSource = sourceId => window.app.channelList.boundedGroups.filter(group =>
+                group.parts.some(part => String(part.source.id) === String(sourceId))
+            ).length;
             return {
-                recoveredChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(recoveredId)
-                ).length,
-                healthyChannels: window.app.channelList.channels.filter(channel =>
-                    String(channel.sourceId) === String(healthyId)
-                ).length,
-                categoryAttempts,
-                streamAttempts
+                recoveredGroups: groupsForSource(recoveredId),
+                healthyGroups: groupsForSource(healthyId),
+                summaryAttempts
             };
         } finally {
-            API.proxy.xtream.liveCategories = originalCategories;
-            API.proxy.xtream.liveStreams = originalStreams;
+            API.proxy.catalogue.liveSummary = originalSummary;
         }
     }, { recoveredId: m3uSource.id, healthyId: healthyAfterFailureSource.id });
 
-    expect(transientSourceLoad.recoveredChannels).toBeGreaterThan(0);
-    expect(transientSourceLoad.healthyChannels).toBeGreaterThan(0);
-    expect(transientSourceLoad.categoryAttempts).toBe(2);
-    expect(transientSourceLoad.streamAttempts).toBe(2);
+    expect(transientSourceLoad.recoveredGroups).toBeGreaterThan(0);
+    expect(transientSourceLoad.healthyGroups).toBeGreaterThan(0);
+    expect(transientSourceLoad.summaryAttempts).toBe(2);
 
     await page.evaluate(async id => {
         const response = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
@@ -1002,7 +1126,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const liveChannelsGate = new Promise(resolve => { releaseLiveChannels = resolve; });
     let liveChannelsRequestSeen;
     const liveChannelsRequest = new Promise(resolve => { liveChannelsRequestSeen = resolve; });
-    await page.route(`**/api/proxy/xtream/${variantSource.id}/live_streams`, async route => {
+    await page.route(`**/api/proxy/catalogue/${variantSource.id}/live/summary`, async route => {
         liveChannelsRequestSeen();
         await liveChannelsGate;
         await route.continue();
@@ -1016,7 +1140,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     releaseLiveChannels();
     await expect(page.locator('.group-header', { hasText: 'Quality Variants' })).toContainText('1');
     await expect(page.locator('#channel-search')).toHaveValue('Quality Variant HD');
-    await page.unroute(`**/api/proxy/xtream/${variantSource.id}/live_streams`);
+    await page.unroute(`**/api/proxy/catalogue/${variantSource.id}/live/summary`);
     await page.locator('#channel-search').fill('');
     const variantGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
     await expect(variantGroup).toContainText('4');
@@ -1024,8 +1148,82 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     for (const name of ['Quality Variant 4K', 'Quality Variant FHD', 'Quality Variant HD', 'Quality Variant SD']) {
         await expect(page.locator('.channel-name', { hasText: name, exact: true })).toBeVisible();
     }
+    await variantGroup.click();
+    await expect(variantGroup).toHaveClass(/collapsed/);
+
+    // A search that matches a very large group must discover the complete
+    // count without walking every global result page while the group remains
+    // collapsed. Expanding it fetches one bounded category page instead.
+    const syntheticSearchRequests = [];
+    await page.route(`**/api/proxy/catalogue/${variantSource.id}/live/channels**`, async route => {
+        const url = new URL(route.request().url());
+        if (url.searchParams.get('query') !== 'Nordic Synthetic') {
+            await route.continue();
+            return;
+        }
+        syntheticSearchRequests.push(url.toString());
+        const categoryId = url.searchParams.get('category_id');
+        const items = categoryId
+            ? Array.from({ length: 500 }, (_, index) => ({
+                stream_id: `synthetic-${index}`,
+                name: `Nordic Synthetic ${String(index).padStart(3, '0')}`,
+                category_id: categoryId,
+                category_name: 'Quality Variants',
+                stream_icon: '',
+                container_extension: 'ts'
+            }))
+            : [{
+                stream_id: 'synthetic-discovery',
+                name: 'Nordic Synthetic discovery item',
+                category_id: '1',
+                category_name: 'Quality Variants',
+                stream_icon: '',
+                container_extension: 'ts'
+            }];
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                schemaVersion: 1,
+                revision: 1,
+                sourceId: variantSource.id,
+                contentType: 'live',
+                categoryId,
+                query: 'Nordic Synthetic',
+                matchGroups: categoryId ? undefined : [{ name: 'Quality Variants', count: 24000 }],
+                items,
+                hasMore: true,
+                nextCursor: 'synthetic-next-page'
+            })
+        });
+    });
+    await page.locator('#channel-search').fill('Nordic Synthetic');
+    const syntheticGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(syntheticGroup).toContainText('24000');
+    await expect(syntheticGroup).toHaveClass(/collapsed/);
+    await expect(page.locator('.channel-item')).toHaveCount(0);
+    await page.waitForTimeout(750);
+    expect(syntheticSearchRequests).toHaveLength(1);
+    expect(new URL(syntheticSearchRequests[0]).searchParams.get('limit')).toBe('1');
+    expect(new URL(syntheticSearchRequests[0]).searchParams.has('category_id')).toBe(false);
+    await syntheticGroup.click();
+    await expect.poll(() => syntheticSearchRequests.length).toBe(2);
+    expect(new URL(syntheticSearchRequests[1]).searchParams.has('category_id')).toBe(true);
+    await expect(page.locator('.channel-item')).toHaveCount(500);
+    await syntheticGroup.click();
+    await page.locator('#channel-search').fill('');
+    await page.unroute(`**/api/proxy/catalogue/${variantSource.id}/live/channels**`);
+
     await page.locator('#channel-search').fill('Quality Variant');
+    const searchGroup = page.locator('.group-header', { hasText: 'Quality Variants' });
+    await expect(searchGroup).toContainText('4');
+    await expect(searchGroup).toHaveClass(/collapsed/);
+    await expect(page.locator('.channel-item')).toHaveCount(0);
+    await searchGroup.click();
+    await expect(searchGroup).not.toHaveClass(/collapsed/);
     await expect(page.locator('.channel-item')).toHaveCount(4);
+    await searchGroup.click();
+    await expect(searchGroup).toHaveClass(/collapsed/);
     await page.locator('#channel-search').fill('');
     await page.locator('#source-select').selectOption('');
     await page.locator('.group-header', { hasText: 'Local Test' }).click();
@@ -1075,7 +1273,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#player-quality-menu')).toBeVisible();
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('480p');
-    await expect(page.locator('#player-transcode-status')).toContainText('Up to 480p');
+    await expect(page.locator('#player-transcode-status')).toContainText('Transcoding (Video)');
     await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
         timeout: 30_000
     }).toBe(true);
@@ -1214,6 +1412,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('#watch-time-total')).toHaveText('0:08');
+    await expect(page.locator('#watch-time-total')).toBeVisible();
+    await expect(page.locator('#watch-duration')).toHaveText('0:08');
     expect(subtitleRequests).toHaveLength(0);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
     await page.locator('.watch-video-section').hover();
@@ -1356,6 +1557,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(durationState.sourceDuration).toBeGreaterThan(19);
     expect(durationState.sourceDuration).toBeLessThan(21);
     expect(durationState.playbackDuration).toBeCloseTo(durationState.sourceDuration, 3);
+    await expect(page.locator('#watch-time-total')).toHaveText('0:20');
+    await expect(page.locator('#watch-time-total')).toBeVisible();
     const offsetAudioSession = await page.evaluate(() => window.app.pages.watch.currentSessionId);
     await page.evaluate(() => window.app.pages.watch.seek(0));
     await expect.poll(() => page.evaluate(() => window.app.pages.watch.currentSessionId), {
@@ -1368,25 +1571,63 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
     await expect.poll(async () => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
+        track.mode === 'hidden' && Array.from(track.cues || []).some(cue => cue.text.includes('English controlled subtitle'))
     ))), { timeout: 30_000 }).toBe(true);
     expect(subtitleRequests).toHaveLength(2);
     expect(subtitleRequests.every(requestUrl => (
         new URL(requestUrl).searchParams.get('duration') === '60'
     ))).toBe(true);
     await watchVideo.evaluate(element => { element.currentTime = 2; });
-    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('English controlled subtitle'))
-    ))), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.evaluate(() => ({
+        hiddenTrackActive: Array.from(window.app.pages.watch.video.textTracks).some(track => (
+            track.mode === 'hidden' && Array.from(track.activeCues || []).some(cue => (
+                cue.text.includes('English controlled subtitle')
+            ))
+        )),
+        overlayVisible: !window.app.pages.watch.subtitleOverlay.classList.contains('hidden'),
+        overlayText: window.app.pages.watch.subtitleStack.textContent
+    })), { timeout: 10_000 }).toMatchObject({
+        hiddenTrackActive: true,
+        overlayVisible: true,
+        overlayText: expect.stringContaining('English controlled subtitle')
+    });
+    const playbackSubtitleAppearance = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const cue = watch.subtitleStack.querySelector('.watch-subtitle-cue');
+        const cueStyle = getComputedStyle(cue);
+        const stackStyle = getComputedStyle(watch.subtitleStack);
+        return {
+            textColor: stackStyle.color,
+            backgroundColor: cueStyle.backgroundColor,
+            textShadow: stackStyle.textShadow,
+            minimumSize: watch.subtitleOverlay.style.getPropertyValue('--subtitle-font-min-size'),
+            position: watch.subtitleOverlay.style.getPropertyValue('--subtitle-position-percent'),
+            bottomOffset: parseFloat(watch.subtitleOverlay.style.getPropertyValue('--subtitle-bottom-offset'))
+        };
+    });
+    expect(playbackSubtitleAppearance).toMatchObject({
+        textColor: 'rgb(0, 0, 0)',
+        backgroundColor: 'rgba(18, 52, 86, 0.6)',
+        textShadow: expect.stringContaining('rgba(255, 255, 255'),
+        minimumSize: '25px',
+        position: '18%'
+    });
+    expect(playbackSubtitleAppearance.bottomOffset).toBeGreaterThan(12);
     await page.evaluate(() => {
         const watch = window.app.pages.watch;
         watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
     });
-    await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => (
-            cue.text.includes('[Controlled background sound]')
-        ))
-    ))), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.evaluate(() => ({
+        hiddenTrackActive: Array.from(window.app.pages.watch.video.textTracks).some(track => (
+            track.mode === 'hidden' && Array.from(track.activeCues || []).some(cue => (
+                cue.text.includes('[Controlled background sound]')
+            ))
+        )),
+        overlayText: window.app.pages.watch.subtitleStack.textContent
+    })), { timeout: 10_000 }).toMatchObject({
+        hiddenTrackActive: true,
+        overlayText: expect.stringContaining('[Controlled background sound]')
+    });
     const stableSubtitleCues = await page.evaluate(() => {
         const watch = window.app.pages.watch;
         const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
@@ -1413,13 +1654,33 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
     expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
 
+    // Chromium may clear a hidden TextTrack's native cues while replacing an
+    // HLS media timeline. NodeCast must reconcile that browser-owned state
+    // with its parsed cue cache instead of treating the cues as still present.
+    const restoredClearedSubtitleCues = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const trackElement = Array.from(watch.video.querySelectorAll('track[data-nodecast-probe-track]'))
+            .find(element => Number(element.dataset.nodecastSubtitleIndex) === watch.selectedSubtitleStreamIndex);
+        const track = trackElement.track;
+        for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+        const restored = watch.activateProbeSubtitleTrack(trackElement);
+        return {
+            restored,
+            cueCount: track.cues?.length || 0,
+            cueText: Array.from(track.cues || []).map(cue => cue.text)
+        };
+    });
+    expect(restoredClearedSubtitleCues.restored).toBe(true);
+    expect(restoredClearedSubtitleCues.cueCount).toBeGreaterThanOrEqual(3);
+    expect(restoredClearedSubtitleCues.cueText).toContain('English controlled subtitle');
+
     await page.locator('.watch-video-section').hover();
     await page.locator('#watch-captions-btn').click();
     await page.locator('#watch-captions-list .captions-option', { hasText: 'Norwegian' }).click();
     await expect.poll(() => subtitleRequests.length, { timeout: 10_000 }).toBe(3);
     expect(new URL(subtitleRequests[2]).searchParams.get('start')).toBe('0');
     await expect.poll(() => watchVideo.evaluate(element => Array.from(element.textTracks).some(track => (
-        track.mode === 'showing' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
+        track.mode === 'hidden' && Array.from(track.cues || []).some(cue => cue.text.includes('Norsk kontrollert undertekst'))
     ))), { timeout: 30_000 }).toBe(true);
 
     // Seeking and then leaving immediately while paused must persist the seek
@@ -1439,6 +1700,8 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(seekHistory.progress).toBeGreaterThanOrEqual(11);
     expect(seekHistory.progress).toBeLessThanOrEqual(12);
     expect(seekHistory.duration).toBeGreaterThan(19);
+    await expect(page.locator('#watch-time-total')).toBeHidden();
+    await expect(page.locator('#watch-time-total')).toHaveText('');
 
     await page.evaluate(async ({ url, sourceId, resumeTime }) => {
         await window.app.pages.watch.play({

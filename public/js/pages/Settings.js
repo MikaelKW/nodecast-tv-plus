@@ -10,6 +10,7 @@ class SettingsPage {
         this.isVisible = false;
         this.visibilityGeneration = 0;
         this.syncStatusRequest = null;
+        this.subtitlePreferences = SubtitlePreferences.normalizePreferences(app.currentUser?.subtitlePreferences);
 
         this.init();
     }
@@ -29,6 +30,9 @@ class SettingsPage {
         // Interface and navigation settings
         this.initInterfaceSettings();
 
+        // Account-specific playback preferences
+        this.initSubtitlePreferences();
+
         // Transcoding settings
         this.initTranscodingSettings();
 
@@ -37,6 +41,145 @@ class SettingsPage {
 
         // Version and release information
         this.initAboutSettings();
+    }
+
+    initSubtitlePreferences() {
+        const form = document.getElementById('subtitle-preferences-form');
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        if (!form || !language || !mode) return;
+
+        language.addEventListener('change', () => this.updateSubtitleModeAvailability());
+        mode.addEventListener('change', () => this.updateSubtitleModeDescription());
+        for (const control of this.getSubtitleAppearanceControls()) {
+            control.addEventListener('input', () => this.updateSubtitleAppearancePreview());
+            control.addEventListener('change', () => this.updateSubtitleAppearancePreview());
+        }
+        document.getElementById('reset-subtitle-appearance')?.addEventListener('click', () => {
+            this.setSubtitleAppearanceControls(SubtitlePreferences.DEFAULT_APPEARANCE);
+            const status = document.getElementById('subtitle-preferences-status');
+            if (status) status.textContent = 'Default appearance selected. Save subtitle preferences to apply it.';
+        });
+        form.addEventListener('submit', event => this.saveSubtitlePreferences(event));
+        this.loadSubtitlePreferences();
+    }
+
+    getSubtitleAppearanceControls() {
+        return [
+            'subtitle-text-scale',
+            'subtitle-text-color',
+            'subtitle-background-color',
+            'subtitle-background-opacity',
+            'subtitle-edge-style',
+            'subtitle-vertical-position'
+        ].map(id => document.getElementById(id)).filter(Boolean);
+    }
+
+    readSubtitleAppearanceControls() {
+        return SubtitlePreferences.normalizeAppearance({
+            textScale: document.getElementById('subtitle-text-scale')?.value,
+            textColor: document.getElementById('subtitle-text-color')?.value,
+            backgroundColor: document.getElementById('subtitle-background-color')?.value,
+            backgroundOpacity: document.getElementById('subtitle-background-opacity')?.value,
+            edgeStyle: document.getElementById('subtitle-edge-style')?.value,
+            verticalPosition: document.getElementById('subtitle-vertical-position')?.value
+        });
+    }
+
+    setSubtitleAppearanceControls(value) {
+        const appearance = SubtitlePreferences.normalizeAppearance(value);
+        const values = {
+            'subtitle-text-scale': appearance.textScale,
+            'subtitle-text-color': appearance.textColor,
+            'subtitle-background-color': appearance.backgroundColor,
+            'subtitle-background-opacity': appearance.backgroundOpacity,
+            'subtitle-edge-style': appearance.edgeStyle,
+            'subtitle-vertical-position': appearance.verticalPosition
+        };
+        for (const [id, controlValue] of Object.entries(values)) {
+            const control = document.getElementById(id);
+            if (control) control.value = String(controlValue);
+        }
+        this.updateSubtitleAppearancePreview();
+    }
+
+    updateSubtitleAppearancePreview() {
+        const appearance = this.readSubtitleAppearanceControls();
+        const preview = document.getElementById('subtitle-appearance-preview');
+        SubtitlePreferences.applyAppearanceStyles(preview, appearance);
+
+        const textScale = document.getElementById('subtitle-text-scale-value');
+        const opacity = document.getElementById('subtitle-background-opacity-value');
+        const position = document.getElementById('subtitle-vertical-position-value');
+        if (textScale) textScale.textContent = `${appearance.textScale}%`;
+        if (opacity) opacity.textContent = `${appearance.backgroundOpacity}%`;
+        if (position) position.textContent = `${appearance.verticalPosition}% from bottom`;
+    }
+
+    loadSubtitlePreferences() {
+        this.subtitlePreferences = SubtitlePreferences.normalizePreferences(
+            this.app.currentUser?.subtitlePreferences || this.subtitlePreferences
+        );
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        if (!language || !mode) return;
+
+        language.value = this.subtitlePreferences.language;
+        mode.value = this.subtitlePreferences.mode;
+        this.setSubtitleAppearanceControls(this.subtitlePreferences.appearance);
+        this.updateSubtitleModeAvailability();
+    }
+
+    updateSubtitleModeAvailability() {
+        const language = document.getElementById('preferred-subtitle-language');
+        const mode = document.getElementById('automatic-subtitle-mode');
+        const preferredOption = mode?.querySelector('option[value="preferred"]');
+        if (!language || !mode || !preferredOption) return;
+
+        const unavailable = !SubtitlePreferences.normalizeLanguage(language.value);
+        preferredOption.disabled = unavailable;
+        if (unavailable && mode.value === 'preferred') mode.value = 'off';
+        this.updateSubtitleModeDescription();
+    }
+
+    updateSubtitleModeDescription() {
+        const descriptions = {
+            off: 'Playback starts with subtitles off. You can still select a track manually.',
+            default: 'Uses compatible default or forced track flags when they are available.',
+            forced: 'Uses a forced track matching the preferred language when available.',
+            preferred: 'Uses the preferred language whenever a matching track is available.'
+        };
+        const mode = document.getElementById('automatic-subtitle-mode')?.value || 'off';
+        const target = document.getElementById('automatic-subtitle-mode-description');
+        if (target) target.textContent = descriptions[mode];
+    }
+
+    async saveSubtitlePreferences(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = form.querySelector('[type="submit"]');
+        const status = document.getElementById('subtitle-preferences-status');
+        const preferences = SubtitlePreferences.normalizePreferences({
+            language: document.getElementById('preferred-subtitle-language')?.value,
+            mode: document.getElementById('automatic-subtitle-mode')?.value,
+            appearance: this.readSubtitleAppearanceControls()
+        });
+
+        if (button) button.disabled = true;
+        if (status) status.textContent = '';
+        try {
+            const result = await API.account.updateSubtitlePreferences(preferences);
+            this.subtitlePreferences = SubtitlePreferences.normalizePreferences(result.subtitlePreferences);
+            this.app.currentUser = {
+                ...this.app.currentUser,
+                subtitlePreferences: this.subtitlePreferences
+            };
+            if (status) status.textContent = 'Subtitle preferences saved.';
+        } catch (error) {
+            if (status) status.textContent = error.message;
+        } finally {
+            if (button) button.disabled = false;
+        }
     }
 
     initAppearanceSettings() {
@@ -879,7 +1022,26 @@ class SettingsPage {
         }
     }
 
+    isViewer() {
+        return this.app.currentUser?.role === 'viewer';
+    }
+
+    configureRoleVisibility() {
+        const viewer = this.isViewer();
+        this.tabs.forEach(tab => {
+            const visible = !viewer || tab.dataset.tab === 'preferences';
+            tab.classList.toggle('hidden', !visible);
+            tab.setAttribute('aria-hidden', String(!visible));
+        });
+
+        const usersTab = document.getElementById('users-tab');
+        if (usersTab) usersTab.style.display = !viewer && this.app.currentUser?.role === 'admin'
+            ? 'block'
+            : 'none';
+    }
+
     switchTab(tabName) {
+        if (this.isViewer() && tabName !== 'preferences') tabName = 'preferences';
         this.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         this.tabContents.forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
 
@@ -897,6 +1059,10 @@ class SettingsPage {
             this.loadAboutInformation();
         }
 
+        if (tabName === 'preferences') {
+            this.loadSubtitlePreferences();
+        }
+
         // Load hardware info when switching to transcode tab
         if (tabName === 'transcode') {
             this.loadHardwareInfo();
@@ -908,18 +1074,20 @@ class SettingsPage {
         const visibilityGeneration = ++this.visibilityGeneration;
         this.cancelSyncStatusRequest();
 
-        // Show users tab for admin
-        if (this.app.currentUser && this.app.currentUser.role === 'admin') {
-            const usersTab = document.getElementById('users-tab');
-            if (usersTab) {
-                usersTab.style.display = 'block';
-            }
+        this.configureRoleVisibility();
+        if (this.isViewer()) {
+            // Global source, playback, interface, transcoding, and user
+            // controls remain administrator-only. Viewer accounts can still
+            // manage the preferences stored on their own account.
+            this.switchTab('preferences');
+            return;
         }
 
         // Load sources when page is shown
         await this.app.sourceManager.loadSources();
         if (!this.isVisible || visibilityGeneration !== this.visibilityGeneration) return;
         this.renderInterfaceSettings(this.app.navigationSettings);
+        this.loadSubtitlePreferences();
 
         // Refresh ALL player settings from server
         if (this.app.player?.settings) {
