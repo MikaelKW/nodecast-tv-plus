@@ -62,7 +62,7 @@ jobs:
           retention-days: 14
 
       - name: Block high and critical dependency advisories
-        run: npm audit --audit-level=high --omit=dev
+        run: npm audit --audit-level=high --omit=dev --package-lock-only
 
   docker-build:
     name: Docker build
