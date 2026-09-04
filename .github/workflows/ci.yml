@@ -61,8 +61,20 @@ jobs:
           path: playwright-report/
           retention-days: 14
 
-      - name: Block high and critical dependency advisories
-        run: npm audit --audit-level=high --omit=dev --package-lock-only
+      - name: Block high and critical production dependency vulnerabilities
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace:ro" \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            fs \
+            --scanners vuln \
+            --pkg-types library \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress \
+            /workspace/package-lock.json
 
   docker-build:
     name: Docker build
