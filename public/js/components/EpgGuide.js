@@ -694,11 +694,11 @@ class EpgGuide {
             // Name/Logo click plays channel
             info.querySelector('.epg-channel-name')?.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.playChannel(info.querySelector('.epg-channel-name').textContent);
+                this.playChannel(row.dataset.channelId, row.dataset.sourceId);
             });
             info.querySelector('.epg-channel-logo')?.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.playChannel(info.querySelector('.epg-channel-name').textContent);
+                this.playChannel(row.dataset.channelId, row.dataset.sourceId);
             });
 
             // Favorite click
@@ -983,18 +983,22 @@ class EpgGuide {
     /**
      * Play channel from EPG
      */
-    async playChannel(channelName) {
-        // Find channel in channel list and play
+    async playChannel(channelId, sourceId) {
         if (window.app?.channelList) {
             const availableChannels = window.app.channelList.guideChannels
                 || window.app.channelList.channels;
             const channel = availableChannels.find(c =>
-                c.name === channelName || c.tvgName === channelName
+                String(c.id) === String(channelId) && String(c.sourceId) === String(sourceId)
             );
             if (channel) {
-                await window.app.channelList.selectChannel({ channelId: channel.id });
-                // Switch to live TV page
-                document.querySelector('[data-page="live"]').click();
+                // Guide records need not be present in the bounded sidebar.
+                // Navigate first so catalogue loading does not wait for playback.
+                window.app.navigateTo('live');
+                try {
+                    await window.app.channelList.playChannelRecord(channel);
+                } catch (err) {
+                    console.error('[TV Guide] Error starting channel:', err);
+                }
             }
         }
     }
