@@ -299,6 +299,7 @@ class SyncService {
                 name = excluded.name,
                 category_id = excluded.category_id,
                 stream_icon = excluded.stream_icon,
+                stream_url = excluded.stream_url,
                 container_extension = excluded.container_extension,
                 data = excluded.data
         `);
@@ -345,7 +346,9 @@ class SyncService {
                     name,
                     String(catId),
                     icon,
-                    null, // Direct URL not stored for Xtream usually, built on fly
+                    typeof item.stream_url === 'string' && item.stream_url.trim()
+                        ? item.stream_url
+                        : null,
                     container,
                     rating,
                     year,
