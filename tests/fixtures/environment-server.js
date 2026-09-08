@@ -13,6 +13,7 @@ const testRoot = path.join(projectRoot, '.test-data', `playwright-${process.pid}
 const dataDir = path.join(testRoot, 'data');
 const cacheDir = path.join(testRoot, 'cache');
 const mediaPath = path.join(testRoot, 'sample.mp4');
+const remuxMediaPath = path.join(testRoot, 'sample.ts');
 const multiTrackMediaPath = path.join(testRoot, 'multi-track.mkv');
 const recoverableHlsDir = path.join(testRoot, 'recoverable-hls');
 const appPort = Number(process.env.NODECAST_TEST_APP_PORT || 3210);
@@ -97,6 +98,17 @@ function generateMedia() {
 
     if (result.status !== 0) {
         throw new Error(`Unable to generate test media: ${result.stderr || 'FFmpeg failed'}`);
+    }
+
+    const remuxResult = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-stream_loop', '5', '-i', mediaPath, '-t', '45',
+        '-c', 'copy', '-f', 'mpegts',
+        remuxMediaPath
+    ], { encoding: 'utf8' });
+
+    if (remuxResult.status !== 0) {
+        throw new Error(`Unable to generate remux test media: ${remuxResult.stderr || 'FFmpeg failed'}`);
     }
 
     const englishSubtitles = path.join(testRoot, 'english.srt');
@@ -396,6 +408,7 @@ async function start() {
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');
+        if (pathname === '/sample.ts') return sendFile(req, res, remuxMediaPath, 'video/mp2t');
         if (pathname === '/multi-track.mkv') return sendFile(req, res, multiTrackMediaPath, 'video/x-matroska');
         if (pathname === '/recoverable-hls/playlist.m3u8') {
             return sendFile(req, res, path.join(recoverableHlsDir, 'playlist.m3u8'), 'application/vnd.apple.mpegurl');

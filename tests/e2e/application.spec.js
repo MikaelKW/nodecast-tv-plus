@@ -31,7 +31,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // processing, responsive layouts, and the bounded catalogue contract in a
     // single-use environment. Keep enough headroom for slower Windows runners
     // without reducing any individual assertion timeout.
-    test.setTimeout(150_000);
+    test.setTimeout(210_000);
     expect(isIgnorableGoogleFont404(
         'Failed to load resource: the server responded with a status of 404 ()',
         'https://fonts.gstatic.com/s/inter/v20/example.woff2'
@@ -1294,6 +1294,48 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+
+    // A cap matching the original fixed-resolution stream must preserve its
+    // remux path. After a lower cap encodes video, raising the cap back to the
+    // source resolution must restore remux rather than keep the 480p session.
+    await page.evaluate(async url => {
+        await window.app.player.play({ name: 'Remux quality restoration' }, url);
+    }, `${fixtureBaseUrl}/sample.ts`);
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(720);
+    await page.locator('#video-container').dispatchEvent('mousemove');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="720p"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('720p');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    expect(await page.evaluate(() => window.app?.player?.currentSessionId || null)).toBeNull();
+
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="480p"]').click();
+    await expect(page.locator('#player-transcode-status')).toHaveText('Transcoding (Video)');
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(480);
+
+    await page.evaluate(() => window.app.player.hideNowPlayingOverlay());
+    await page.locator('#video-container').dispatchEvent('mousemove');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="720p"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('720p');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(720);
+    await expect(page.locator('#player-quality-badge')).toHaveText('720p');
+
     // A browser-only provider must not leave the player stuck when FFmpeg is
     // rejected. The previous direct stream and Auto selection are restored.
     await page.evaluate(async url => {
