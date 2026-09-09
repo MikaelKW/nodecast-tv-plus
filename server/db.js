@@ -460,6 +460,13 @@ function createUsernameConflictError() {
   return error;
 }
 
+function normalizeLiveTvPreferences(value = {}) {
+  return {
+    layout: value?.layout === 'flat' ? 'flat' : 'grouped',
+    order: value?.order === 'alphabetical' ? 'alphabetical' : 'channel-number'
+  };
+}
+
 function toPublicUser(user) {
   if (!user) return null;
   return {
@@ -471,7 +478,8 @@ function toPublicUser(user) {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     twoFactorEnabled: Boolean(user.totp?.enabled),
-    subtitlePreferences: normalizePreferences(user.subtitlePreferences)
+    subtitlePreferences: normalizePreferences(user.subtitlePreferences),
+    liveTvPreferences: normalizeLiveTvPreferences(user.liveTvPreferences)
   };
 }
 
@@ -555,6 +563,7 @@ const users = {
       oidcId: userData.oidcId || null,
       email: userData.email || null,
       subtitlePreferences: normalizePreferences(userData.subtitlePreferences),
+      liveTvPreferences: normalizeLiveTvPreferences(userData.liveTvPreferences),
       createdAt: new Date().toISOString()
     };
 
@@ -699,4 +708,4 @@ const users = {
   }
 };
 
-module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS };
+module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences };

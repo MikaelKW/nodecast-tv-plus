@@ -68,6 +68,7 @@ function parseExtinf(line) {
         tvgId: null,
         tvgName: null,
         tvgLogo: null,
+        tvgChno: null,
         groupTitle: null,
         name: null
     };
@@ -84,6 +85,7 @@ function parseExtinf(line) {
         tvgId: /tvg-id="([^"]*)"/i,
         tvgName: /tvg-name="([^"]*)"/i,
         tvgLogo: /tvg-logo="([^"]*)"/i,
+        tvgChno: /tvg-chno="([^"]*)"/i,
         groupTitle: /group-title="([^"]*)"/i
     };
 

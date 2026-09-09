@@ -135,6 +135,15 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
     await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
+    await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await expect(page.locator('#setting-live-tv-order')).toHaveValue('channel-number');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await expect(page.locator('#flat-list-order-group')).toHaveClass(/is-disabled/);
+    await expect(page.locator('#setting-live-tv-order')).toHaveCSS('opacity', '0.45');
+    await expect(page.locator('#flat-list-order-requirement')).toHaveText(
+        'Choose Flat channel list to enable flat list ordering.'
+    );
+    await expect(page.locator('#flat-list-order-requirement')).toBeVisible();
     await expect(page.locator('#preferred-subtitle-language')).toHaveValue('');
     await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
     await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
@@ -334,6 +343,16 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
         await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
     }
+    await expect(viewerPage.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await viewerPage.locator('#setting-live-tv-layout').selectOption('flat');
+    await expect(viewerPage.locator('#setting-live-tv-order')).toBeEnabled();
+    await viewerPage.locator('#setting-live-tv-order').selectOption('alphabetical');
+    await viewerPage.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(viewerPage.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
+    await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'flat',
+        order: 'alphabetical'
+    });
     await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
     await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
     await viewerPage.getByRole('button', { name: 'Save subtitle preferences' }).click();
@@ -351,6 +370,10 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         }
     });
     await viewerContext.close();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'grouped',
+        order: 'channel-number'
+    });
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: '',
         mode: 'off',
@@ -1094,6 +1117,54 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.locator('#setting-landing-page').selectOption('home');
     await page.getByRole('button', { name: 'Save interface settings' }).click();
     await expect(page.locator('.nav-link[data-page="home"]')).toBeVisible();
+
+    // Flat Live TV remains on the compact catalogue API, renders channels
+    // without category headers, and keeps server-side search bounded.
+    const flatCatalogueRequests = [];
+    const captureFlatCatalogueRequest = request => {
+        const url = new URL(request.url());
+        if (url.pathname.includes('/proxy/catalogue/') && url.pathname.endsWith('/live/channels')) {
+            flatCatalogueRequests.push(url);
+        }
+    };
+    page.on('request', captureFlatCatalogueRequest);
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await expect(page.locator('#setting-live-tv-order')).toHaveValue('channel-number');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await page.locator('#setting-live-tv-layout').selectOption('flat');
+    await expect(page.locator('#setting-live-tv-order')).toBeEnabled();
+    await expect(page.locator('#flat-list-order-group')).not.toHaveClass(/is-disabled/);
+    await expect(page.locator('#setting-live-tv-order')).toHaveCSS('opacity', '1');
+    await page.locator('#setting-live-tv-order').selectOption('channel-number');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(page.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'flat',
+        order: 'channel-number'
+    });
+    await page.locator('.nav-link[data-page="live"]').click();
+    await expect(page.locator('#toggle-groups')).toBeHidden();
+    await expect(page.locator('#channel-list .group-header')).toHaveCount(0);
+    await expect(page.locator('#channel-list .channel-item').first()).toBeVisible();
+    await expect.poll(() => flatCatalogueRequests.some(url => url.searchParams.get('sort') === 'number')).toBe(true);
+    await page.locator('#channel-search').fill('Quality Variant HD');
+    const flatQualityVariant = page.locator('#channel-list .channel-item', { hasText: 'Quality Variant HD' });
+    await expect(flatQualityVariant).toBeVisible();
+    await expect(flatQualityVariant.locator('.channel-number')).toHaveText('30');
+    await expect(page.locator('#channel-list .group-header')).toHaveCount(0);
+    await expect.poll(() => flatCatalogueRequests.some(url =>
+        url.searchParams.get('query') === 'Quality Variant HD'
+        && url.searchParams.get('limit') === '500'
+        && url.searchParams.get('group_counts') === 'false'
+    )).toBe(true);
+    page.off('request', captureFlatCatalogueRequest);
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await page.locator('#setting-live-tv-order').selectOption('alphabetical');
+    await page.locator('#setting-live-tv-layout').selectOption('grouped');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(page.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
 
     await page.locator('.tab[data-tab="sources"]').click();
     await seriesSourceRow.locator('[data-action="edit"]').click();
