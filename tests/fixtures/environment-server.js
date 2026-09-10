@@ -53,13 +53,13 @@ function controlledPlaylist(baseUrl) {
 function controlledVariantPlaylist(baseUrl) {
     return [
         '#EXTM3U',
-        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant 4K`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" tvg-chno="40" group-title="Quality Variants",Quality Variant 4K`,
         `${baseUrl}/sample.mp4?variant=4k`,
-        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant FHD`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" tvg-chno="10" group-title="Quality Variants",Quality Variant FHD`,
         `${baseUrl}/sample.mp4?variant=fhd`,
-        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant HD`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" tvg-chno="30" group-title="Quality Variants",Quality Variant HD`,
         `${baseUrl}/sample.mp4?variant=hd`,
-        `#EXTINF:-1 tvg-id="quality.variant.test" group-title="Quality Variants",Quality Variant SD`,
+        `#EXTINF:-1 tvg-id="quality.variant.test" tvg-chno="20" group-title="Quality Variants",Quality Variant SD`,
         `${baseUrl}/sample.mp4?variant=sd`
     ].join('\n');
 }

@@ -8,6 +8,7 @@ class App {
         this.pages = {};
         this.currentUser = null;
         this.navigationSettings = this.getDefaultNavigationSettings();
+        this.liveTvSettings = this.getDefaultLiveTvSettings();
 
         // Initialize components
         this.player = new VideoPlayer();
@@ -293,7 +294,20 @@ class App {
         return { landingPage, visibleTabs };
     }
 
+    getDefaultLiveTvSettings() {
+        return { layout: 'grouped', order: 'channel-number' };
+    }
+
+    normalizeLiveTvSettings(liveTv = {}) {
+        return {
+            layout: liveTv?.layout === 'flat' ? 'flat' : 'grouped',
+            order: liveTv?.order === 'alphabetical' ? 'alphabetical' : 'channel-number'
+        };
+    }
+
     async loadNavigationSettings() {
+        this.liveTvSettings = this.normalizeLiveTvSettings(this.currentUser?.liveTvPreferences);
+        this.channelList.setLiveTvSettings(this.liveTvSettings, { reload: false });
         try {
             const settings = await API.settings.get();
             this.navigationSettings = this.normalizeNavigationSettings(settings.navigation);
@@ -309,6 +323,11 @@ class App {
         if (this.navigationSettings.visibleTabs[this.currentPage] === false) {
             this.navigateTo(this.navigationSettings.landingPage, true);
         }
+    }
+
+    async setLiveTvSettings(liveTv, options = {}) {
+        this.liveTvSettings = this.normalizeLiveTvSettings(liveTv);
+        await this.channelList.setLiveTvSettings(this.liveTvSettings, options);
     }
 
     applyNavigationVisibility() {

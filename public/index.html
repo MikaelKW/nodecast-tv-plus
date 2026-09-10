@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=14">
+  <link rel="stylesheet" href="css/main.css?v=17">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -578,6 +578,36 @@
               </p>
             </div>
 
+            <div class="settings-section" aria-labelledby="live-tv-preferences-heading">
+              <h3 id="live-tv-preferences-heading">Live TV preferences</h3>
+              <p class="hint">Choose whether channels are organized into provider groups or shown in one progressively loaded list.</p>
+              <form id="live-tv-preferences-form" class="account-form">
+                <div class="form-group">
+                  <label for="setting-live-tv-layout">Channel list layout</label>
+                  <select id="setting-live-tv-layout" class="form-input">
+                    <option value="grouped">Grouped by category</option>
+                    <option value="flat">Flat channel list</option>
+                  </select>
+                  <p class="hint">Grouped keeps provider categories. Flat shows channels directly without category headers.</p>
+                </div>
+                <div class="form-group preference-dependent-control" id="flat-list-order-group">
+                  <label for="setting-live-tv-order">Flat list order</label>
+                  <select id="setting-live-tv-order" class="form-input">
+                    <option value="channel-number">Channel number</option>
+                    <option value="alphabetical">Alphabetical</option>
+                  </select>
+                  <p class="hint">Channel number places numbered channels first and uses names as a predictable fallback.</p>
+                  <p class="hint preference-requirement" id="flat-list-order-requirement">
+                    Choose Flat channel list to enable flat list ordering.
+                  </p>
+                </div>
+                <div id="live-tv-preferences-status" class="account-message" role="status"></div>
+                <div class="account-actions live-tv-preferences-actions">
+                  <button type="submit" class="btn btn-primary">Save Live TV preferences</button>
+                </div>
+              </form>
+            </div>
+
             <div class="settings-section" aria-labelledby="subtitle-preferences-heading">
               <h3 id="subtitle-preferences-heading">Subtitle preferences</h3>
               <p class="hint">Choose which subtitle track Movies and Series should select when playback starts.</p>
@@ -623,7 +653,7 @@
                     <option value="ja">Japanese</option>
                     <option value="ko">Korean</option>
                   </select>
-                  <p class="hint subtitle-preference-requirement" id="preferred-subtitle-language-requirement">
+                  <p class="hint preference-requirement" id="preferred-subtitle-language-requirement">
                     Choose a preferred language to enable Always preferred.
                   </p>
                 </div>
@@ -1509,12 +1539,12 @@
   <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=3"></script>
+  <script src="js/api.js?v=5"></script>
   <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/VodDuration.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
-  <script src="js/components/VideoPlayer.js?v=8"></script>
-  <script src="js/components/ChannelList.js?v=4"></script>
+  <script src="js/components/VideoPlayer.js?v=10"></script>
+  <script src="js/components/ChannelList.js?v=5"></script>
   <script src="js/components/SourceManager.js?v=7"></script>
   <script src="js/components/EpgGuide.js?v=2"></script>
   <script src="js/pages/HomePage.js?v=3"></script>
@@ -1522,11 +1552,11 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=5"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
-  <script src="js/pages/Settings.js?v=7"></script>
+  <script src="js/pages/Settings.js?v=10"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
   <script src="js/pages/WatchPage.js?v=10"></script>
-  <script src="js/app.js?v=7"></script>
+  <script src="js/app.js?v=9"></script>
 </body>
 
 </html>

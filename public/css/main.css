@@ -816,6 +816,12 @@ h4 {
   text-overflow: ellipsis;
 }
 
+.channel-number {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.5rem;
+}
+
 .channel-program {
   font-size: 0.75rem;
   color: var(--color-text-muted);
@@ -1719,9 +1725,20 @@ video::cue {
   color: var(--color-text-primary);
 }
 
-.subtitle-preference-requirement {
+.preference-requirement {
   margin-top: var(--space-xs);
   color: var(--color-warning);
+}
+
+.preference-dependent-control.is-disabled > label,
+.preference-dependent-control.is-disabled > .form-input,
+.preference-dependent-control.is-disabled > .hint:not(.preference-requirement) {
+  opacity: 0.45;
+}
+
+.preference-dependent-control .form-input:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
 }
 
 .subtitle-appearance-settings {
@@ -5444,7 +5461,8 @@ kbd {
     width: 100%;
   }
 
-  .subtitle-preferences-actions .btn {
+  .subtitle-preferences-actions .btn,
+  .live-tv-preferences-actions .btn {
     width: fit-content;
     max-width: 100%;
   }

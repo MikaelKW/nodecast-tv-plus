@@ -8,6 +8,7 @@ process.env.NODECAST_DATA_DIR = testRoot;
 
 const { getDb } = require('../server/db/sqlite');
 const { getLiveChannelPage } = require('../server/services/catalogueService');
+const { parseExtinf } = require('../server/services/m3uParser');
 
 function run() {
     const db = getDb();
@@ -17,25 +18,32 @@ function run() {
     `);
     const insertChannel = db.prepare(`
         INSERT INTO playlist_items
-            (id, source_id, item_id, type, name, category_id, data)
-        VALUES (?, 1, ?, 'live', ?, ?, '{}')
+            (id, source_id, item_id, type, name, category_id, channel_number, data)
+        VALUES (?, 1, ?, 'live', ?, ?, ?, '{}')
     `);
+
+    assert.equal(
+        parseExtinf('#EXTINF:-1 tvg-id="one" tvg-chno="12.5" group-title="Test",Channel One').tvgChno,
+        '12.5'
+    );
 
     insertCategory.run('1:norway', 'norway', 'Norway');
     insertCategory.run('1:sweden', 'sweden', 'Sweden');
     db.transaction(() => {
         for (let index = 0; index < 135; index += 1) {
             const itemId = `norway-${String(index).padStart(3, '0')}`;
-            insertChannel.run(`1:${itemId}`, itemId, `Channel ${index}`, 'norway');
+            insertChannel.run(`1:${itemId}`, itemId, `Channel ${index}`, 'norway', index + 10);
         }
-        insertChannel.run('1:sweden-norway', 'sweden-norway', 'Norway News', 'sweden');
+        insertChannel.run('1:norway-unnumbered-a', 'norway-unnumbered-a', 'AAA Unnumbered', 'norway', null);
+        insertChannel.run('1:norway-unnumbered-z', 'norway-unnumbered-z', 'ZZZ Unnumbered', 'norway', null);
+        insertChannel.run('1:sweden-norway', 'sweden-norway', 'Norway News', 'sweden', null);
     })();
 
     const firstPage = getLiveChannelPage(1, { query: 'norway', limit: 50 });
     assert.equal(firstPage.items.length, 50);
     assert.equal(firstPage.hasMore, true);
     assert.deepEqual(firstPage.matchGroups, [
-        { name: 'Norway', count: 135 },
+        { name: 'Norway', count: 137 },
         { name: 'Sweden', count: 1 }
     ]);
 
@@ -46,6 +54,41 @@ function run() {
     });
     assert.equal(secondPage.items.length, 50);
     assert.equal(secondPage.matchGroups, undefined);
+
+    const numberedPage = getLiveChannelPage(1, { categoryId: 'norway', sort: 'number', limit: 50 });
+    assert.equal(numberedPage.sort, 'number');
+    assert.deepEqual(numberedPage.items.slice(0, 3).map(item => item.channel_number), [10, 11, 12]);
+    const numberedSecondPage = getLiveChannelPage(1, {
+        categoryId: 'norway',
+        sort: 'number',
+        cursor: numberedPage.nextCursor,
+        limit: 50
+    });
+    assert.deepEqual(numberedSecondPage.items.slice(0, 2).map(item => item.channel_number), [60, 61]);
+    let numberedCursor = numberedSecondPage.nextCursor;
+    let numberedTail = numberedSecondPage.items;
+    while (numberedCursor) {
+        const page = getLiveChannelPage(1, {
+            categoryId: 'norway',
+            sort: 'number',
+            cursor: numberedCursor,
+            limit: 50
+        });
+        numberedTail = page.items;
+        numberedCursor = page.nextCursor;
+    }
+    assert.deepEqual(
+        numberedTail.slice(-2).map(item => [item.name, item.channel_number]),
+        [['AAA Unnumbered', null], ['ZZZ Unnumbered', null]]
+    );
+    assert.throws(
+        () => getLiveChannelPage(1, { sort: 'unsupported' }),
+        /sort must be either name or number/
+    );
+    assert.equal(
+        getLiveChannelPage(1, { query: 'norway', includeGroupCounts: false }).matchGroups,
+        undefined
+    );
 
     db.close();
     console.log('Catalogue search test passed.');
