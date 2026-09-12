@@ -61,6 +61,7 @@ function initSchema() {
             stream_icon TEXT,
             stream_url TEXT, -- Direct link if available
             container_extension TEXT,
+            channel_number REAL,
             
             -- VOD/Series Specific
             rating REAL,
@@ -92,6 +93,7 @@ function initSchema() {
         );
     `);
 
+    migrateLiveChannelNumbers();
     migrateStoredM3uMediaUrls();
 
     // EPG Programs
@@ -189,6 +191,56 @@ function initSchema() {
     }
 
     console.log('[SQLite] Schema initialized');
+}
+
+function migrateLiveChannelNumbers() {
+    const columns = db.prepare('PRAGMA table_info(playlist_items)').all();
+    if (!columns.some(column => column.name === 'channel_number')) {
+        db.exec('ALTER TABLE playlist_items ADD COLUMN channel_number REAL');
+    }
+
+    const migrationName = 'backfill-live-channel-number-v1';
+    const alreadyApplied = db.prepare(
+        'SELECT 1 FROM schema_migrations WHERE name = ?'
+    ).get(migrationName);
+
+    if (!alreadyApplied) {
+        db.transaction(() => {
+            db.prepare(`
+                UPDATE playlist_items
+                SET channel_number = CASE WHEN json_valid(data) THEN
+                    CASE
+                        WHEN json_type(data, '$.num') IN ('integer', 'real')
+                            THEN json_extract(data, '$.num')
+                        WHEN json_type(data, '$.channel_num') IN ('integer', 'real')
+                            THEN json_extract(data, '$.channel_num')
+                        WHEN json_type(data, '$.tvgChno') IN ('integer', 'real')
+                            THEN json_extract(data, '$.tvgChno')
+                        ELSE channel_number
+                    END
+                ELSE channel_number END
+                WHERE type = 'live'
+                  AND channel_number IS NULL
+            `).run();
+            db.prepare(`
+                INSERT INTO schema_migrations (name, applied_at)
+                VALUES (?, ?)
+            `).run(migrationName, Date.now());
+        })();
+    }
+
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_hidden_channel_order
+            ON playlist_items(
+                source_id,
+                type,
+                is_hidden,
+                (channel_number IS NULL),
+                channel_number,
+                name COLLATE NOCASE,
+                item_id
+            )
+    `);
 }
 
 function migrateStoredM3uMediaUrls() {

@@ -317,6 +317,21 @@ router.put('/me/subtitle-preferences', auth.requireAuth, async (req, res) => {
 });
 
 /**
+ * Update Live TV preferences for the signed-in account.
+ * PUT /api/auth/me/live-tv-preferences
+ */
+router.put('/me/live-tv-preferences', auth.requireAuth, async (req, res) => {
+    try {
+        const liveTvPreferences = db.normalizeLiveTvPreferences(req.body);
+        const user = await db.users.update(req.user.id, { liveTvPreferences });
+        res.json({ liveTvPreferences: user.liveTvPreferences });
+    } catch (err) {
+        console.error('Error updating Live TV preferences:', err.message);
+        res.status(500).json({ error: 'Unable to save Live TV preferences' });
+    }
+});
+
+/**
  * Get all users (admin only)
  * GET /api/auth/users
  */

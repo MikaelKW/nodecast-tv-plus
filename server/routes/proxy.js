@@ -196,7 +196,9 @@ router.get('/catalogue/:sourceId/live/channels', limitCatalogueReads, async (req
             categoryId: req.query.category_id,
             query: req.query.query,
             cursor: req.query.cursor,
-            limit: req.query.limit
+            limit: req.query.limit,
+            sort: req.query.sort,
+            includeGroupCounts: req.query.group_counts !== 'false'
         }));
     } catch (err) {
         logSafeError('Catalogue channel page error:', err);
