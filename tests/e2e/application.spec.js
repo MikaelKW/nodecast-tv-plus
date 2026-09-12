@@ -344,14 +344,21 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
     }
     await expect(viewerPage.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await expect(viewerPage.locator('#setting-live-tv-autoplay')).not.toBeChecked();
+    await expect(viewerPage.locator('#setting-live-tv-startup-mode')).toBeDisabled();
     await viewerPage.locator('#setting-live-tv-layout').selectOption('flat');
     await expect(viewerPage.locator('#setting-live-tv-order')).toBeEnabled();
     await viewerPage.locator('#setting-live-tv-order').selectOption('alphabetical');
+    await viewerPage.locator('#setting-live-tv-autoplay').check();
+    await expect(viewerPage.locator('#setting-live-tv-startup-mode')).toBeEnabled();
+    await viewerPage.locator('#setting-live-tv-startup-mode').selectOption('first-channel');
     await viewerPage.getByRole('button', { name: 'Save Live TV preferences' }).click();
     await expect(viewerPage.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
     await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
         layout: 'flat',
-        order: 'alphabetical'
+        order: 'alphabetical',
+        autoPlayOnStartup: true,
+        startupChannelMode: 'first-channel'
     });
     await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
     await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
@@ -372,7 +379,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await viewerContext.close();
     await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
         layout: 'grouped',
-        order: 'channel-number'
+        order: 'channel-number',
+        autoPlayOnStartup: false,
+        startupChannelMode: 'last-active'
     });
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: '',
@@ -1140,12 +1149,18 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
     await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
         layout: 'flat',
-        order: 'channel-number'
+        order: 'channel-number',
+        autoPlayOnStartup: false,
+        startupChannelMode: 'last-active'
     });
     await page.locator('.nav-link[data-page="live"]').click();
     await expect(page.locator('#toggle-groups')).toBeHidden();
     await expect(page.locator('#channel-list .group-header')).toHaveCount(0);
     await expect(page.locator('#channel-list .channel-item').first()).toBeVisible();
+    const firstFlatChannel = await page.locator('#channel-list .channel-item').first().evaluate(item => ({
+        sourceId: Number(item.dataset.sourceId),
+        itemId: String(item.dataset.streamId)
+    }));
     await expect.poll(() => flatCatalogueRequests.some(url => url.searchParams.get('sort') === 'number')).toBe(true);
     await page.locator('#channel-search').fill('Quality Variant HD');
     const flatQualityVariant = page.locator('#channel-list .channel-item', { hasText: 'Quality Variant HD' });
@@ -1157,9 +1172,51 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         && url.searchParams.get('limit') === '500'
         && url.searchParams.get('group_counts') === 'false'
     )).toBe(true);
+    await page.locator('#channel-search').fill('');
     page.off('request', captureFlatCatalogueRequest);
     await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('.tab[data-tab="preferences"]').click();
+
+    // Startup playback is account-specific. First-channel mode follows the
+    // active flat-list ordering, while last-active mode resolves the stored
+    // identity from the current catalogue. A missing stored channel leaves
+    // the app on the usable Live TV list without selecting a replacement.
+    await page.locator('#setting-live-tv-autoplay').check();
+    await page.locator('#setting-live-tv-startup-mode').selectOption('first-channel');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await page.reload();
+    await expect(page).toHaveURL(/#live$/);
+    await expect.poll(() => page.evaluate(() => ({
+        sourceId: window.app?.player?.currentChannel?.sourceId,
+        itemId: String(window.app?.player?.currentChannel?.streamId || '')
+    }))).toEqual(firstFlatChannel);
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.lastLiveChannel))
+        .toEqual(firstFlatChannel);
+
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await page.locator('#setting-live-tv-startup-mode').selectOption('last-active');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => ({
+        sourceId: window.app?.player?.currentChannel?.sourceId,
+        itemId: String(window.app?.player?.currentChannel?.streamId || '')
+    }))).toEqual(firstFlatChannel);
+
+    await page.route('**/api/proxy/catalogue/*/live/channels/*', route =>
+        route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"Channel not found"}' })
+    );
+    expectedRejectedResourceErrors += 1;
+    await page.reload();
+    await expect(page).toHaveURL(/#live$/);
+    await expect.poll(() => page.evaluate(() => window.app?.channelList?.isCatalogueReady)).toBe(true);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentChannel || null)).toBeNull();
+    await page.unroute('**/api/proxy/catalogue/*/live/channels/*');
+
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await page.locator('#setting-live-tv-autoplay').uncheck();
     await page.locator('#setting-live-tv-order').selectOption('alphabetical');
     await page.locator('#setting-live-tv-layout').selectOption('grouped');
     await expect(page.locator('#setting-live-tv-order')).toBeDisabled();

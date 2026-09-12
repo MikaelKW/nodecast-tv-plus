@@ -463,8 +463,21 @@ function createUsernameConflictError() {
 function normalizeLiveTvPreferences(value = {}) {
   return {
     layout: value?.layout === 'flat' ? 'flat' : 'grouped',
-    order: value?.order === 'alphabetical' ? 'alphabetical' : 'channel-number'
+    order: value?.order === 'alphabetical' ? 'alphabetical' : 'channel-number',
+    autoPlayOnStartup: value?.autoPlayOnStartup === true,
+    startupChannelMode: value?.startupChannelMode === 'first-channel'
+      ? 'first-channel'
+      : 'last-active'
   };
+}
+
+function normalizeLastLiveChannel(value) {
+  const sourceId = Number(value?.sourceId);
+  const itemId = typeof value?.itemId === 'string' ? value.itemId.trim() : '';
+  if (!Number.isSafeInteger(sourceId) || sourceId < 1 || !itemId || itemId.length > 512) {
+    return null;
+  }
+  return { sourceId, itemId };
 }
 
 function toPublicUser(user) {
@@ -479,7 +492,8 @@ function toPublicUser(user) {
     updatedAt: user.updatedAt,
     twoFactorEnabled: Boolean(user.totp?.enabled),
     subtitlePreferences: normalizePreferences(user.subtitlePreferences),
-    liveTvPreferences: normalizeLiveTvPreferences(user.liveTvPreferences)
+    liveTvPreferences: normalizeLiveTvPreferences(user.liveTvPreferences),
+    lastLiveChannel: normalizeLastLiveChannel(user.lastLiveChannel)
   };
 }
 
@@ -564,6 +578,7 @@ const users = {
       email: userData.email || null,
       subtitlePreferences: normalizePreferences(userData.subtitlePreferences),
       liveTvPreferences: normalizeLiveTvPreferences(userData.liveTvPreferences),
+      lastLiveChannel: normalizeLastLiveChannel(userData.lastLiveChannel),
       createdAt: new Date().toISOString()
     };
 
@@ -708,4 +723,4 @@ const users = {
   }
 };
 
-module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences };
+module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };

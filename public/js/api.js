@@ -121,7 +121,9 @@ const API = {
                     'GET',
                     `/proxy/catalogue/${sourceId}/live/channels${query ? `?${query}` : ''}`
                 );
-            }
+            },
+            liveChannel: (sourceId, itemId) =>
+                API.request('GET', `/proxy/catalogue/${sourceId}/live/channels/${encodeURIComponent(itemId)}`)
         },
 
         // Xtream
@@ -201,7 +203,8 @@ const API = {
 
     account: {
         updateSubtitlePreferences: (data) => API.request('PUT', '/auth/me/subtitle-preferences', data),
-        updateLiveTvPreferences: (data) => API.request('PUT', '/auth/me/live-tv-preferences', data)
+        updateLiveTvPreferences: (data) => API.request('PUT', '/auth/me/live-tv-preferences', data),
+        updateLastLiveChannel: (data) => API.request('PUT', '/auth/me/last-live-channel', data)
     },
 
     twoFactor: {

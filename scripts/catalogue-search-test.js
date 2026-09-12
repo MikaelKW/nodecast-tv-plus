@@ -7,7 +7,7 @@ const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nodecast-catalogue-searc
 process.env.NODECAST_DATA_DIR = testRoot;
 
 const { getDb } = require('../server/db/sqlite');
-const { getLiveChannelPage } = require('../server/services/catalogueService');
+const { getLiveChannelPage, getLiveChannel } = require('../server/services/catalogueService');
 const { parseExtinf } = require('../server/services/m3uParser');
 
 function run() {
@@ -89,6 +89,17 @@ function run() {
         getLiveChannelPage(1, { query: 'norway', includeGroupCounts: false }).matchGroups,
         undefined
     );
+
+    const rememberedChannel = getLiveChannel(1, 'norway-000');
+    assert.equal(rememberedChannel.stream_id, 'norway-000');
+    assert.equal(rememberedChannel.name, 'Channel 0');
+    assert.equal(rememberedChannel.category_name, 'Norway');
+    assert.equal(rememberedChannel.channel_number, 10);
+    assert.equal(getLiveChannel(1, 'missing-channel'), null);
+    assert.throws(() => getLiveChannel(1, ''), /Valid channel itemId required/);
+
+    db.prepare("UPDATE playlist_items SET is_hidden = 1 WHERE source_id = 1 AND item_id = 'norway-000'").run();
+    assert.equal(getLiveChannel(1, 'norway-000'), null);
 
     db.close();
     console.log('Catalogue search test passed.');
