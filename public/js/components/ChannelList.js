@@ -1285,7 +1285,7 @@ class ChannelList {
     /**
      * Select and play a channel
      */
-    async selectChannel(dataset) {
+    async selectChannel(dataset, playbackOptions = {}) {
         const channel = this.channels.find(c =>
             c.id === dataset.channelId
             && (dataset.sourceId === undefined || String(c.sourceId) === String(dataset.sourceId))
@@ -1360,7 +1360,7 @@ class ChannelList {
             }
         }
 
-        await this.playChannelRecord(channel);
+        await this.playChannelRecord(channel, playbackOptions);
     }
 
     _selectedLiveSources() {
@@ -2316,7 +2316,7 @@ class ChannelList {
      * Resolve and play a channel record that may come from outside the full
      * Live TV catalogue, such as the targeted favorites endpoint on Home.
      */
-    async playChannelRecord(channel) {
+    async playChannelRecord(channel, playbackOptions = {}) {
         if (!channel) return;
 
         this.currentChannel = channel;
@@ -2340,7 +2340,7 @@ class ChannelList {
 
         // Play channel
         if (window.app?.player) {
-            await window.app.player.play(channel, streamUrl);
+            await window.app.player.play(channel, streamUrl, playbackOptions);
         }
     }
 
@@ -2389,7 +2389,7 @@ class ChannelList {
         await this.selectChannel({
             channelId: channel.id,
             sourceId: channel.sourceId
-        });
+        }, { startupPlayback: true });
         return true;
     }
 

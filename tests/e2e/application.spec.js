@@ -1214,6 +1214,59 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => window.app?.player?.currentChannel || null)).toBeNull();
     await page.unroute('**/api/proxy/catalogue/*/live/channels/*');
 
+    // Browsers such as Firefox may reject unattended playback with sound.
+    // The startup-only policy fallback retries muted instead of leaving the
+    // selected channel paused.
+    const mutedStartupFallback = await page.evaluate(async () => {
+        const player = window.app.player;
+        const video = player.video;
+        const ownPlay = Object.getOwnPropertyDescriptor(video, 'play');
+        const originalMuted = video.muted;
+        const muteButton = document.getElementById('btn-mute');
+        const originalTitle = muteButton?.title || '';
+        const originalAriaLabel = muteButton?.getAttribute('aria-label');
+        const attempts = [];
+        const playId = player._playId;
+
+        Object.defineProperty(video, 'play', {
+            configurable: true,
+            value: () => {
+                attempts.push(video.muted);
+                return video.muted
+                    ? Promise.resolve()
+                    : Promise.reject(new DOMException('Blocked by autoplay policy', 'NotAllowedError'));
+            }
+        });
+        video.muted = false;
+        player._startupPlaybackId = playId;
+
+        try {
+            await player.startVideoPlayback(playId);
+            return {
+                attempts,
+                muted: video.muted,
+                title: muteButton?.title || '',
+                fallbackCleared: player._startupPlaybackId === null
+            };
+        } finally {
+            if (ownPlay) Object.defineProperty(video, 'play', ownPlay);
+            else delete video.play;
+            video.muted = originalMuted;
+            if (muteButton) {
+                muteButton.title = originalTitle;
+                if (originalAriaLabel === null) muteButton.removeAttribute('aria-label');
+                else muteButton.setAttribute('aria-label', originalAriaLabel);
+            }
+            player._startupPlaybackId = null;
+        }
+    });
+    expect(mutedStartupFallback).toEqual({
+        attempts: [false, true],
+        muted: true,
+        title: 'Unmute — the browser blocked startup playback with sound',
+        fallbackCleared: true
+    });
+
     await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('.tab[data-tab="preferences"]').click();
     await page.locator('#setting-live-tv-autoplay').uncheck();
