@@ -31,7 +31,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // processing, responsive layouts, and the bounded catalogue contract in a
     // single-use environment. Keep enough headroom for slower Windows runners
     // without reducing any individual assertion timeout.
-    test.setTimeout(150_000);
+    test.setTimeout(210_000);
     expect(isIgnorableGoogleFont404(
         'Failed to load resource: the server responded with a status of 404 ()',
         'https://fonts.gstatic.com/s/inter/v20/example.woff2'
@@ -135,6 +135,15 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
     await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
+    await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await expect(page.locator('#setting-live-tv-order')).toHaveValue('channel-number');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await expect(page.locator('#flat-list-order-group')).toHaveClass(/is-disabled/);
+    await expect(page.locator('#setting-live-tv-order')).toHaveCSS('opacity', '0.45');
+    await expect(page.locator('#flat-list-order-requirement')).toHaveText(
+        'Choose Flat channel list to enable flat list ordering.'
+    );
+    await expect(page.locator('#flat-list-order-requirement')).toBeVisible();
     await expect(page.locator('#preferred-subtitle-language')).toHaveValue('');
     await expect(page.locator('#automatic-subtitle-mode')).toHaveValue('off');
     await expect(page.locator('#automatic-subtitle-mode option[value="preferred"]')).toBeDisabled();
@@ -334,6 +343,23 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
         await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
     }
+    await expect(viewerPage.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await expect(viewerPage.locator('#setting-live-tv-autoplay')).not.toBeChecked();
+    await expect(viewerPage.locator('#setting-live-tv-startup-mode')).toBeDisabled();
+    await viewerPage.locator('#setting-live-tv-layout').selectOption('flat');
+    await expect(viewerPage.locator('#setting-live-tv-order')).toBeEnabled();
+    await viewerPage.locator('#setting-live-tv-order').selectOption('alphabetical');
+    await viewerPage.locator('#setting-live-tv-autoplay').check();
+    await expect(viewerPage.locator('#setting-live-tv-startup-mode')).toBeEnabled();
+    await viewerPage.locator('#setting-live-tv-startup-mode').selectOption('first-channel');
+    await viewerPage.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(viewerPage.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
+    await expect.poll(() => viewerPage.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'flat',
+        order: 'alphabetical',
+        autoPlayOnStartup: true,
+        startupChannelMode: 'first-channel'
+    });
     await viewerPage.locator('#preferred-subtitle-language').selectOption('en');
     await viewerPage.locator('#automatic-subtitle-mode').selectOption('preferred');
     await viewerPage.getByRole('button', { name: 'Save subtitle preferences' }).click();
@@ -351,6 +377,12 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         }
     });
     await viewerContext.close();
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'grouped',
+        order: 'channel-number',
+        autoPlayOnStartup: false,
+        startupChannelMode: 'last-active'
+    });
     await expect.poll(() => page.evaluate(() => window.app.currentUser.subtitlePreferences)).toEqual({
         language: '',
         mode: 'off',
@@ -1095,6 +1127,155 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.getByRole('button', { name: 'Save interface settings' }).click();
     await expect(page.locator('.nav-link[data-page="home"]')).toBeVisible();
 
+    // Flat Live TV remains on the compact catalogue API, renders channels
+    // without category headers, and keeps server-side search bounded.
+    const flatCatalogueRequests = [];
+    const captureFlatCatalogueRequest = request => {
+        const url = new URL(request.url());
+        if (url.pathname.includes('/proxy/catalogue/') && url.pathname.endsWith('/live/channels')) {
+            flatCatalogueRequests.push(url);
+        }
+    };
+    page.on('request', captureFlatCatalogueRequest);
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await expect(page.locator('#setting-live-tv-order')).toHaveValue('channel-number');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await page.locator('#setting-live-tv-layout').selectOption('flat');
+    await expect(page.locator('#setting-live-tv-order')).toBeEnabled();
+    await expect(page.locator('#flat-list-order-group')).not.toHaveClass(/is-disabled/);
+    await expect(page.locator('#setting-live-tv-order')).toHaveCSS('opacity', '1');
+    await page.locator('#setting-live-tv-order').selectOption('channel-number');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(page.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.liveTvPreferences)).toEqual({
+        layout: 'flat',
+        order: 'channel-number',
+        autoPlayOnStartup: false,
+        startupChannelMode: 'last-active'
+    });
+    await page.locator('.nav-link[data-page="live"]').click();
+    await expect(page.locator('#toggle-groups')).toBeHidden();
+    await expect(page.locator('#channel-list .group-header')).toHaveCount(0);
+    await expect(page.locator('#channel-list .channel-item').first()).toBeVisible();
+    const firstFlatChannel = await page.locator('#channel-list .channel-item').first().evaluate(item => ({
+        sourceId: Number(item.dataset.sourceId),
+        itemId: String(item.dataset.streamId)
+    }));
+    await expect.poll(() => flatCatalogueRequests.some(url => url.searchParams.get('sort') === 'number')).toBe(true);
+    await page.locator('#channel-search').fill('Quality Variant HD');
+    const flatQualityVariant = page.locator('#channel-list .channel-item', { hasText: 'Quality Variant HD' });
+    await expect(flatQualityVariant).toBeVisible();
+    await expect(flatQualityVariant.locator('.channel-number')).toHaveText('30');
+    await expect(page.locator('#channel-list .group-header')).toHaveCount(0);
+    await expect.poll(() => flatCatalogueRequests.some(url =>
+        url.searchParams.get('query') === 'Quality Variant HD'
+        && url.searchParams.get('limit') === '500'
+        && url.searchParams.get('group_counts') === 'false'
+    )).toBe(true);
+    await page.locator('#channel-search').fill('');
+    page.off('request', captureFlatCatalogueRequest);
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+
+    // Startup playback is account-specific. First-channel mode follows the
+    // active flat-list ordering, while last-active mode resolves the stored
+    // identity from the current catalogue. A missing stored channel leaves
+    // the app on the usable Live TV list without selecting a replacement.
+    await page.locator('#setting-live-tv-autoplay').check();
+    await page.locator('#setting-live-tv-startup-mode').selectOption('first-channel');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await page.reload();
+    await expect(page).toHaveURL(/#live$/);
+    await expect.poll(() => page.evaluate(() => ({
+        sourceId: window.app?.player?.currentChannel?.sourceId,
+        itemId: String(window.app?.player?.currentChannel?.streamId || '')
+    }))).toEqual(firstFlatChannel);
+    await expect.poll(() => page.evaluate(() => window.app.currentUser.lastLiveChannel))
+        .toEqual(firstFlatChannel);
+
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await page.locator('#setting-live-tv-startup-mode').selectOption('last-active');
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => ({
+        sourceId: window.app?.player?.currentChannel?.sourceId,
+        itemId: String(window.app?.player?.currentChannel?.streamId || '')
+    }))).toEqual(firstFlatChannel);
+
+    await page.route('**/api/proxy/catalogue/*/live/channels/*', route =>
+        route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"Channel not found"}' })
+    );
+    expectedRejectedResourceErrors += 1;
+    await page.reload();
+    await expect(page).toHaveURL(/#live$/);
+    await expect.poll(() => page.evaluate(() => window.app?.channelList?.isCatalogueReady)).toBe(true);
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentChannel || null)).toBeNull();
+    await page.unroute('**/api/proxy/catalogue/*/live/channels/*');
+
+    // Browsers such as Firefox may reject unattended playback with sound.
+    // The startup-only policy fallback retries muted instead of leaving the
+    // selected channel paused.
+    const mutedStartupFallback = await page.evaluate(async () => {
+        const player = window.app.player;
+        const video = player.video;
+        const ownPlay = Object.getOwnPropertyDescriptor(video, 'play');
+        const originalMuted = video.muted;
+        const muteButton = document.getElementById('btn-mute');
+        const originalTitle = muteButton?.title || '';
+        const originalAriaLabel = muteButton?.getAttribute('aria-label');
+        const attempts = [];
+        const playId = player._playId;
+
+        Object.defineProperty(video, 'play', {
+            configurable: true,
+            value: () => {
+                attempts.push(video.muted);
+                return video.muted
+                    ? Promise.resolve()
+                    : Promise.reject(new DOMException('Blocked by autoplay policy', 'NotAllowedError'));
+            }
+        });
+        video.muted = false;
+        player._startupPlaybackId = playId;
+
+        try {
+            await player.startVideoPlayback(playId);
+            return {
+                attempts,
+                muted: video.muted,
+                title: muteButton?.title || '',
+                fallbackCleared: player._startupPlaybackId === null
+            };
+        } finally {
+            if (ownPlay) Object.defineProperty(video, 'play', ownPlay);
+            else delete video.play;
+            video.muted = originalMuted;
+            if (muteButton) {
+                muteButton.title = originalTitle;
+                if (originalAriaLabel === null) muteButton.removeAttribute('aria-label');
+                else muteButton.setAttribute('aria-label', originalAriaLabel);
+            }
+            player._startupPlaybackId = null;
+        }
+    });
+    expect(mutedStartupFallback).toEqual({
+        attempts: [false, true],
+        muted: true,
+        title: 'Unmute — the browser blocked startup playback with sound',
+        fallbackCleared: true
+    });
+
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="preferences"]').click();
+    await page.locator('#setting-live-tv-autoplay').uncheck();
+    await page.locator('#setting-live-tv-order').selectOption('alphabetical');
+    await page.locator('#setting-live-tv-layout').selectOption('grouped');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await page.getByRole('button', { name: 'Save Live TV preferences' }).click();
+    await expect(page.locator('#live-tv-preferences-status')).toHaveText('Live TV preferences saved.');
+
     await page.locator('.tab[data-tab="sources"]').click();
     await seriesSourceRow.locator('[data-action="edit"]').click();
     await page.locator('#source-visible-live').check();
@@ -1294,6 +1475,48 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+
+    // A cap matching the original fixed-resolution stream must preserve its
+    // remux path. After a lower cap encodes video, raising the cap back to the
+    // source resolution must restore remux rather than keep the 480p session.
+    await page.evaluate(async url => {
+        await window.app.player.play({ name: 'Remux quality restoration' }, url);
+    }, `${fixtureBaseUrl}/sample.ts`);
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(720);
+    await page.locator('#video-container').dispatchEvent('mousemove');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="720p"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('720p');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    expect(await page.evaluate(() => window.app?.player?.currentSessionId || null)).toBeNull();
+
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="480p"]').click();
+    await expect(page.locator('#player-transcode-status')).toHaveText('Transcoding (Video)');
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
+        timeout: 30_000
+    }).toBe(true);
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(480);
+
+    await page.evaluate(() => window.app.player.hideNowPlayingOverlay());
+    await page.locator('#video-container').dispatchEvent('mousemove');
+    await page.locator('#player-quality-btn').click();
+    await page.locator('#player-quality-menu [data-quality="720p"]').click();
+    await expect(page.locator('#player-quality-btn')).toHaveText('720p');
+    await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
+        timeout: 30_000
+    }).toBeNull();
+    await expect.poll(async () => video.evaluate(element => element.videoHeight), {
+        timeout: 30_000
+    }).toBe(720);
+    await expect(page.locator('#player-quality-badge')).toHaveText('720p');
+
     // A browser-only provider must not leave the player stuck when FFmpeg is
     // rejected. The previous direct stream and Auto selection are restored.
     await page.evaluate(async url => {

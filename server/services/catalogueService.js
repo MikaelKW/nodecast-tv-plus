@@ -21,12 +21,18 @@ function parseLimit(value) {
     return parsed;
 }
 
-function encodeCursor(row) {
-    return Buffer.from(JSON.stringify({ name: row.name, itemId: row.item_id }))
+function encodeCursor(row, sort) {
+    return Buffer.from(JSON.stringify({
+        sort,
+        missingNumber: row.channel_number === null ? 1 : 0,
+        channelNumber: row.channel_number ?? 0,
+        name: row.name,
+        itemId: row.item_id
+    }))
         .toString('base64url');
 }
 
-function decodeCursor(value) {
+function decodeCursor(value, sort) {
     if (!value) return null;
     if (typeof value !== 'string' || value.length > 2048) {
         throw invalidRequest('Invalid catalogue cursor');
@@ -37,6 +43,12 @@ function decodeCursor(value) {
         if (typeof parsed.name !== 'string' || typeof parsed.itemId !== 'string') {
             throw new Error('Invalid cursor shape');
         }
+        if (parsed.sort && parsed.sort !== sort) throw new Error('Cursor sort mismatch');
+        if (sort === 'number' && (
+            ![0, 1].includes(parsed.missingNumber)
+            || typeof parsed.channelNumber !== 'number'
+            || !Number.isFinite(parsed.channelNumber)
+        )) throw new Error('Invalid numbered cursor');
         return parsed;
     } catch {
         throw invalidRequest('Invalid catalogue cursor');
@@ -62,11 +74,43 @@ function formatLiveChannel(row) {
         stream_id: row.item_id,
         name: row.name,
         stream_icon: row.stream_icon,
+        stream_url: row.stream_url || data.stream_url || data.url || null,
         category_id: row.category_id,
         category_name: row.category_name || 'Uncategorized',
         container_extension: row.container_extension,
+        channel_number: row.channel_number,
         epg_channel_id: data.epg_channel_id || data.tvgId || null
     };
+}
+
+function getLiveChannel(sourceId, itemId) {
+    if (typeof itemId !== 'string' || !itemId || itemId.length > 512) {
+        throw invalidRequest('Valid channel itemId required');
+    }
+    const row = getDb().prepare(`
+        SELECT
+            p.item_id,
+            p.name,
+            p.category_id,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            p.stream_icon,
+            p.stream_url,
+            p.container_extension,
+            p.channel_number,
+            p.data
+        FROM playlist_items p
+        LEFT JOIN categories c
+            ON c.source_id = p.source_id
+           AND c.type = p.type
+           AND c.category_id = p.category_id
+        WHERE p.source_id = ?
+          AND p.item_id = ?
+          AND p.type = 'live'
+          AND p.is_hidden = 0
+          AND COALESCE(c.is_hidden, 0) = 0
+        LIMIT 1
+    `).get(sourceId, itemId);
+    return row ? formatLiveChannel(row) : null;
 }
 
 function getLiveSummary(sourceId) {
@@ -116,7 +160,13 @@ function getLiveSummary(sourceId) {
 function getLiveChannelPage(sourceId, options = {}) {
     const db = getDb();
     const limit = parseLimit(options.limit);
-    const cursor = decodeCursor(options.cursor);
+    const sort = options.sort === undefined || options.sort === null || options.sort === ''
+        ? 'name'
+        : String(options.sort);
+    if (!['name', 'number'].includes(sort)) {
+        throw invalidRequest('sort must be either name or number');
+    }
+    const cursor = decodeCursor(options.cursor, sort);
     const categoryId = options.categoryId === undefined || options.categoryId === null
         ? null
         : String(options.categoryId);
@@ -156,7 +206,7 @@ function getLiveChannelPage(sourceId, options = {}) {
     // can keep rendering bounded result pages without presenting the number
     // currently loaded as though it were the total number of matches.
     let matchGroups;
-    if (query && !cursor) {
+    if (query && !cursor && options.includeGroupCounts !== false) {
         const countRows = db.prepare(`
             SELECT
                 COALESCE(c.name, 'Uncategorized') AS category_name,
@@ -176,12 +226,36 @@ function getLiveChannelPage(sourceId, options = {}) {
         }));
     }
 
-    if (cursor) {
+    if (cursor && sort === 'name') {
         where.push(`(
             p.name COLLATE NOCASE > ? COLLATE NOCASE
             OR (p.name COLLATE NOCASE = ? COLLATE NOCASE AND p.item_id > ?)
         )`);
         params.push(cursor.name, cursor.name, cursor.itemId);
+    } else if (cursor) {
+        const missingNumber = '(p.channel_number IS NULL)';
+        if (cursor.missingNumber === 1) {
+            where.push(`(
+                ${missingNumber} = 1
+                AND (
+                    p.name COLLATE NOCASE > ? COLLATE NOCASE
+                    OR (p.name COLLATE NOCASE = ? COLLATE NOCASE AND p.item_id > ?)
+                )
+            )`);
+            params.push(cursor.name, cursor.name, cursor.itemId);
+        } else {
+            where.push(`(
+                ${missingNumber} > 0
+                OR (${missingNumber} = 0 AND p.channel_number > ?)
+                OR (${missingNumber} = 0 AND p.channel_number = ? AND p.name COLLATE NOCASE > ? COLLATE NOCASE)
+                OR (${missingNumber} = 0 AND p.channel_number = ? AND p.name COLLATE NOCASE = ? COLLATE NOCASE AND p.item_id > ?)
+            )`);
+            params.push(
+                cursor.channelNumber,
+                cursor.channelNumber, cursor.name,
+                cursor.channelNumber, cursor.name, cursor.itemId
+            );
+        }
     }
 
     params.push(limit + 1);
@@ -192,7 +266,9 @@ function getLiveChannelPage(sourceId, options = {}) {
             p.category_id,
             COALESCE(c.name, 'Uncategorized') AS category_name,
             p.stream_icon,
+            p.stream_url,
             p.container_extension,
+            p.channel_number,
             p.data
         FROM playlist_items p
         LEFT JOIN categories c
@@ -200,7 +276,12 @@ function getLiveChannelPage(sourceId, options = {}) {
            AND c.type = p.type
            AND c.category_id = p.category_id
         WHERE ${where.join('\n          AND ')}
-        ORDER BY p.name COLLATE NOCASE, p.item_id
+        ORDER BY ${sort === 'number' ? `
+            (p.channel_number IS NULL),
+            p.channel_number,
+            p.name COLLATE NOCASE,
+            p.item_id
+        ` : 'p.name COLLATE NOCASE, p.item_id'}
         LIMIT ?
     `).all(...params);
 
@@ -215,10 +296,11 @@ function getLiveChannelPage(sourceId, options = {}) {
         contentType: 'live',
         categoryId,
         query,
+        sort,
         matchGroups,
         items: pageRows.map(formatLiveChannel),
         hasMore,
-        nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null
+        nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1], sort) : null
     };
 }
 
@@ -227,5 +309,6 @@ module.exports = {
     MAX_PAGE_SIZE,
     UNCATEGORIZED_ID,
     getLiveSummary,
-    getLiveChannelPage
+    getLiveChannelPage,
+    getLiveChannel
 };
