@@ -193,8 +193,8 @@ function seedCatalogue(dataDirectory) {
     const insertChannel = db.prepare(`
         INSERT INTO playlist_items
             (id, source_id, item_id, type, name, category_id, stream_icon,
-             stream_url, container_extension, added_at, is_hidden, data)
-        VALUES (?, ?, ?, 'live', ?, ?, ?, ?, 'ts', ?, 0, ?)
+             stream_url, container_extension, added_at, is_hidden, channel_number, data)
+        VALUES (?, ?, ?, 'live', ?, ?, ?, ?, 'ts', ?, 0, ?, ?)
     `);
     const started = performance.now();
     db.transaction(() => {
@@ -220,6 +220,7 @@ function seedCatalogue(dataDirectory) {
                 `https://images.invalid/${itemId}.png`,
                 `http://streams.invalid/${itemId}.ts`,
                 '2026-01-01T00:00:00.000Z',
+                channelIndex + 1,
                 JSON.stringify({ tvgId: `epg-${itemId}`, generated: true })
             );
         }
@@ -451,6 +452,15 @@ async function seedFavorites(baseUrl, cookie, count = 12) {
         });
         assert.equal(response.status, 200);
     }
+}
+
+async function setLiveTvSettings(baseUrl, cookie, liveTv) {
+    const response = await fetch(`${baseUrl}/api/auth/me/live-tv-preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify(liveTv)
+    });
+    assert.equal(response.status, 200);
 }
 
 async function measureHomeBrowser(baseUrl, cookie, expectedFavorites = 12) {
@@ -700,29 +710,31 @@ async function measureBrowser(baseUrl, cookie) {
         await page.locator('#toggle-groups').click();
 
         await page.locator('#channel-search').fill('Synthetic Channel');
-        await page.waitForFunction(() => (
+        await page.waitForFunction(expectedGroups => (
             window.app?.channelList?.isLoading === false
-            && window.app?.channelList?.boundedSearchResults?.length === 100
-        ));
-        await page.locator('#channel-list').evaluate(element => {
-            element.scrollTop = element.scrollHeight;
-        });
+            && document.querySelectorAll('.group-header:not(.favorites-group)').length === expectedGroups
+        ), categoryCount);
+        await page.locator('.group-header:not(.favorites-group)').first().click();
         await page.waitForFunction(() => (
-            window.app?.channelList?.boundedSearchResults?.length > 100
+            [...window.app.channelList.boundedSearchGroupPages.values()]
+                .some(state => state.channels.length > 0 && state.loading === false)
         ));
         const automaticSearchContinuation = await page.evaluate(() => ({
-            results: window.app.channelList.boundedSearchResults.length,
+            results: Math.max(
+                ...[...window.app.channelList.boundedSearchGroupPages.values()]
+                    .map(state => state.channels.length)
+            ),
             loadMoreButtons: document.querySelectorAll('.bounded-search-more').length,
             scrollTop: document.querySelector('#channel-list').scrollTop
         }));
         assert.equal(automaticSearchContinuation.loadMoreButtons, 0);
-        assert.ok(automaticSearchContinuation.scrollTop > 0, 'Search continuation reset the channel-list scroll position.');
+        assert.ok(automaticSearchContinuation.results <= 500, 'Search materialized more than one bounded group page.');
 
         const searchStarted = performance.now();
         await page.locator('#channel-search').fill(lastChannelName);
         await page.waitForFunction(() => (
             window.app?.channelList?.isLoading === false
-            && window.app?.channelList?.boundedSearchResults?.length === 1
+            && document.querySelectorAll('.group-header:not(.favorites-group)').length === 1
         ));
         const searchMs = elapsed(searchStarted);
         return {
@@ -739,6 +751,96 @@ async function measureBrowser(baseUrl, cookie) {
             automaticContinuation,
             automaticSearchContinuation,
             expandAllState
+        };
+    } finally {
+        await browser.close();
+    }
+}
+
+async function measureFlatBrowser(baseUrl, cookie) {
+    const browser = await chromium.launch({ headless: true });
+    try {
+        const context = await browser.newContext();
+        const parsedBase = new URL(baseUrl);
+        const [name, value] = cookie.split('=', 2);
+        await context.addCookies([{
+            name,
+            value,
+            domain: parsedBase.hostname,
+            path: '/',
+            httpOnly: true,
+            sameSite: 'Lax'
+        }]);
+        const page = await context.newPage();
+        page.setDefaultTimeout(180000);
+        let fullLiveCatalogueRequests = 0;
+        page.on('request', request => {
+            if (new URL(request.url()).pathname.endsWith('/live_streams')) {
+                fullLiveCatalogueRequests += 1;
+            }
+        });
+
+        const started = performance.now();
+        await page.goto(`${baseUrl}/#live`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => (
+            window.app?.currentPage === 'live'
+            && window.app?.channelList?.isLoading === false
+            && window.app?.channelList?.boundedFlatPage?.channels?.length === 500
+        ));
+        const coldLoadMs = elapsed(started);
+        const initialState = await page.evaluate(() => ({
+            materializedChannels: window.app.channelList.channels.length,
+            flatChannels: window.app.channelList.boundedFlatPage.channels.length,
+            renderedChannels: window.app.channelList.renderedChannels.length,
+            groupHeaders: document.querySelectorAll('.group-header').length,
+            domNodes: document.getElementsByTagName('*').length,
+            firstChannelNumber: document.querySelector('.channel-number')?.textContent || null,
+            heapMb: performance.memory
+                ? Number((performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1))
+                : null
+        }));
+        assert.ok(initialState.materializedChannels <= 512);
+        assert.equal(initialState.flatChannels, 500);
+        assert.equal(initialState.renderedChannels, 500);
+        assert.equal(initialState.groupHeaders, 0);
+        assert.equal(initialState.firstChannelNumber, '1');
+
+        await page.locator('#channel-list').evaluate(element => {
+            element.scrollTop = element.scrollHeight;
+        });
+        await page.waitForFunction(() => (
+            window.app.channelList.boundedFlatPage.channels.length === 1000
+            && window.app.channelList.boundedFlatPage.loading === false
+        ));
+        const continuationState = await page.evaluate(() => ({
+            flatChannels: window.app.channelList.boundedFlatPage.channels.length,
+            renderedChannels: window.app.channelList.renderedChannels.length,
+            groupHeaders: document.querySelectorAll('.group-header').length,
+            loadMoreButtons: document.querySelectorAll('.bounded-load-fallback').length,
+            scrollTop: document.querySelector('#channel-list').scrollTop
+        }));
+        assert.equal(continuationState.flatChannels, 1000);
+        assert.equal(continuationState.renderedChannels, 1000);
+        assert.equal(continuationState.groupHeaders, 0);
+        assert.equal(continuationState.loadMoreButtons, 0);
+        assert.ok(continuationState.scrollTop > 0, 'Flat continuation reset the channel-list scroll position.');
+
+        const searchStarted = performance.now();
+        await page.locator('#channel-search').fill(lastChannelName);
+        await page.waitForFunction(() => (
+            window.app.channelList.isLoading === false
+            && window.app.channelList.boundedFlatPage?.channels?.length === 1
+        ));
+        const searchMs = elapsed(searchStarted);
+        assert.equal(await page.locator('.channel-item').count(), 1);
+        assert.equal(await page.locator('.group-header').count(), 0);
+
+        return {
+            coldLoadMs,
+            searchMs,
+            fullLiveCatalogueRequests,
+            initialState,
+            continuationState
         };
     } finally {
         await browser.close();
@@ -809,6 +911,19 @@ async function run() {
         assert.ok(cataloguePage.data.nextCursor);
         cataloguePage.data = null;
 
+        const numberedPageMeasurement = await measureServerMemory(server, () =>
+            requestCompressedJson(
+                `${server.baseUrl}/api/proxy/catalogue/${sourceId}/live/channels?limit=100&sort=number`,
+                cookie
+            )
+        );
+        const numberedCataloguePage = numberedPageMeasurement.result;
+        assert.equal(numberedCataloguePage.data.items.length, 100);
+        assert.equal(numberedCataloguePage.data.items[0].channel_number, 1);
+        assert.equal(numberedCataloguePage.data.items[99].channel_number, 100);
+        assert.equal(numberedCataloguePage.data.hasMore, true);
+        numberedCataloguePage.data = null;
+
         const searchMeasurement = await measureServerMemory(server, () =>
             requestCompressedJson(
                 `${server.baseUrl}/api/proxy/catalogue/${sourceId}/live/channels?limit=100&query=${encodeURIComponent(lastChannelName)}`,
@@ -857,6 +972,28 @@ async function run() {
             browser = { error: error.message };
         }
 
+        let flatBrowser;
+        try {
+            await setLiveTvSettings(server.baseUrl, cookie, {
+                layout: 'flat',
+                order: 'channel-number'
+            });
+            const flatBrowserMeasurement = await measureServerMemory(server, () =>
+                measureFlatBrowser(server.baseUrl, cookie)
+            );
+            flatBrowser = {
+                ...flatBrowserMeasurement.result,
+                serverMemory: flatBrowserMeasurement.memory
+            };
+        } catch (error) {
+            flatBrowser = { error: error.message };
+        } finally {
+            await setLiveTvSettings(server.baseUrl, cookie, {
+                layout: 'grouped',
+                order: 'alphabetical'
+            });
+        }
+
         const report = {
             fixture: {
                 channels: channelCount,
@@ -881,6 +1018,11 @@ async function run() {
                     data: undefined,
                     serverMemory: pageMeasurement.memory
                 },
+                numberedCataloguePage: {
+                    ...numberedCataloguePage,
+                    data: undefined,
+                    serverMemory: numberedPageMeasurement.memory
+                },
                 catalogueSearch: {
                     ...catalogueSearch,
                     data: undefined,
@@ -899,13 +1041,14 @@ async function run() {
                 }
             },
             home,
-            browser
+            browser,
+            flatBrowser
         };
 
         console.log('\nLarge-catalogue benchmark (synthetic data only)');
         console.log(JSON.stringify(report, null, 2));
-        if (home.error || browser.error) {
-            throw new Error(`Large-catalogue browser validation failed: ${home.error || browser.error}`);
+        if (home.error || browser.error || flatBrowser.error) {
+            throw new Error(`Large-catalogue browser validation failed: ${home.error || browser.error || flatBrowser.error}`);
         }
     } catch (error) {
         if (server) console.error(server.getOutput());

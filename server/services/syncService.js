@@ -8,6 +8,12 @@ const { redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 // Sync tracking
 const activeSyncs = new Set(); // sourceId
 
+function normalizeChannelNumber(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 class SyncService {
     constructor() {
         this.lastSyncTime = null; // Track when global sync last completed
@@ -292,14 +298,16 @@ class SyncService {
             INSERT INTO playlist_items (
                 id, source_id, item_id, type, name, category_id, 
                 stream_icon, stream_url, container_extension, 
-                rating, year, added_at, is_hidden, data
+                rating, year, added_at, is_hidden, channel_number, data
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 category_id = excluded.category_id,
                 stream_icon = excluded.stream_icon,
+                stream_url = excluded.stream_url,
                 container_extension = excluded.container_extension,
+                channel_number = excluded.channel_number,
                 data = excluded.data
         `);
 
@@ -345,12 +353,15 @@ class SyncService {
                     name,
                     String(catId),
                     icon,
-                    null, // Direct URL not stored for Xtream usually, built on fly
+                    typeof item.stream_url === 'string' && item.stream_url.trim()
+                        ? item.stream_url
+                        : null,
                     container,
                     rating,
                     year,
                     added,
                     visibilityDefault,
+                    normalizeChannelNumber(item.channel_number ?? item.num),
                     JSON.stringify(item)
                 );
             }
@@ -563,6 +574,8 @@ class SyncService {
                 stream_icon: ch.tvgLogo,
                 stream_url: ch.url,
                 tvgId: ch.tvgId || null,
+                channel_number: normalizeChannelNumber(ch.tvgChno),
+                tvgChno: normalizeChannelNumber(ch.tvgChno),
             }));
 
             // Save this batch immediately (skip purge - we'll do it at the end)
