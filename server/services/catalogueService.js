@@ -74,12 +74,43 @@ function formatLiveChannel(row) {
         stream_id: row.item_id,
         name: row.name,
         stream_icon: row.stream_icon,
+        stream_url: row.stream_url || data.stream_url || data.url || null,
         category_id: row.category_id,
         category_name: row.category_name || 'Uncategorized',
         container_extension: row.container_extension,
         channel_number: row.channel_number,
         epg_channel_id: data.epg_channel_id || data.tvgId || null
     };
+}
+
+function getLiveChannel(sourceId, itemId) {
+    if (typeof itemId !== 'string' || !itemId || itemId.length > 512) {
+        throw invalidRequest('Valid channel itemId required');
+    }
+    const row = getDb().prepare(`
+        SELECT
+            p.item_id,
+            p.name,
+            p.category_id,
+            COALESCE(c.name, 'Uncategorized') AS category_name,
+            p.stream_icon,
+            p.stream_url,
+            p.container_extension,
+            p.channel_number,
+            p.data
+        FROM playlist_items p
+        LEFT JOIN categories c
+            ON c.source_id = p.source_id
+           AND c.type = p.type
+           AND c.category_id = p.category_id
+        WHERE p.source_id = ?
+          AND p.item_id = ?
+          AND p.type = 'live'
+          AND p.is_hidden = 0
+          AND COALESCE(c.is_hidden, 0) = 0
+        LIMIT 1
+    `).get(sourceId, itemId);
+    return row ? formatLiveChannel(row) : null;
 }
 
 function getLiveSummary(sourceId) {
@@ -235,6 +266,7 @@ function getLiveChannelPage(sourceId, options = {}) {
             p.category_id,
             COALESCE(c.name, 'Uncategorized') AS category_name,
             p.stream_icon,
+            p.stream_url,
             p.container_extension,
             p.channel_number,
             p.data
@@ -277,5 +309,6 @@ module.exports = {
     MAX_PAGE_SIZE,
     UNCATEGORIZED_ID,
     getLiveSummary,
-    getLiveChannelPage
+    getLiveChannelPage,
+    getLiveChannel
 };
