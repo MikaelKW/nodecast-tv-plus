@@ -114,6 +114,8 @@ const API = {
                 if (options.query) params.set('query', options.query);
                 if (options.cursor) params.set('cursor', options.cursor);
                 if (options.limit) params.set('limit', options.limit);
+                if (options.sort) params.set('sort', options.sort);
+                if (options.groupCounts === false) params.set('group_counts', 'false');
                 const query = params.toString();
                 return API.request(
                     'GET',
@@ -198,7 +200,8 @@ const API = {
     },
 
     account: {
-        updateSubtitlePreferences: (data) => API.request('PUT', '/auth/me/subtitle-preferences', data)
+        updateSubtitlePreferences: (data) => API.request('PUT', '/auth/me/subtitle-preferences', data),
+        updateLiveTvPreferences: (data) => API.request('PUT', '/auth/me/live-tv-preferences', data)
     },
 
     twoFactor: {

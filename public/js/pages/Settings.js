@@ -31,6 +31,7 @@ class SettingsPage {
         this.initInterfaceSettings();
 
         // Account-specific playback preferences
+        this.initLiveTvPreferences();
         this.initSubtitlePreferences();
 
         // Transcoding settings
@@ -41,6 +42,69 @@ class SettingsPage {
 
         // Version and release information
         this.initAboutSettings();
+    }
+
+    initLiveTvPreferences() {
+        const form = document.getElementById('live-tv-preferences-form');
+        const layout = document.getElementById('setting-live-tv-layout');
+        const order = document.getElementById('setting-live-tv-order');
+        if (!form || !layout || !order) return;
+
+        layout.addEventListener('change', () => this.updateLiveTvOrderAvailability());
+        form.addEventListener('submit', event => this.saveLiveTvPreferences(event));
+        this.loadLiveTvPreferences();
+    }
+
+    loadLiveTvPreferences() {
+        const preferences = this.app.normalizeLiveTvSettings(
+            this.app.currentUser?.liveTvPreferences || this.app.liveTvSettings
+        );
+        const layout = document.getElementById('setting-live-tv-layout');
+        const order = document.getElementById('setting-live-tv-order');
+        if (!layout || !order) return;
+        layout.value = preferences.layout;
+        order.value = preferences.order;
+        this.updateLiveTvOrderAvailability();
+    }
+
+    updateLiveTvOrderAvailability() {
+        const layout = document.getElementById('setting-live-tv-layout');
+        const order = document.getElementById('setting-live-tv-order');
+        const orderGroup = document.getElementById('flat-list-order-group');
+        if (!layout || !order) return;
+        const unavailable = layout.value !== 'flat';
+        order.disabled = unavailable;
+        order.setAttribute('aria-disabled', String(unavailable));
+        orderGroup?.classList.toggle('is-disabled', unavailable);
+    }
+
+    async saveLiveTvPreferences(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = form.querySelector('[type="submit"]');
+        const status = document.getElementById('live-tv-preferences-status');
+        const preferences = this.app.normalizeLiveTvSettings({
+            layout: document.getElementById('setting-live-tv-layout')?.value,
+            order: document.getElementById('setting-live-tv-order')?.value
+        });
+
+        if (button) button.disabled = true;
+        if (status) status.textContent = '';
+        try {
+            const result = await API.account.updateLiveTvPreferences(preferences);
+            const saved = this.app.normalizeLiveTvSettings(result.liveTvPreferences);
+            this.app.currentUser = {
+                ...this.app.currentUser,
+                liveTvPreferences: saved
+            };
+            await this.app.setLiveTvSettings(saved);
+            this.loadLiveTvPreferences();
+            if (status) status.textContent = 'Live TV preferences saved.';
+        } catch (error) {
+            if (status) status.textContent = error.message;
+        } finally {
+            if (button) button.disabled = false;
+        }
     }
 
     initSubtitlePreferences() {
@@ -267,7 +331,6 @@ class SettingsPage {
                     toggle.checked
                 ]))
             };
-
             submit.disabled = true;
             status.classList.add('hidden');
             try {
@@ -1060,6 +1123,7 @@ class SettingsPage {
         }
 
         if (tabName === 'preferences') {
+            this.loadLiveTvPreferences();
             this.loadSubtitlePreferences();
         }
 
@@ -1087,6 +1151,7 @@ class SettingsPage {
         await this.app.sourceManager.loadSources();
         if (!this.isVisible || visibilityGeneration !== this.visibilityGeneration) return;
         this.renderInterfaceSettings(this.app.navigationSettings);
+        this.loadLiveTvPreferences();
         this.loadSubtitlePreferences();
 
         // Refresh ALL player settings from server
