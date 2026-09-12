@@ -48,9 +48,11 @@ class SettingsPage {
         const form = document.getElementById('live-tv-preferences-form');
         const layout = document.getElementById('setting-live-tv-layout');
         const order = document.getElementById('setting-live-tv-order');
-        if (!form || !layout || !order) return;
+        const autoPlay = document.getElementById('setting-live-tv-autoplay');
+        if (!form || !layout || !order || !autoPlay) return;
 
         layout.addEventListener('change', () => this.updateLiveTvOrderAvailability());
+        autoPlay.addEventListener('change', () => this.updateStartupChannelModeAvailability());
         form.addEventListener('submit', event => this.saveLiveTvPreferences(event));
         this.loadLiveTvPreferences();
     }
@@ -61,10 +63,26 @@ class SettingsPage {
         );
         const layout = document.getElementById('setting-live-tv-layout');
         const order = document.getElementById('setting-live-tv-order');
-        if (!layout || !order) return;
+        const autoPlay = document.getElementById('setting-live-tv-autoplay');
+        const startupMode = document.getElementById('setting-live-tv-startup-mode');
+        if (!layout || !order || !autoPlay || !startupMode) return;
         layout.value = preferences.layout;
         order.value = preferences.order;
+        autoPlay.checked = preferences.autoPlayOnStartup;
+        startupMode.value = preferences.startupChannelMode;
         this.updateLiveTvOrderAvailability();
+        this.updateStartupChannelModeAvailability();
+    }
+
+    updateStartupChannelModeAvailability() {
+        const autoPlay = document.getElementById('setting-live-tv-autoplay');
+        const startupMode = document.getElementById('setting-live-tv-startup-mode');
+        const modeGroup = document.getElementById('startup-channel-mode-group');
+        if (!autoPlay || !startupMode) return;
+        const unavailable = !autoPlay.checked;
+        startupMode.disabled = unavailable;
+        startupMode.setAttribute('aria-disabled', String(unavailable));
+        modeGroup?.classList.toggle('is-disabled', unavailable);
     }
 
     updateLiveTvOrderAvailability() {
@@ -85,7 +103,9 @@ class SettingsPage {
         const status = document.getElementById('live-tv-preferences-status');
         const preferences = this.app.normalizeLiveTvSettings({
             layout: document.getElementById('setting-live-tv-layout')?.value,
-            order: document.getElementById('setting-live-tv-order')?.value
+            order: document.getElementById('setting-live-tv-order')?.value,
+            autoPlayOnStartup: document.getElementById('setting-live-tv-autoplay')?.checked,
+            startupChannelMode: document.getElementById('setting-live-tv-startup-mode')?.value
         });
 
         if (button) button.disabled = true;

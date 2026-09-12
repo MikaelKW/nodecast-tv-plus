@@ -208,6 +208,21 @@ router.get('/catalogue/:sourceId/live/channels', limitCatalogueReads, async (req
     }
 });
 
+router.get('/catalogue/:sourceId/live/channels/:itemId', limitCatalogueReads, async (req, res) => {
+    try {
+        const resolved = await requireLiveCatalogueSource(req, res);
+        if (!resolved) return;
+        const channel = catalogueService.getLiveChannel(resolved.sourceId, req.params.itemId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        res.json(channel);
+    } catch (err) {
+        logSafeError('Catalogue channel lookup error:', err);
+        res.status(err.statusCode || 500).json({
+            error: err.statusCode ? err.message : 'Database error'
+        });
+    }
+});
+
 
 // --- Xtream Codes Proxy API --- //
 

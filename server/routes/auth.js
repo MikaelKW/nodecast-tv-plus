@@ -332,6 +332,24 @@ router.put('/me/live-tv-preferences', auth.requireAuth, async (req, res) => {
 });
 
 /**
+ * Remember the most recently tuned Live TV channel for this account.
+ * PUT /api/auth/me/last-live-channel
+ */
+router.put('/me/last-live-channel', auth.requireAuth, async (req, res) => {
+    try {
+        const lastLiveChannel = db.normalizeLastLiveChannel(req.body);
+        if (!lastLiveChannel) {
+            return res.status(400).json({ error: 'Valid Live TV channel required' });
+        }
+        const user = await db.users.update(req.user.id, { lastLiveChannel });
+        res.json({ lastLiveChannel: user.lastLiveChannel });
+    } catch (err) {
+        console.error('Error updating last Live TV channel:', err.message);
+        res.status(500).json({ error: 'Unable to remember Live TV channel' });
+    }
+});
+
+/**
  * Get all users (admin only)
  * GET /api/auth/users
  */

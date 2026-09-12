@@ -23,6 +23,7 @@ class VideoPlayer {
         this.nowPlaying = document.getElementById('now-playing');
         this.hls = null;
         this._playId = 0;
+        this._startupPlaybackId = null;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
         this._xtreamStreamFormats = new Map();
@@ -349,6 +350,11 @@ class VideoPlayer {
             if (iconVol && iconMuted) {
                 iconVol.classList.toggle('hidden', isMuted);
                 iconMuted.classList.toggle('hidden', !isMuted);
+            }
+
+            if (btnMute) {
+                btnMute.title = isMuted ? 'Unmute' : 'Mute';
+                btnMute.setAttribute('aria-label', btnMute.title);
             }
 
             if (volumeSlider) {
@@ -866,7 +872,7 @@ class VideoPlayer {
             });
 
             this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                this.video.play().catch(e => console.log('Autoplay prevented:', e));
+                this.startVideoPlayback(this._playId).catch(e => console.log('Autoplay prevented:', e));
             });
         }
 
@@ -967,7 +973,7 @@ class VideoPlayer {
 
         this.isApplyingVideoQualityCap = true;
         this.currentUrl = playlistUrl;
-        this.playHls(playlistUrl);
+        this.playHls(playlistUrl, { playId });
         this.updateNowPlaying(channel);
         this.showNowPlayingOverlay();
         this.fetchEpgData(channel);
@@ -1058,6 +1064,40 @@ class VideoPlayer {
     }
 
     /**
+     * Start media playback while respecting browser autoplay policy. Startup
+     * playback gets one muted retry because Firefox and other browsers may
+     * reject unattended playback with sound. User-initiated playback keeps
+     * the existing audible behavior.
+     */
+    async startVideoPlayback(playId = this._playId) {
+        try {
+            await this.video.play();
+            if (this._startupPlaybackId === playId) this._startupPlaybackId = null;
+        } catch (err) {
+            const canRetryMuted = err.name === 'NotAllowedError'
+                && this._startupPlaybackId === playId
+                && this._playId === playId
+                && !this.video.muted;
+            if (!canRetryMuted) throw err;
+
+            this.video.muted = true;
+            try {
+                await this.video.play();
+                this._startupPlaybackId = null;
+                const muteButton = document.getElementById('btn-mute');
+                if (muteButton) {
+                    muteButton.title = 'Unmute — the browser blocked startup playback with sound';
+                    muteButton.setAttribute('aria-label', muteButton.title);
+                }
+                console.info('[Player] Startup playback began muted because the browser blocked autoplay with sound.');
+            } catch (mutedError) {
+                this.video.muted = false;
+                throw mutedError;
+            }
+        }
+    }
+
+    /**
      * Play a channel
      */
     async play(channel, streamUrl, {
@@ -1067,9 +1107,11 @@ class VideoPlayer {
         qualitySourceInfo = null,
         forceDirectFallback = false,
         xtreamFormatFallbackAttempted = false,
-        xtreamFallbackFormat = null
+        xtreamFallbackFormat = null,
+        startupPlayback = false
     } = {}) {
         const playId = ++this._playId;
+        this._startupPlaybackId = startupPlayback ? playId : null;
         const previousPendingRequest = this._pendingConnectionRequest;
         this._playAbortController?.abort();
         const playAbortController = new AbortController();
@@ -1237,7 +1279,7 @@ class VideoPlayer {
                         if (this._playId !== playId) return;
                         this.currentUrl = playlistUrl; // Update currentUrl for HLS reload
 
-                        this.playHls(playlistUrl);
+                        this.playHls(playlistUrl, { playId });
 
                         this.updateNowPlaying(channel);
                         this.showNowPlayingOverlay();
@@ -1260,7 +1302,7 @@ class VideoPlayer {
                             }, playAbortController.signal);
                             if (this._playId !== playId) return;
                             this.currentUrl = playlistUrl;
-                            this.playHls(playlistUrl);
+                            this.playHls(playlistUrl, { playId });
                             this.updateNowPlaying(channel);
                             this.showNowPlayingOverlay();
                             this.fetchEpgData(channel);
@@ -1274,7 +1316,7 @@ class VideoPlayer {
                         const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
-                        this.video.play().catch(e => {
+                        this.startVideoPlayback(playId).catch(e => {
                             if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                         });
                         this.updateNowPlaying(channel);
@@ -1299,7 +1341,8 @@ class VideoPlayer {
                             preserveQuality,
                             throwOnError,
                             xtreamFormatFallbackAttempted: true,
-                            xtreamFallbackFormat: 'ts'
+                            xtreamFallbackFormat: 'ts',
+                            startupPlayback
                         });
                     }
 
@@ -1362,7 +1405,7 @@ class VideoPlayer {
                     this.hls.loadSource(playlistUrl);
                     this.hls.attachMedia(this.video);
                     this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                        this.video.play().catch(console.error);
+                        this.startVideoPlayback(playId).catch(console.error);
                     });
                     // Handle errors
                     this.hls.on(Hls.Events.ERROR, (event, data) => {
@@ -1405,7 +1448,7 @@ class VideoPlayer {
                 this.currentUrl = playlistUrl;
 
                 console.log('[Player] Playing transcoded HLS stream:', playlistUrl);
-                this.playHls(playlistUrl);
+                this.playHls(playlistUrl, { playId });
 
                 // Update UI and dispatch events
                 this.updateNowPlaying(channel);
@@ -1458,7 +1501,7 @@ class VideoPlayer {
                     );
                     if (this._playId !== playId) return;
                     this.currentUrl = playlistUrl;
-                    this.playHls(playlistUrl);
+                    this.playHls(playlistUrl, { playId });
                     this.updateNowPlaying(channel);
                     this.showNowPlayingOverlay();
                     this.fetchEpgData(channel);
@@ -1469,7 +1512,7 @@ class VideoPlayer {
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
                 const remuxUrl = this.getRemuxUrl(streamUrl);
                 this.video.src = remuxUrl;
-                this.video.play().catch(e => {
+                this.startVideoPlayback(playId).catch(e => {
                     if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                 });
 
@@ -1507,7 +1550,7 @@ class VideoPlayer {
                 this.hls.attachMedia(this.video);
 
                 this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    this.video.play().catch(e => {
+                    this.startVideoPlayback(playId).catch(e => {
                         if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                     });
                 });
@@ -1571,13 +1614,13 @@ class VideoPlayer {
                 // Priority 2: Native HLS support (Safari on iOS/macOS where HLS.js may not work)
                 this.updateTranscodeStatus('direct', 'Direct Native');
                 this.video.src = finalUrl;
-                this.video.play().catch(e => {
+                this.startVideoPlayback(playId).catch(e => {
                     if (e.name === 'AbortError') return; // Ignore interruption by new load
                     console.log('Autoplay prevented, trying proxy if CORS error:', e);
                     if (!this.isUsingProxy) {
                         this.isUsingProxy = true;
                         this.video.src = this.getProxiedUrl(streamUrl);
-                        this.video.play().catch(err => {
+                        this.startVideoPlayback(playId).catch(err => {
                             if (err.name !== 'AbortError') console.error('Proxy play failed:', err);
                         });
                     }
@@ -1586,7 +1629,7 @@ class VideoPlayer {
                 // Priority 3: Try direct playback for non-HLS streams
                 this.updateTranscodeStatus('direct', 'Direct Play');
                 this.video.src = finalUrl;
-                this.video.play().catch(e => {
+                this.startVideoPlayback(playId).catch(e => {
                     if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                 });
             }
@@ -1617,7 +1660,7 @@ class VideoPlayer {
     /**
      * Helper to play HLS stream (reduces duplication)
      */
-    playHls(url) {
+    playHls(url, { playId = this._playId } = {}) {
         if (this.hls) {
             this.hls.destroy();
         }
@@ -1630,7 +1673,7 @@ class VideoPlayer {
             if (!this.currentSessionId && this.playbackQuality !== 'auto') {
                 this.applyAdaptiveQuality(this.playbackQuality);
             }
-            this.video.play().catch(e => {
+            this.startVideoPlayback(playId).catch(e => {
                 if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
             });
         });

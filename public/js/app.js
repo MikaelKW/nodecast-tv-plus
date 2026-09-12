@@ -9,6 +9,7 @@ class App {
         this.currentUser = null;
         this.navigationSettings = this.getDefaultNavigationSettings();
         this.liveTvSettings = this.getDefaultLiveTvSettings();
+        this.lastLiveChannelSave = Promise.resolve();
 
         // Initialize components
         this.player = new VideoPlayer();
@@ -172,10 +173,27 @@ class App {
         const hash = window.location.hash.slice(1); // Remove #
         const mfaOnboardingPending = NodeCastOnboarding.isMfaPending();
         const requestedPage = hash && this.pages[hash] ? hash : this.navigationSettings.landingPage;
+        const autoPlayOnStartup = !mfaOnboardingPending && this.liveTvSettings.autoPlayOnStartup;
         const initialPage = mfaOnboardingPending
             ? 'mfa-onboarding'
-            : (requestedPage === 'mfa-onboarding' ? this.navigationSettings.landingPage : requestedPage);
+            : (autoPlayOnStartup
+                ? 'live'
+                : (requestedPage === 'mfa-onboarding' ? this.navigationSettings.landingPage : requestedPage));
         this.navigateTo(initialPage, true); // true = replace history (don't add)
+
+        if (autoPlayOnStartup) {
+            try {
+                await this.pages.live.ensureReady();
+                await this.channelList.playStartupChannel(
+                    this.liveTvSettings.startupChannelMode,
+                    this.currentUser?.lastLiveChannel
+                );
+            } catch (err) {
+                // Live TV remains usable even when the startup channel cannot
+                // be resolved or its provider is temporarily unavailable.
+                console.warn('[App] Unable to auto-play a startup channel:', err.message);
+            }
+        }
 
         console.log('NodeCast TV Plus initialized');
     }
@@ -295,13 +313,22 @@ class App {
     }
 
     getDefaultLiveTvSettings() {
-        return { layout: 'grouped', order: 'channel-number' };
+        return {
+            layout: 'grouped',
+            order: 'channel-number',
+            autoPlayOnStartup: false,
+            startupChannelMode: 'last-active'
+        };
     }
 
     normalizeLiveTvSettings(liveTv = {}) {
         return {
             layout: liveTv?.layout === 'flat' ? 'flat' : 'grouped',
-            order: liveTv?.order === 'alphabetical' ? 'alphabetical' : 'channel-number'
+            order: liveTv?.order === 'alphabetical' ? 'alphabetical' : 'channel-number',
+            autoPlayOnStartup: liveTv?.autoPlayOnStartup === true,
+            startupChannelMode: liveTv?.startupChannelMode === 'first-channel'
+                ? 'first-channel'
+                : 'last-active'
         };
     }
 
@@ -328,6 +355,21 @@ class App {
     async setLiveTvSettings(liveTv, options = {}) {
         this.liveTvSettings = this.normalizeLiveTvSettings(liveTv);
         await this.channelList.setLiveTvSettings(this.liveTvSettings, options);
+    }
+
+    rememberLastLiveChannel(channel) {
+        const sourceId = Number(channel?.sourceId);
+        const itemId = String(channel?.streamId || '').trim();
+        if (!Number.isSafeInteger(sourceId) || sourceId < 1 || !itemId) return;
+
+        const lastLiveChannel = { sourceId, itemId };
+        this.currentUser = { ...this.currentUser, lastLiveChannel };
+        this.lastLiveChannelSave = this.lastLiveChannelSave
+            .catch(() => {})
+            .then(() => API.account.updateLastLiveChannel(lastLiveChannel))
+            .catch(err => {
+                console.warn('[App] Unable to remember the current Live TV channel:', err.message);
+            });
     }
 
     applyNavigationVisibility() {
