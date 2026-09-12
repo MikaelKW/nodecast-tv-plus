@@ -601,6 +601,26 @@
                     Choose Flat channel list to enable flat list ordering.
                   </p>
                 </div>
+                <div class="form-group">
+                  <label class="setting-item" for="setting-live-tv-autoplay">
+                    <input type="checkbox" id="setting-live-tv-autoplay">
+                    <span class="setting-info">
+                      <span class="setting-label">Auto-play Live TV on startup</span>
+                      <span class="setting-hint">Open Live TV and start a channel automatically when NodeCast launches.</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="form-group preference-dependent-control" id="startup-channel-mode-group">
+                  <label for="setting-live-tv-startup-mode">Channel to play</label>
+                  <select id="setting-live-tv-startup-mode" class="form-input">
+                    <option value="last-active">Last active channel</option>
+                    <option value="first-channel">First channel in the list</option>
+                  </select>
+                  <p class="hint">Last active returns to the most recently tuned channel. If it is unavailable, Live TV opens without starting another channel.</p>
+                  <p class="hint preference-requirement" id="startup-channel-mode-requirement">
+                    Enable Auto-play Live TV on startup to choose a channel.
+                  </p>
+                </div>
                 <div id="live-tv-preferences-status" class="account-message" role="status"></div>
                 <div class="account-actions live-tv-preferences-actions">
                   <button type="submit" class="btn btn-primary">Save Live TV preferences</button>
@@ -1539,24 +1559,24 @@
   <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=5"></script>
+  <script src="js/api.js?v=6"></script>
   <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/VodDuration.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
   <script src="js/components/VideoPlayer.js?v=10"></script>
-  <script src="js/components/ChannelList.js?v=5"></script>
+  <script src="js/components/ChannelList.js?v=6"></script>
   <script src="js/components/SourceManager.js?v=7"></script>
   <script src="js/components/EpgGuide.js?v=2"></script>
   <script src="js/pages/HomePage.js?v=3"></script>
-  <script src="js/pages/LivePage.js?v=2"></script>
+  <script src="js/pages/LivePage.js?v=3"></script>
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=5"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
-  <script src="js/pages/Settings.js?v=10"></script>
+  <script src="js/pages/Settings.js?v=11"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
   <script src="js/pages/WatchPage.js?v=10"></script>
-  <script src="js/app.js?v=9"></script>
+  <script src="js/app.js?v=10"></script>
 </body>
 
 </html>

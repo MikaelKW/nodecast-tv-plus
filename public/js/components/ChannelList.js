@@ -1308,7 +1308,7 @@ class ChannelList {
 
         // If not found in DOM, it might be in a future batch not yet rendered
         // Render batches until we find it or run out
-        if (!activeItem && this.renderedChannels.length > 0) {
+        if (!activeItem && this.renderedChannels.length > 0 && Array.isArray(this.sortedGroups)) {
             let safety = 0;
             while (!activeItem && this.currentBatch * this.batchSize < this.sortedGroups.length && safety < 20) {
                 this.renderNextBatch();
@@ -2320,6 +2320,7 @@ class ChannelList {
         if (!channel) return;
 
         this.currentChannel = channel;
+        window.app?.rememberLastLiveChannel(channel);
 
         // Get stream URL
         let streamUrl;
@@ -2339,8 +2340,57 @@ class ChannelList {
 
         // Play channel
         if (window.app?.player) {
-            window.app.player.play(channel, streamUrl);
+            await window.app.player.play(channel, streamUrl);
         }
+    }
+
+    async resolveRememberedChannel(lastLiveChannel) {
+        const sourceId = Number(lastLiveChannel?.sourceId);
+        const itemId = String(lastLiveChannel?.itemId || '').trim();
+        const source = this.sources.find(candidate =>
+            String(candidate.id) === String(sourceId)
+            && candidate.enabled
+            && ['xtream', 'm3u'].includes(candidate.type)
+            && API.sources.isVisibleIn(candidate, 'live')
+        );
+        if (!source || !itemId) return null;
+
+        try {
+            const item = await API.proxy.catalogue.liveChannel(source.id, itemId);
+            return this._mapBoundedChannel(item, source);
+        } catch (err) {
+            console.warn('[ChannelList] Last active channel is unavailable:', err.message);
+            return null;
+        }
+    }
+
+    async resolveFirstChannel() {
+        if (this.isFlatMode()) {
+            return this.boundedFlatPage?.channels?.[0] || this.channels[0] || null;
+        }
+        if (this.favoriteChannels[0]) return this.favoriteChannels[0];
+
+        for (const group of this.boundedGroups) {
+            this.collapsedGroups.delete(group.name);
+            await this.loadBoundedGroup(group.name, { preserveScrollPosition: false });
+            const state = this.boundedGroupPages.get(group.name);
+            if (state?.channels?.[0]) return state.channels[0];
+        }
+        return this.channels[0] || null;
+    }
+
+    async playStartupChannel(mode, lastLiveChannel) {
+        const channel = mode === 'first-channel'
+            ? await this.resolveFirstChannel()
+            : await this.resolveRememberedChannel(lastLiveChannel);
+        if (!channel) return false;
+
+        this._rememberBoundedChannels([channel]);
+        await this.selectChannel({
+            channelId: channel.id,
+            sourceId: channel.sourceId
+        });
+        return true;
     }
 
     /**
