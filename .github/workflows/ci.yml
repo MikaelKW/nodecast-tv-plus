@@ -18,7 +18,7 @@ jobs:
   application-checks:
     name: Application checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -61,8 +61,20 @@ jobs:
           path: playwright-report/
           retention-days: 14
 
-      - name: Block high and critical dependency advisories
-        run: npm audit --audit-level=high --omit=dev
+      - name: Block high and critical production dependency vulnerabilities
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace:ro" \
+            aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
+            fs \
+            --scanners vuln \
+            --pkg-types library \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress \
+            /workspace/package-lock.json
 
   docker-build:
     name: Docker build
@@ -80,7 +92,7 @@ jobs:
           node-version: 20
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Build image without publishing
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7

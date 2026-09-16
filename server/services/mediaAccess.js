@@ -65,13 +65,22 @@ async function configuredSourceUrls() {
 
 function isStoredMediaUrl(url) {
     try {
-        const row = getDb().prepare(`
+        const db = getDb();
+        const stream = db.prepare(`
             SELECT 1
             FROM playlist_items
-            WHERE stream_url = ? OR stream_icon = ?
+            WHERE stream_url = ?
             LIMIT 1
-        `).get(url, url);
-        return Boolean(row);
+        `).get(url);
+        if (stream) return true;
+
+        const icon = db.prepare(`
+            SELECT 1
+            FROM playlist_items
+            WHERE stream_icon = ?
+            LIMIT 1
+        `).get(url);
+        return Boolean(icon);
     } catch {
         return false;
     }

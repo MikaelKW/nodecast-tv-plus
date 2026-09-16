@@ -32,6 +32,7 @@ class ChannelList {
         this.boundedGroupPages = new Map();
         this.boundedSearchPages = new Map();
         this.boundedSearchGroupPages = new Map();
+        this.boundedFlatPage = null;
         this.boundedSources = [];
         this.favoriteChannels = [];
         this.guideChannels = null;
@@ -42,9 +43,41 @@ class ChannelList {
         this.isLoading = false;
         this.loadError = null;
         this.renderedChannels = [];
+        this.liveTvSettings = { layout: 'grouped', order: 'channel-number' };
 
         this.loadCollapsedState();
         this.init();
+    }
+
+    normalizeLiveTvSettings(settings = {}) {
+        return {
+            layout: settings?.layout === 'flat' ? 'flat' : 'grouped',
+            order: settings?.order === 'alphabetical' ? 'alphabetical' : 'channel-number'
+        };
+    }
+
+    setLiveTvSettings(settings, { reload = true } = {}) {
+        const next = this.normalizeLiveTvSettings(settings);
+        const changed = next.layout !== this.liveTvSettings.layout
+            || next.order !== this.liveTvSettings.order;
+        this.liveTvSettings = next;
+        this.toggleGroupsBtn?.classList.toggle('hidden', next.layout === 'flat');
+        if (changed && reload && this.isCatalogueReady) {
+            // Cancel an in-flight page or search before rebuilding the list in
+            // the newly selected layout/order.
+            this._boundedRequestId += 1;
+            this.isLoading = false;
+            return this.loadChannels();
+        }
+        return Promise.resolve();
+    }
+
+    isFlatMode() {
+        return this.liveTvSettings.layout === 'flat';
+    }
+
+    boundedSort() {
+        return this.liveTvSettings.order === 'channel-number' ? 'number' : 'name';
     }
 
     /**
@@ -1143,6 +1176,7 @@ class ChannelList {
             } else if (!isAdded && existingIndex !== -1) {
                 this.favoriteChannels.splice(existingIndex, 1);
             }
+            if (this.isFlatMode()) return;
             this.renderBounded();
             return;
         }
@@ -1251,8 +1285,11 @@ class ChannelList {
     /**
      * Select and play a channel
      */
-    async selectChannel(dataset) {
-        const channel = this.channels.find(c => c.id === dataset.channelId);
+    async selectChannel(dataset, playbackOptions = {}) {
+        const channel = this.channels.find(c =>
+            c.id === dataset.channelId
+            && (dataset.sourceId === undefined || String(c.sourceId) === String(dataset.sourceId))
+        );
         if (!channel) return;
 
         this.currentChannel = channel;
@@ -1271,7 +1308,7 @@ class ChannelList {
 
         // If not found in DOM, it might be in a future batch not yet rendered
         // Render batches until we find it or run out
-        if (!activeItem && this.renderedChannels.length > 0) {
+        if (!activeItem && this.renderedChannels.length > 0 && Array.isArray(this.sortedGroups)) {
             let safety = 0;
             while (!activeItem && this.currentBatch * this.batchSize < this.sortedGroups.length && safety < 20) {
                 this.renderNextBatch();
@@ -1323,7 +1360,7 @@ class ChannelList {
             }
         }
 
-        await this.playChannelRecord(channel);
+        await this.playChannelRecord(channel, playbackOptions);
     }
 
     _selectedLiveSources() {
@@ -1344,6 +1381,7 @@ class ChannelList {
             id: `${sourceType}_${source.id}_${item.stream_id}`,
             streamId: item.stream_id,
             name: item.name,
+            channelNumber: item.channel_number,
             tvgId: item.epg_channel_id,
             tvgLogo: item.stream_icon,
             ...(sourceType === 'm3u'
@@ -1378,6 +1416,37 @@ class ChannelList {
 
         try {
             const selectedSources = this._selectedLiveSources();
+            if (this.isFlatMode()) {
+                const favoriteChannels = await API.favorites.getChannels(100);
+                if (requestId !== this._boundedRequestId) return;
+
+                // Flat mode does not render categories, so avoid loading and
+                // aggregating every group summary before requesting its first
+                // bounded channel page. This keeps initial work proportional
+                // to the visible page even for very large providers.
+                this.boundedSources = selectedSources;
+                this.boundedGroups = [];
+                this.boundedGroupIndex = new Map();
+                this._userExpandedGroups.clear();
+                this.boundedGroupPages.clear();
+                this.boundedSearchPages.clear();
+                this.boundedSearchGroupPages.clear();
+                this.boundedFlatPage = null;
+                this.favoriteChannels = (favoriteChannels || []).filter(channel =>
+                    selectedSources.some(source => String(source.id) === String(channel.sourceId))
+                );
+                this.visibleFavorites = new Set(this.favoriteChannels.map(channel =>
+                    `${channel.sourceId}:${channel.id}`
+                ));
+                this.channels = [...this.favoriteChannels];
+                this.groups = [];
+                this.hiddenItems = new Set();
+                this.isCatalogueReady = true;
+                this.isLoading = false;
+                await this.loadBoundedFlat({ append: false });
+                return;
+            }
+
             const [initialSummaryResults, favoriteChannels] = await Promise.all([
                 Promise.allSettled(selectedSources.map(source =>
                     API.proxy.catalogue.liveSummary(source.id)
@@ -1456,6 +1525,7 @@ class ChannelList {
             this.boundedGroupPages.clear();
             this.boundedSearchPages.clear();
             this.boundedSearchGroupPages.clear();
+            this.boundedFlatPage = null;
             this.favoriteChannels = (favoriteChannels || []).filter(channel =>
                 selectedSources.some(source => String(source.id) === String(channel.sourceId))
             );
@@ -1485,6 +1555,10 @@ class ChannelList {
     async loadBoundedSearch() {
         const query = this.searchInput.value.trim();
         if (!this.isCatalogueReady) return;
+        if (this.isFlatMode()) {
+            await this.loadBoundedFlat({ append: false });
+            return;
+        }
         const requestId = ++this._boundedRequestId;
         if (!query) {
             this.boundedSearchPages.clear();
@@ -1535,6 +1609,152 @@ class ChannelList {
             this.loadError = err.message || 'Unable to search channels';
             this.renderBounded();
         }
+    }
+
+    _compareBoundedChannels(a, b) {
+        if (this.boundedSort() === 'number') {
+            const aNumber = a.channelNumber !== null && a.channelNumber !== undefined
+                && Number.isFinite(Number(a.channelNumber)) ? Number(a.channelNumber) : null;
+            const bNumber = b.channelNumber !== null && b.channelNumber !== undefined
+                && Number.isFinite(Number(b.channelNumber)) ? Number(b.channelNumber) : null;
+            if (aNumber !== null && bNumber === null) return -1;
+            if (aNumber === null && bNumber !== null) return 1;
+            if (aNumber !== null && bNumber !== null && aNumber !== bNumber) return aNumber - bNumber;
+        }
+        const nameOrder = a.name.localeCompare(b.name);
+        if (nameOrder !== 0) return nameOrder;
+        const sourceOrder = String(a.sourceId).localeCompare(String(b.sourceId));
+        return sourceOrder || String(a.id).localeCompare(String(b.id));
+    }
+
+    async _fetchBoundedFlatPage(current, { append = true } = {}) {
+        const query = this.searchInput.value.trim();
+        const requests = this.boundedSources.map(async source => {
+            const key = String(source.id);
+            const previous = current.parts.get(key);
+            if (append && previous && !previous.hasMore) return null;
+            const page = await API.proxy.catalogue.liveChannels(source.id, {
+                query,
+                cursor: append ? previous?.nextCursor : null,
+                limit: BOUNDED_GROUP_PAGE_SIZE,
+                sort: this.boundedSort(),
+                groupCounts: false
+            });
+            return { source, page };
+        });
+        const results = await Promise.allSettled(requests);
+        const pages = [];
+        const channels = [];
+        let completedSources = 0;
+        for (const result of results) {
+            if (result.status !== 'fulfilled' || !result.value) {
+                if (result.status === 'rejected') {
+                    console.warn('Unable to load part of the flat Live TV list:', result.reason);
+                }
+                continue;
+            }
+            completedSources += 1;
+            const { source, page } = result.value;
+            pages.push({ key: String(source.id), page });
+            for (const item of page.items || []) {
+                channels.push(this._mapBoundedChannel(item, source));
+            }
+        }
+        if (requests.length > 0 && completedSources === 0) {
+            throw new Error('Unable to load channels from any enabled source');
+        }
+        return { pages, channels };
+    }
+
+    _applyBoundedFlatPage(current, batch, { append = true } = {}) {
+        for (const { key, page } of batch.pages) current.parts.set(key, page);
+        const combined = append ? [...current.channels, ...batch.channels] : batch.channels;
+        const unique = new Map(combined.map(channel => [
+            `${channel.sourceId}:${channel.id}`,
+            channel
+        ]));
+        current.channels = [...unique.values()].sort((a, b) => this._compareBoundedChannels(a, b));
+        current.hasMore = [...current.parts.values()].some(page => page.hasMore);
+    }
+
+    async loadBoundedFlat({ append = false } = {}) {
+        const query = this.searchInput.value.trim();
+        let current = this.boundedFlatPage;
+        if (!append || !current || current.query !== query || current.sort !== this.boundedSort()) {
+            current = {
+                channels: [],
+                parts: new Map(),
+                loading: false,
+                query,
+                sort: this.boundedSort(),
+                hasMore: false
+            };
+            this.boundedFlatPage = current;
+        }
+        if (current.loading) return;
+
+        const requestId = append ? this._boundedRequestId : ++this._boundedRequestId;
+        if (!append) this.loadError = null;
+        const hadChannels = current.channels.length > 0;
+        const scrollAnchor = append ? this._captureFlatScrollAnchor() : null;
+        current.loading = true;
+        if (!append || !hadChannels) {
+            this.isLoading = true;
+            this.renderBounded();
+        }
+
+        try {
+            let batch = null;
+            if (append && current.prefetchedBatch) {
+                batch = current.prefetchedBatch;
+                current.prefetchedBatch = null;
+            } else if (append && current.prefetchPromise) {
+                batch = await current.prefetchPromise;
+                current.prefetchedBatch = null;
+            }
+            if (!batch) batch = await this._fetchBoundedFlatPage(current, { append });
+            if (this.boundedFlatPage !== current || requestId !== this._boundedRequestId) return;
+            this._applyBoundedFlatPage(current, batch, { append });
+            current.loading = false;
+            current.error = null;
+            this.isLoading = false;
+            this.channels = [...this.favoriteChannels];
+            this._rememberBoundedChannels(current.channels);
+            this.renderBounded({ preserveScrollPosition: append, scrollAnchor });
+            if (append && current.hasMore) this._prefetchBoundedFlat();
+        } catch (err) {
+            if (this.boundedFlatPage !== current) return;
+            current.loading = false;
+            current.error = err.message || 'Unable to load channels';
+            this.isLoading = false;
+            if (!hadChannels) this.loadError = current.error;
+            this.renderBounded({ preserveScrollPosition: append, scrollAnchor });
+        }
+    }
+
+    _prefetchBoundedFlat() {
+        const current = this.boundedFlatPage;
+        if (!current?.channels?.length || !current.hasMore || current.loading) return null;
+        if (current.prefetchedBatch) return Promise.resolve(current.prefetchedBatch);
+        if (current.prefetchPromise) return current.prefetchPromise;
+        const query = this.searchInput.value.trim();
+        const sort = this.boundedSort();
+        current.prefetchPromise = this._fetchBoundedFlatPage(current, { append: true })
+            .then(batch => {
+                if (this.boundedFlatPage !== current
+                    || this.searchInput.value.trim() !== query
+                    || this.boundedSort() !== sort) return null;
+                current.prefetchedBatch = batch;
+                return batch;
+            })
+            .catch(err => {
+                console.warn('Unable to prepare more channels for the flat Live TV list:', err);
+                return null;
+            })
+            .finally(() => {
+                if (current.prefetchPromise) current.prefetchPromise = null;
+            });
+        return current.prefetchPromise;
     }
 
     async loadBoundedGroup(groupName, {
@@ -1689,6 +1909,10 @@ class ChannelList {
             : callback => setTimeout(callback, 0);
         schedule(() => {
             this.boundedLookaheadScrollScheduled = false;
+            if (this.isFlatMode()) {
+                this._prefetchBoundedFlat();
+                return;
+            }
             const containerRect = this.container.getBoundingClientRect();
             const expandedGroups = [...this.container.querySelectorAll('.channel-group')];
             for (const groupElement of expandedGroups) {
@@ -1757,7 +1981,7 @@ class ChannelList {
             <img class="channel-logo" src="${this.escapeHtml(this.getProxiedImageUrl(channel.tvgLogo))}"
                  alt="" onerror="this.onerror=null;this.src='img/placeholder.png'">
             <div class="channel-info">
-              <div class="channel-name">${this.escapeHtml(channel.name)}</div>
+              <div class="channel-name">${this.isFlatMode() && channel.channelNumber !== null && channel.channelNumber !== undefined ? `<span class="channel-number">${this.escapeHtml(String(channel.channelNumber))}</span>` : ''}${this.escapeHtml(channel.name)}</div>
               <div class="channel-program">${this.escapeHtml(this.getProgramInfo(channel) || '')}</div>
             </div>
             <button class="favorite-btn ${isFavorite ? 'active' : ''}" title="${isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}">
@@ -1792,6 +2016,10 @@ class ChannelList {
                 button.className = 'btn btn-secondary bounded-load-fallback';
                 button.textContent = 'Load remaining channels';
                 button.addEventListener('click', () => {
+                    if (sentinel.dataset.mode === 'flat') {
+                        this.loadBoundedFlat({ append: true });
+                        return;
+                    }
                     this.loadBoundedGroup(sentinel.dataset.group, {
                         append: sentinel.dataset.mode !== 'initial',
                         preserveScrollPosition: true
@@ -1814,9 +2042,13 @@ class ChannelList {
             this.boundedContinuationObserver?.unobserve(entry.target);
             this.boundedObserverLoadInFlight = true;
             try {
-                await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
+                if (entry.target.dataset.mode === 'flat') {
+                    await this.loadBoundedFlat({ append: true });
+                } else {
+                    await this.loadBoundedGroup(groupName, { append, preserveScrollPosition: true });
+                }
             } catch (err) {
-                console.error(`Unable to continue loading group ${groupName}:`, err);
+                console.error('Unable to continue loading Live TV channels:', err);
             } finally {
                 this.boundedObserverLoadInFlight = false;
                 // A render performed while the serialized load was active may
@@ -1862,6 +2094,51 @@ class ChannelList {
         this.container.scrollTop += nextOffset - anchor.offset;
     }
 
+    _captureFlatScrollAnchor() {
+        const containerRect = this.container.getBoundingClientRect();
+        const item = [...this.container.querySelectorAll('.channel-item')].find(candidate =>
+            candidate.getBoundingClientRect().bottom >= containerRect.top
+        );
+        if (!item) return null;
+        return {
+            channelId: item.dataset.channelId,
+            sourceId: item.dataset.sourceId,
+            offset: item.getBoundingClientRect().top - containerRect.top,
+            flat: true
+        };
+    }
+
+    _restoreFlatScrollAnchor(anchor) {
+        if (!anchor?.flat) return;
+        const item = [...this.container.querySelectorAll('.channel-item')].find(candidate =>
+            candidate.dataset.channelId === anchor.channelId
+            && candidate.dataset.sourceId === anchor.sourceId
+        );
+        if (!item) return;
+        const containerTop = this.container.getBoundingClientRect().top;
+        this.container.scrollTop += item.getBoundingClientRect().top - containerTop - anchor.offset;
+    }
+
+    _renderBoundedFlat(list) {
+        const state = this.boundedFlatPage;
+        const channels = state?.channels || [];
+        this.groupedChannels = { Flat: channels };
+        this.renderedChannels = channels.map(channel => ({
+            ...channel,
+            _renderId: `bounded_Flat_${channel.sourceId}_${channel.id}`,
+            _renderGroup: 'Flat'
+        }));
+        list.classList.add('flat-channel-list');
+        list.innerHTML = `
+          ${channels.map(channel => this._boundedChannelHtml(channel, 'Flat')).join('')}
+          ${state?.error ? `<div class="empty-state"><p>${this.escapeHtml(state.error)}</p><button class="btn btn-secondary bounded-flat-retry">Try again</button></div>` : ''}
+          ${state?.hasMore && !state.loading && !state.error ? '<div class="bounded-load-sentinel" data-mode="flat"><div class="loading"></div></div>' : ''}`;
+        list.querySelector('.bounded-flat-retry')?.addEventListener('click', () =>
+            this.loadBoundedFlat({ append: true })
+        );
+        this._attachBoundedChannelListeners(list);
+    }
+
     renderBounded({ preserveScrollPosition = false, scrollAnchor = null } = {}) {
         const previousScrollTop = preserveScrollPosition ? this.container.scrollTop : 0;
         if (this.isLoading) {
@@ -1885,6 +2162,7 @@ class ChannelList {
 
         const query = this.searchInput.value.trim();
         if (this.toggleGroupsBtn) {
+            this.toggleGroupsBtn.classList.toggle('hidden', this.isFlatMode());
             const hasGroups = this.boundedGroups.length > 0;
             const allCollapsed = hasGroups
                 && this.boundedGroups.every(group => this.collapsedGroups.has(group.name));
@@ -1901,6 +2179,19 @@ class ChannelList {
         this.listContainer = list;
         this.groupedChannels = {};
         this.renderedChannels = [];
+
+        if (this.isFlatMode()) {
+            this._renderBoundedFlat(list);
+            if (!this.boundedFlatPage?.channels?.length && !this.boundedFlatPage?.error) {
+                list.innerHTML = `<div class="empty-state"><p>${query ? 'No channels match your search' : 'No channels loaded'}</p><p class="hint">${query ? 'Try a different search term' : 'Add a source in Settings to get started'}</p></div>`;
+            }
+            fragment.appendChild(list);
+            this.container.replaceChildren(fragment);
+            if (preserveScrollPosition) this.container.scrollTop = previousScrollTop;
+            this._restoreFlatScrollAnchor(scrollAnchor);
+            this._setupBoundedContinuationObserver();
+            return;
+        }
 
         const groups = [];
         if (query) {
@@ -2025,10 +2316,11 @@ class ChannelList {
      * Resolve and play a channel record that may come from outside the full
      * Live TV catalogue, such as the targeted favorites endpoint on Home.
      */
-    async playChannelRecord(channel) {
+    async playChannelRecord(channel, playbackOptions = {}) {
         if (!channel) return;
 
         this.currentChannel = channel;
+        window.app?.rememberLastLiveChannel(channel);
 
         // Get stream URL
         let streamUrl;
@@ -2048,8 +2340,57 @@ class ChannelList {
 
         // Play channel
         if (window.app?.player) {
-            window.app.player.play(channel, streamUrl);
+            await window.app.player.play(channel, streamUrl, playbackOptions);
         }
+    }
+
+    async resolveRememberedChannel(lastLiveChannel) {
+        const sourceId = Number(lastLiveChannel?.sourceId);
+        const itemId = String(lastLiveChannel?.itemId || '').trim();
+        const source = this.sources.find(candidate =>
+            String(candidate.id) === String(sourceId)
+            && candidate.enabled
+            && ['xtream', 'm3u'].includes(candidate.type)
+            && API.sources.isVisibleIn(candidate, 'live')
+        );
+        if (!source || !itemId) return null;
+
+        try {
+            const item = await API.proxy.catalogue.liveChannel(source.id, itemId);
+            return this._mapBoundedChannel(item, source);
+        } catch (err) {
+            console.warn('[ChannelList] Last active channel is unavailable:', err.message);
+            return null;
+        }
+    }
+
+    async resolveFirstChannel() {
+        if (this.isFlatMode()) {
+            return this.boundedFlatPage?.channels?.[0] || this.channels[0] || null;
+        }
+        if (this.favoriteChannels[0]) return this.favoriteChannels[0];
+
+        for (const group of this.boundedGroups) {
+            this.collapsedGroups.delete(group.name);
+            await this.loadBoundedGroup(group.name, { preserveScrollPosition: false });
+            const state = this.boundedGroupPages.get(group.name);
+            if (state?.channels?.[0]) return state.channels[0];
+        }
+        return this.channels[0] || null;
+    }
+
+    async playStartupChannel(mode, lastLiveChannel) {
+        const channel = mode === 'first-channel'
+            ? await this.resolveFirstChannel()
+            : await this.resolveRememberedChannel(lastLiveChannel);
+        if (!channel) return false;
+
+        this._rememberBoundedChannels([channel]);
+        await this.selectChannel({
+            channelId: channel.id,
+            sourceId: channel.sourceId
+        }, { startupPlayback: true });
+        return true;
     }
 
     /**
@@ -2086,7 +2427,7 @@ class ChannelList {
                 if (type === 'channel') {
                     const channel = this.channels.find(c => c.id === itemId);
                     if (channel) {
-                        await this.selectChannel({ channelId: channel.id });
+                        await this.selectChannel({ channelId: channel.id, sourceId: channel.sourceId });
                     }
                 }
                 break;
