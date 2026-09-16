@@ -19,6 +19,8 @@ class MoviesPage {
         this.filteredMovies = [];
         this.isLoading = false;
         this.loadError = null;
+        this.categoriesLoadId = 0;
+        this.moviesLoadId = 0;
         this.observer = null;
         this.favoriteIds = new Set(); // Track favorite movie IDs
         this.showFavoritesOnly = false;
@@ -109,10 +111,10 @@ class MoviesPage {
     }
 
     async loadCategories() {
+        const loadId = ++this.categoriesLoadId;
         try {
-            this.categories = [];
-            this.hiddenCategoryIds = new Set(); // Track hidden categories
-            this.categorySelect.innerHTML = '<option value="">All Categories</option>';
+            const categories = [];
+            const hiddenCategoryIds = new Set(); // Track hidden categories
 
             const sourceId = this.sourceSelect.value;
             const sourcesToLoad = sourceId
@@ -125,7 +127,7 @@ class MoviesPage {
                     const hiddenItems = await API.channels.getHidden(source.id);
                     hiddenItems.forEach(h => {
                         if (h.item_type === 'vod_category') {
-                            this.hiddenCategoryIds.add(`${source.id}:${h.item_id}`);
+                            hiddenCategoryIds.add(`${source.id}:${h.item_id}`);
                         }
                     });
                 } catch (err) {
@@ -139,8 +141,8 @@ class MoviesPage {
                     if (cats && Array.isArray(cats)) {
                         cats.forEach(c => {
                             // Skip hidden categories
-                            if (!this.hiddenCategoryIds.has(`${source.id}:${c.category_id}`)) {
-                                this.categories.push({ ...c, sourceId: source.id });
+                            if (!hiddenCategoryIds.has(`${source.id}:${c.category_id}`)) {
+                                categories.push({ ...c, sourceId: source.id });
                             }
                         });
                     }
@@ -149,7 +151,11 @@ class MoviesPage {
                 }
             }
 
-            // Populate dropdown
+            if (loadId !== this.categoriesLoadId) return;
+
+            this.categories = categories;
+            this.hiddenCategoryIds = hiddenCategoryIds;
+            this.categorySelect.innerHTML = '<option value="">All Categories</option>';
             this.categories.forEach(c => {
                 const option = document.createElement('option');
                 option.value = `${c.sourceId}:${c.category_id}`;
@@ -162,12 +168,13 @@ class MoviesPage {
     }
 
     async loadMovies() {
+        const loadId = ++this.moviesLoadId;
         this.isLoading = true;
         this.loadError = null;
         this.container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
 
         try {
-            this.movies = [];
+            const loadedMovies = [];
 
             const sourceId = this.sourceSelect.value;
             const categoryValue = this.categorySelect.value;
@@ -197,7 +204,7 @@ class MoviesPage {
                             if (this.hiddenCategoryIds && this.hiddenCategoryIds.has(`${source.id}:${m.category_id}`)) {
                                 return;
                             }
-                            this.movies.push({
+                            loadedMovies.push({
                                 ...m,
                                 sourceId: source.id,
                                 id: `${source.id}:${m.stream_id}`
@@ -209,15 +216,19 @@ class MoviesPage {
                 }
             }
 
+            if (loadId !== this.moviesLoadId) return;
+
+            this.movies = loadedMovies;
             console.log(`[Movies] Total loaded: ${this.movies.length} movies`);
             this.isLoading = false;
             this.filterAndRender();
         } catch (err) {
+            if (loadId !== this.moviesLoadId) return;
             console.error('Error loading movies:', err);
             this.loadError = 'Error loading movies';
             this.container.innerHTML = '<div class="empty-state"><p>Error loading movies</p></div>';
         } finally {
-            this.isLoading = false;
+            if (loadId === this.moviesLoadId) this.isLoading = false;
         }
     }
 

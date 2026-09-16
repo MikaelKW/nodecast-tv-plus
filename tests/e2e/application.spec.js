@@ -1286,7 +1286,47 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.evaluate(() => window.app.navigateTo('movies'));
     await expect(page.locator('#movies-source-select')).toContainText('Controlled Safari Series');
-    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toBeVisible();
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toHaveCount(1);
+    await expect(page.locator('#movies-category-select option', { hasText: 'Visibility Movie Test' })).toHaveCount(1);
+    await page.locator('#movies-source-select').selectOption(String(seriesSource.id));
+    await expect(page.locator('.movie-card', { hasText: 'Controlled Visibility Movie' })).toHaveCount(1);
+
+    const overlappingMovieLoads = await page.evaluate(async () => {
+        const moviesPage = window.app.pages.movies;
+        const originalVodStreams = API.proxy.xtream.vodStreams;
+        let releaseFirst;
+        let signalFirstStarted;
+        const firstStarted = new Promise(resolve => { signalFirstStarted = resolve; });
+        const holdFirst = new Promise(resolve => { releaseFirst = resolve; });
+        let calls = 0;
+
+        API.proxy.xtream.vodStreams = async (...args) => {
+            const result = await originalVodStreams(...args);
+            if (++calls === 1) {
+                signalFirstStarted();
+                await holdFirst;
+            }
+            return result;
+        };
+
+        try {
+            const firstLoad = moviesPage.loadMovies();
+            await firstStarted;
+            const secondLoad = moviesPage.loadMovies();
+            await secondLoad;
+            releaseFirst();
+            await firstLoad;
+            return {
+                catalogCount: moviesPage.movies.length,
+                cardCount: document.querySelectorAll('#movies-grid .movie-card').length
+            };
+        } finally {
+            releaseFirst();
+            API.proxy.xtream.vodStreams = originalVodStreams;
+        }
+    });
+    expect(overlappingMovieLoads).toEqual({ catalogCount: 1, cardCount: 1 });
+
     await page.evaluate(() => window.app.navigateTo('series'));
     await expect(page.locator('#series-source-select')).not.toContainText('Controlled Safari Series');
     await expect(page.locator('.series-card', { hasText: 'Controlled Safari Series' })).toHaveCount(0);
