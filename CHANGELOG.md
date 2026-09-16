@@ -4,6 +4,34 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.6.1] - 2026-09-13
+
+This release improves Live TV navigation, cross-host M3U playback, quality transitions, large-catalogue browsing options, startup playback, and current dependency and workflow maintenance.
+
+### Added
+
+- Add an account-specific flat Live TV channel-list option with bounded paging, progressive loading, complete-catalogue search, source filtering, favourites, and channel-number or alphabetical ordering ([#399]).
+- Add opt-in startup playback using either the last active channel or the first available channel, with safe unavailable-channel fallback and a visible muted retry when browser autoplay policy blocks sound ([#401]).
+
+### Changed
+
+- Refresh current runtime, npm minor/patch, and pinned GitHub Actions dependencies while retaining the existing supported runtime and protected validation paths ([#383], [#376], [#391], [#392]).
+- Allow clean-runner application checks enough time for slower dependency downloads and registry audit responses ([#385]).
+- Update the README highlights for the current Live TV and large-catalogue capabilities ([#387]).
+
+### Fixed
+
+- Make TV Guide channel selection open Live TV and start the intended channel even when it is not already present in the bounded sidebar catalogue ([#389]).
+- Preserve authorized playback when an M3U playlist and its media URLs use different hosts, while continuing to reject unrelated media URLs ([#394]).
+- Restore the appropriate direct or remux path and accurate playback status after raising or removing a quality cap ([#397]).
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.6.0. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. The release migration gate covers supported upstream v2.1.1 and 2.1.4 baselines and the published Plus v2.6.0 image.
+- Browser autoplay policy may require startup playback to begin muted. The player exposes that state so sound can be enabled manually.
+- To roll back, restore the pre-upgrade data backup and recreate the container with 2.6.0 and the original deployment secrets.
+
 ## [2.6.0] - 2026-09-02
 
 This release improves large-catalogue responsiveness, live-session reliability, subtitle presentation and preferences, and VOD timeline feedback.
@@ -404,6 +432,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.6.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.4...v2.6.0
 [2.5.4]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.2...v2.5.3
@@ -503,3 +532,14 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#359]: https://github.com/MikaelKW/nodecast-tv-plus/pull/359
 [#365]: https://github.com/MikaelKW/nodecast-tv-plus/pull/365
 [#367]: https://github.com/MikaelKW/nodecast-tv-plus/pull/367
+[#376]: https://github.com/MikaelKW/nodecast-tv-plus/pull/376
+[#383]: https://github.com/MikaelKW/nodecast-tv-plus/pull/383
+[#385]: https://github.com/MikaelKW/nodecast-tv-plus/pull/385
+[#387]: https://github.com/MikaelKW/nodecast-tv-plus/pull/387
+[#389]: https://github.com/MikaelKW/nodecast-tv-plus/pull/389
+[#391]: https://github.com/MikaelKW/nodecast-tv-plus/pull/391
+[#392]: https://github.com/MikaelKW/nodecast-tv-plus/pull/392
+[#394]: https://github.com/MikaelKW/nodecast-tv-plus/pull/394
+[#397]: https://github.com/MikaelKW/nodecast-tv-plus/pull/397
+[#399]: https://github.com/MikaelKW/nodecast-tv-plus/pull/399
+[#401]: https://github.com/MikaelKW/nodecast-tv-plus/pull/401
