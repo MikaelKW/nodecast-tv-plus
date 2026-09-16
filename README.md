@@ -22,13 +22,14 @@ NodeCast TV Plus is a player only. It does not include, sell, or provide televis
 
 ## Highlights
 
-- Live TV with categories, favorites, search, fast channel changes, and an interactive TV guide.
-- Movies and series with posters, metadata, seasons, episodes, favorites, and watch progress.
+- Live TV with categories, favorites, fast channel changes, an interactive TV guide, progressive catalogue loading, and complete server-side search designed for very large providers.
+- Movies and series with posters, metadata, seasons, episodes, favorites, watch progress, and total duration when available.
 - Xtream Codes, M3U playlists, and separate XMLTV/EPG sources.
 - Smart direct play, remuxing, and FFmpeg transcoding for browser compatibility.
-- In-player quality limits plus audio-track and subtitle selection.
+- In-player quality limits, audio-track selection, preferred subtitle languages, and automatic subtitle modes.
+- Consistent subtitle rendering with customizable size, colors, background opacity, edge style, and vertical position, including a live appearance preview.
 - NVIDIA NVENC, AMD AMF, Intel Quick Sync, and VAAPI hardware acceleration where supported by the host.
-- Local accounts with administrator/viewer roles, TOTP two-factor authentication, recovery codes, and password safeguards.
+- Local accounts with administrator/viewer roles, account-specific preferences, TOTP two-factor authentication, recovery codes, and password safeguards.
 - Standards-based OIDC single sign-on with optional SSO-only mode.
 - Per-source visibility controls, configurable navigation, and light/dark/system themes.
 - Multi-architecture Docker images for `linux/amd64` and `linux/arm64`.

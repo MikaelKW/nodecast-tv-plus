@@ -5,6 +5,7 @@
 class LivePage {
     constructor(app) {
         this.app = app;
+        this.readyPromise = null;
         this.handleKeydown = this.handleKeydown.bind(this);
     }
 
@@ -94,11 +95,22 @@ class LivePage {
     async show() {
         document.addEventListener('keydown', this.handleKeydown);
 
-        // Only reload if channels aren't already loaded
+        await this.ensureReady();
+    }
+
+    ensureReady() {
         if (!this.app.channelList.isCatalogueReady) {
-            await this.app.channelList.loadSources();
-            await this.app.channelList.loadChannels();
+            if (!this.readyPromise) {
+                this.readyPromise = (async () => {
+                    await this.app.channelList.loadSources();
+                    await this.app.channelList.loadChannels();
+                })().finally(() => {
+                    this.readyPromise = null;
+                });
+            }
+            return this.readyPromise;
         }
+        return Promise.resolve();
     }
 
     hide() {

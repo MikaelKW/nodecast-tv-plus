@@ -61,6 +61,7 @@ function initSchema() {
             stream_icon TEXT,
             stream_url TEXT, -- Direct link if available
             container_extension TEXT,
+            channel_number REAL,
             
             -- VOD/Series Specific
             rating REAL,
@@ -83,7 +84,17 @@ function initSchema() {
             ON playlist_items(source_id, type, is_hidden, name COLLATE NOCASE, item_id);
         CREATE INDEX IF NOT EXISTS idx_items_source_type_category_hidden_name
             ON playlist_items(source_id, type, category_id, is_hidden, name COLLATE NOCASE, item_id);
+        CREATE INDEX IF NOT EXISTS idx_items_stream_url
+            ON playlist_items(stream_url)
+            WHERE stream_url IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        );
     `);
+
+    migrateLiveChannelNumbers();
+    migrateStoredM3uMediaUrls();
 
     // EPG Programs
     // Optimized for range queries
@@ -180,6 +191,95 @@ function initSchema() {
     }
 
     console.log('[SQLite] Schema initialized');
+}
+
+function migrateLiveChannelNumbers() {
+    const columns = db.prepare('PRAGMA table_info(playlist_items)').all();
+    if (!columns.some(column => column.name === 'channel_number')) {
+        db.exec('ALTER TABLE playlist_items ADD COLUMN channel_number REAL');
+    }
+
+    const migrationName = 'backfill-live-channel-number-v1';
+    const alreadyApplied = db.prepare(
+        'SELECT 1 FROM schema_migrations WHERE name = ?'
+    ).get(migrationName);
+
+    if (!alreadyApplied) {
+        db.transaction(() => {
+            db.prepare(`
+                UPDATE playlist_items
+                SET channel_number = CASE WHEN json_valid(data) THEN
+                    CASE
+                        WHEN json_type(data, '$.num') IN ('integer', 'real')
+                            THEN json_extract(data, '$.num')
+                        WHEN json_type(data, '$.channel_num') IN ('integer', 'real')
+                            THEN json_extract(data, '$.channel_num')
+                        WHEN json_type(data, '$.tvgChno') IN ('integer', 'real')
+                            THEN json_extract(data, '$.tvgChno')
+                        ELSE channel_number
+                    END
+                ELSE channel_number END
+                WHERE type = 'live'
+                  AND channel_number IS NULL
+            `).run();
+            db.prepare(`
+                INSERT INTO schema_migrations (name, applied_at)
+                VALUES (?, ?)
+            `).run(migrationName, Date.now());
+        })();
+    }
+
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_items_source_type_hidden_channel_order
+            ON playlist_items(
+                source_id,
+                type,
+                is_hidden,
+                (channel_number IS NULL),
+                channel_number,
+                name COLLATE NOCASE,
+                item_id
+            )
+    `);
+}
+
+function migrateStoredM3uMediaUrls() {
+    const migrationName = 'backfill-m3u-stream-url-column-v1';
+    const alreadyApplied = db.prepare(
+        'SELECT 1 FROM schema_migrations WHERE name = ?'
+    ).get(migrationName);
+    if (alreadyApplied) return;
+
+    const applyMigration = db.transaction(() => {
+        const result = db.prepare(`
+            UPDATE playlist_items
+            SET stream_url = CASE
+                WHEN json_type(data, '$.stream_url') = 'text'
+                    THEN json_extract(data, '$.stream_url')
+                WHEN json_type(data, '$.url') = 'text'
+                    THEN json_extract(data, '$.url')
+                ELSE stream_url
+            END
+            WHERE type = 'live'
+              AND (stream_url IS NULL OR stream_url = '')
+              AND CASE
+                    WHEN json_valid(data) THEN
+                        json_type(data, '$.stream_url') = 'text'
+                        OR json_type(data, '$.url') = 'text'
+                    ELSE 0
+                  END
+        `).run();
+        db.prepare(`
+            INSERT INTO schema_migrations (name, applied_at)
+            VALUES (?, ?)
+        `).run(migrationName, Date.now());
+        return result.changes;
+    });
+
+    const backfilled = applyMigration();
+    if (backfilled > 0) {
+        console.log(`[SQLite] Indexed ${backfilled} existing M3U media URLs`);
+    }
 }
 
 // ============================================================

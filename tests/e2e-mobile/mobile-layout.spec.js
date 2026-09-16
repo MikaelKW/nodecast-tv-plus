@@ -197,6 +197,13 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await expectInsideScroller(page, '.shortcuts-grid', '.settings-container');
 
     await page.locator('.tab[data-tab="preferences"]').click();
+    await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
+    await expect(page.locator('#setting-live-tv-order')).toBeDisabled();
+    await expect(page.locator('#flat-list-order-requirement')).toBeVisible();
+    await page.locator('#setting-live-tv-layout').selectOption('flat');
+    await expect(page.locator('#setting-live-tv-order')).toBeEnabled();
+    await page.locator('#live-tv-preferences-form .account-actions').scrollIntoViewIfNeeded();
+    await expectInsideScroller(page, '#live-tv-preferences-form .account-actions', '.settings-container');
     await expect(page.locator('#subtitle-appearance-preview')).toBeVisible();
     const subtitleAppearanceLayout = await page.locator('.subtitle-appearance-settings').evaluate(section => ({
         viewportWidth: window.innerWidth,

@@ -14,6 +14,12 @@ const defaultSubtitlePreferences = {
     mode: 'off',
     appearance: { ...DEFAULT_APPEARANCE }
 };
+const defaultLiveTvPreferences = {
+    layout: 'grouped',
+    order: 'channel-number',
+    autoPlayOnStartup: false,
+    startupChannelMode: 'last-active'
+};
 const savedSubtitlePreferences = {
     language: 'no',
     mode: 'preferred',
@@ -141,6 +147,8 @@ async function run() {
         assert.equal(setup.response.status, 201);
         assert.equal(setup.payload.user.username, 'MobileUser');
         assert.deepEqual(setup.payload.user.subtitlePreferences, defaultSubtitlePreferences);
+        assert.deepEqual(setup.payload.user.liveTvPreferences, defaultLiveTvPreferences);
+        assert.equal(setup.payload.user.lastLiveChannel, null);
         assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
@@ -175,9 +183,48 @@ async function run() {
         assert.equal(subtitlePreferences.response.status, 200);
         assert.deepEqual(subtitlePreferences.payload.subtitlePreferences, savedSubtitlePreferences);
 
+        const liveTvPreferences = await request(server.baseUrl, '/api/auth/me/live-tv-preferences', {
+            method: 'PUT',
+            cookie: adminCookie,
+            body: {
+                layout: 'flat',
+                order: 'alphabetical',
+                autoPlayOnStartup: true,
+                startupChannelMode: 'first-channel',
+                ignored: 'value'
+            }
+        });
+        assert.equal(liveTvPreferences.response.status, 200);
+        assert.deepEqual(liveTvPreferences.payload.liveTvPreferences, {
+            layout: 'flat',
+            order: 'alphabetical',
+            autoPlayOnStartup: true,
+            startupChannelMode: 'first-channel'
+        });
+
+        const invalidLastChannel = await request(server.baseUrl, '/api/auth/me/last-live-channel', {
+            method: 'PUT',
+            cookie: adminCookie,
+            body: { sourceId: 0, itemId: '' }
+        });
+        assert.equal(invalidLastChannel.response.status, 400);
+
+        const lastLiveChannel = await request(server.baseUrl, '/api/auth/me/last-live-channel', {
+            method: 'PUT',
+            cookie: adminCookie,
+            body: { sourceId: 17, itemId: 'remembered-channel' }
+        });
+        assert.equal(lastLiveChannel.response.status, 200);
+        assert.deepEqual(lastLiveChannel.payload.lastLiveChannel, {
+            sourceId: 17,
+            itemId: 'remembered-channel'
+        });
+
         const currentUser = await request(server.baseUrl, '/api/auth/me', { cookie: adminCookie });
         assert.equal(currentUser.response.status, 200);
         assert.deepEqual(currentUser.payload.subtitlePreferences, savedSubtitlePreferences);
+        assert.deepEqual(currentUser.payload.liveTvPreferences, liveTvPreferences.payload.liveTvPreferences);
+        assert.deepEqual(currentUser.payload.lastLiveChannel, lastLiveChannel.payload.lastLiveChannel);
 
         const duplicate = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',
