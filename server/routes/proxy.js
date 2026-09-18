@@ -738,7 +738,9 @@ router.get('/stream', async (req, res) => {
                 const publicProxyPath = withBasePath(`${req.baseUrl}/stream`, requestBasePath(req));
                 const buildProxyUrl = targetUrl => {
                     const signature = signMediaUrl(targetUrl);
-                    return `${req.protocol}://${req.get('host')}${publicProxyPath}`
+                    // Root-relative URL: the scheme is inherited from the manifest request,
+                    // so HTTPS deployments never emit http:// segment URLs (mixed content).
+                    return `${publicProxyPath}`
                         + `?url=${encodeURIComponent(targetUrl)}`
                         + `&token=${encodeURIComponent(signature.token)}`
                         + `&expires=${signature.expiresAt}`;
