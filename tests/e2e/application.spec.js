@@ -1880,15 +1880,17 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const watch = window.app.pages.watch;
         watch.video.currentTime = 2 + watch.subtitleMediaTimeOffset;
     });
+    const overlappingSubtitleTexts = [
+        '[Controlled background sound]',
+        'First controlled speaker\nSecond controlled speaker'
+    ];
     await expect.poll(() => page.evaluate(() => ({
-        hiddenTrackActive: Array.from(window.app.pages.watch.video.textTracks).some(track => (
-            track.mode === 'hidden' && Array.from(track.activeCues || []).some(cue => (
-                cue.text.includes('[Controlled background sound]')
-            ))
-        )),
+        activeText: Array.from(window.app.pages.watch.video.textTracks)
+            .filter(track => track.mode === 'hidden')
+            .flatMap(track => Array.from(track.activeCues || [], cue => cue.text)),
         overlayText: window.app.pages.watch.subtitleStack.textContent
     })), { timeout: 10_000 }).toMatchObject({
-        hiddenTrackActive: true,
+        activeText: expect.arrayContaining(overlappingSubtitleTexts),
         overlayText: expect.stringContaining('[Controlled background sound]')
     });
     const stableSubtitleCues = await page.evaluate(() => {
@@ -1898,14 +1900,16 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const track = trackElement.track;
         const originalCues = Array.from(track.cues || []);
         watch.activateProbeSubtitleTrack(trackElement);
-        const activeText = Array.from(track.activeCues || []).map(cue => cue.text);
+        // Playback can advance past the short overlapping cues after the poll.
+        // Verify the preserved cue set without depending on the current time.
+        const cueText = Array.from(track.cues || []).map(cue => cue.text);
         return {
             originalCount: originalCues.length,
             repeatedCount: track.cues?.length || 0,
             preservedObjects: originalCues.every((cue, index) => track.cues[index] === cue),
             timelineOffset: watch.subtitleMediaTimeOffset,
             timelineResolved: watch.subtitleMediaTimeOffsetResolved,
-            activeText
+            cueText
         };
     });
     expect(stableSubtitleCues.originalCount).toBeGreaterThanOrEqual(3);
@@ -1914,8 +1918,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(stableSubtitleCues.timelineResolved).toBe(true);
     expect(stableSubtitleCues.timelineOffset).toBeGreaterThan(0);
     expect(stableSubtitleCues.timelineOffset).toBeLessThan(3);
-    expect(stableSubtitleCues.activeText).toContain('[Controlled background sound]');
-    expect(stableSubtitleCues.activeText).toContain('First controlled speaker\nSecond controlled speaker');
+    expect(stableSubtitleCues.cueText).toEqual(expect.arrayContaining(overlappingSubtitleTexts));
 
     // Chromium may clear a hidden TextTrack's native cues while replacing an
     // HLS media timeline. NodeCast must reconcile that browser-owned state
