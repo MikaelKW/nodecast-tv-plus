@@ -68,8 +68,11 @@ test('the application remains inside its configured reverse-proxy path', async (
         .map(line => line.trim())
         .filter(line => line && !line.startsWith('#'));
     expect(mediaUrls.length).toBeGreaterThan(0);
+    // Playlist URLs are rewritten as root-relative paths that must stay inside
+    // the configured reverse-proxy path; the browser resolves them against the
+    // manifest URL, so segment requests remain on this origin under /nodecast/.
     expect(mediaUrls.every(url => (
-        url.startsWith('http://127.0.0.1:3212/nodecast/api/proxy/stream?url=')
+        url.startsWith('/nodecast/api/proxy/stream?url=')
     ))).toBe(true);
 
     await page.locator('.nav-link[data-page="settings"]').click();
