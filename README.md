@@ -285,7 +285,7 @@ The backend trusts `X-Forwarded-*` headers from loopback and private-network pro
 APP_ORIGIN=https://tv.example.com
 ```
 
-`APP_ORIGIN` fixes the same-origin check for local sign-in. HLS playlists rewritten by the backend proxy use root-relative URLs, so stream requests inherit the page scheme and work over HTTP and HTTPS alike. For advanced topologies, `TRUST_PROXY` overrides which proxy hops are trusted and accepts an Express `trust proxy` value: `true`, `false`, a hop count, or a comma-separated subnet list.
+`APP_ORIGIN` fixes the same-origin check for local sign-in. HLS playlists rewritten by the backend proxy use root-relative URLs, so stream requests inherit the page scheme and work over HTTP and HTTPS alike. For advanced topologies, `TRUST_PROXY` overrides which proxy hops are trusted: `false` disables header trust, a number from 0 to 10 sets the maximum proxy hop count, and a comma-separated subnet list names trusted hops explicitly. The value `true` is rejected and falls back to the default private-network list.
 
 When publishing at a subpath such as `https://tv.example.com/nodecast/`:
 
