@@ -217,6 +217,7 @@ The quick-start command generates all three values securely.
 | `NODE_ENV` | Not set | Set to `production` to make startup fail when `JWT_SECRET` or `SESSION_SECRET` is missing or weak instead of using temporary development secrets. Recommended as an additional production safeguard. |
 | `APP_ORIGIN` | Automatic | Public origin, such as `https://tv.example.com`, when automatic reverse-proxy detection is unsuitable. |
 | `AUTH_COOKIE_SECURE` | Automatic | Force secure cookies with `true`, or disable them with `false`. Normally leave unset. |
+| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Express `trust proxy` setting: which proxy hops may set `X-Forwarded-*` headers. |
 | `TZ` | `Etc/UTC` | Container time zone using an IANA name such as `Europe/Oslo`. |
 | `NODECAST_BASE_PATH` | Empty | Public subpath when hosting below a path, for example `/nodecast`. |
 | `NODECAST_INSTANCE_ID` | Automatic | Distinguishes cloned installations that share a hostname. Ordinary installations do not need this. |
@@ -274,6 +275,17 @@ For unusual providers without discovery, `OIDC_AUTH_URL`, `OIDC_TOKEN_URL`, and 
 <summary><strong>Reverse proxy and subpath notes</strong></summary>
 
 Forward the original host and protocol, allow streaming responses, and disable proxy buffering. For HTTPS deployments, enabling **Force Backend Proxy** under **Settings > Transcoding** can resolve mixed-content or provider CORS restrictions.
+
+The backend trusts `X-Forwarded-*` headers from loopback and private-network proxies. When TLS terminates further upstream — for example, a CDN or tunnel that connects to the container over plain HTTP from a public address — the backend may still treat requests as HTTP. Typical symptoms are `Cross-site request blocked` during local sign-in and `http://` stream URLs on an `https://` page, which browsers block as mixed content.
+
+- Route through at least one proxy hop on a private address that forwards the original scheme (`X-Forwarded-Proto: https`), or
+- Pin the public origin in `.env`:
+
+```env
+APP_ORIGIN=https://tv.example.com
+```
+
+`APP_ORIGIN` fixes the same-origin check for local sign-in. HLS playlists rewritten by the backend proxy use root-relative URLs, so stream requests inherit the page scheme and work over HTTP and HTTPS alike. For advanced topologies, `TRUST_PROXY` overrides which proxy hops are trusted: `false` disables header trust, a number from 0 to 10 sets the maximum proxy hop count, and a comma-separated subnet list names trusted hops explicitly. The value `true` is rejected and falls back to the default private-network list.
 
 When publishing at a subpath such as `https://tv.example.com/nodecast/`:
 
