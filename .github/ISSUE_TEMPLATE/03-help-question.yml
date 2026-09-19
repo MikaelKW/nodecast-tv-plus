@@ -1,0 +1,50 @@
+name: Help / question
+description: Ask about setup, configuration, or using the application.
+title: "[QUESTION] "
+labels: [question, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [README](https://github.com/MikaelKW/nodecast-tv-plus#readme) and existing issues first. Use a short, descriptive issue title. If something is clearly broken, use the bug-report form instead.
+
+        **This question will be public.** Never post credentials, tokens, cookies, provider/playlist URLs, private configuration, personal information, or private media. Check all attachments before sharing.
+
+        Report suspected vulnerabilities through [private security reporting](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/new), not this form.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the README and searched existing issues for an answer.
+          required: true
+        - label: I checked my question and attachments for sensitive information.
+          required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like help with, and what are you trying to achieve?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Relevant environment
+      description: Include the application version or exact image tag, deployment method, and browser/device/OS where relevant. For a general question, write Not applicable. Do not paste your configuration or private addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Mention relevant documentation, settings, or troubleshooting steps. If nothing yet, explain where you are unsure how to proceed.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context (optional)
+      description: Relevant redacted excerpts or screenshots only. Remove sensitive information and private media before sharing.
+    validations:
+      required: false
