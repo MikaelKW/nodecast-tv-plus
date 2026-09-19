@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest an improvement and explain the use case.
+title: "[FEAT] "
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the outcome you would like, even if you do not know how it should be implemented. Use a short, descriptive issue title.
+
+        **This request will be public.** Do not share credentials, tokens, cookies, provider/playlist URLs, private configuration, personal information, or private media in text or attachments.
+
+        Report suspected vulnerabilities through [private security reporting](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/new), not this form.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same request.
+          required: true
+        - label: I checked my request and attachments for sensitive information.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to achieve, and what is difficult or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the behavior or outcome you would like.
+    validations:
+      required: true
+  - type: textarea
+    id: benefit
+    attributes:
+      label: Who would benefit?
+      description: Explain when this would be useful and for whom, including your own workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds (optional)
+      description: Describe other approaches you have considered or currently use.
+    validations:
+      required: false
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or additional context (optional)
+      description: Add relevant examples or sanitized mockups/screenshots. Do not attach private media or sensitive information.
+    validations:
+      required: false
