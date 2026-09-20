@@ -1,0 +1,89 @@
+name: Bug report
+description: Report something that is not working as expected.
+title: "[BUG] "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve NodeCast TV Plus. Use a short, descriptive issue title.
+
+        **This report will be public.** Do not include passwords, tokens, cookies, provider/playlist URLs, private configuration, personal information, or private media. Check logs and screenshots before attaching them.
+
+        **Suspected vulnerability?** Use [private security reporting](https://github.com/MikaelKW/nodecast-tv-plus/security/advisories/new), not this form.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I checked my report and attachments for sensitive information.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Application version or exact image tag
+      description: Find the version in Settings > About. If using a development image, include its sha tag. If unavailable, explain why; latest alone does not identify a version.
+      placeholder: "Example: 2.6.1, or sha-abcdef1"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker / Docker Compose
+        - Node.js / source checkout
+        - Other (describe below)
+        - Unknown (describe what you know below)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Relevant browser, device, and operating system
+      description: Include browser/version and device/OS for interface or playback problems; server OS for server problems. Write Not applicable if unrelated. Describe Other deployment methods here.
+      placeholder: "Example: Firefox on Windows 11; Docker on Ubuntu; or Not applicable"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Problem and actual behavior
+      description: What went wrong? Include any non-sensitive error message and how often it happens.
+      placeholder: Describe what you observed.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps or circumstances
+      description: Give the steps that trigger the problem. If intermittent or not reliably reproducible, describe what happened beforehand and say so.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: playback
+    attributes:
+      label: Playback details (optional)
+      description: Only for playback problems. If known, include M3U/Xtream, Live TV/Movie/Series, displayed playback mode, codecs, and whether another player works. Mention relevant settings already tried; no need to change unrelated settings. Never include provider URLs or credentials.
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs, screenshots, or additional context (optional)
+      description: Share only the relevant excerpt, not an entire log or configuration dump. Remove secrets, provider URLs, personal information, and private media. Mention workarounds or relevant proxy topology without private addresses.
+    validations:
+      required: false
