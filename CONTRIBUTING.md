@@ -8,6 +8,8 @@ Thanks for helping improve NodeCast TV Plus. This guide explains how to propose 
 - Report suspected security vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Do not disclose them in a public issue or pull request.
 - Never include credentials, tokens, `.env` files, private configuration, private provider URLs, personal data, databases, logs containing sensitive data, or private video files in a contribution.
 
+Use the [issue forms](https://github.com/MikaelKW/nodecast-tv-plus/issues/new/choose) for bug reports, feature requests, or help. Required fields provide the minimum context; logs and screenshots are optional and must be checked for sensitive information. Maintainers can refer to the [issue triage and label guide](docs/ISSUE_TRIAGE.md).
+
 ## Create a pull request
 
 1. Fork the repository if needed, and create a descriptive branch from the latest `develop` branch. Branch names such as `fix/short-description`, `feat/short-description`, and `docs/short-description` work well.
