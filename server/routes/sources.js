@@ -190,6 +190,7 @@ router.delete('/:id', auth.requireAdmin, limitSourceDeletion, async (req, res) =
         }
 
         // Cascade delete: Clean up SQLite data for this source
+        syncService.invalidateEpgSource(sourceId);
         const db = getDb();
         const deleteCategories = db.prepare('DELETE FROM categories WHERE source_id = ?');
         const deleteItems = db.prepare('DELETE FROM playlist_items WHERE source_id = ?');
