@@ -118,9 +118,14 @@ function parse(input) {
         let textBuffer = '';
         let currentProgrammeHasValidTimestamps = true;
         let skippedProgrammes = 0;
+        let parseError = null;
+        let sawTvRoot = false;
+        let closedTvRoot = false;
 
         saxStream.on('error', function (e) {
-            // clear the error
+            parseError ||= e;
+            // Let the stream drain so callers receive one deterministic
+            // rejection after parsing stops instead of a partially parsed feed.
             this._parser.error = null;
             this._parser.resume();
             console.warn('XML Parse Warning:', e.message);
@@ -129,6 +134,10 @@ function parse(input) {
         saxStream.on('opentag', function (node) {
             currentTag = node.name;
             const attr = node.attributes;
+
+            if (String(currentTag).toLowerCase() === 'tv') {
+                sawTvRoot = true;
+            }
 
             if (currentTag === 'channel') {
                 currentObject = {
@@ -170,6 +179,10 @@ function parse(input) {
         });
 
         saxStream.on('closetag', function (tagName) {
+            if (String(tagName).toLowerCase() === 'tv') {
+                closedTvRoot = true;
+            }
+
             if (tagName === 'channel') {
                 if (currentObject) channels.push(currentObject);
                 currentObject = null;
@@ -214,16 +227,21 @@ function parse(input) {
         });
 
         saxStream.on('end', function () {
+            if (parseError) {
+                reject(new Error(`Invalid XMLTV document: ${parseError.message}`));
+                return;
+            }
+            if (!sawTvRoot || !closedTvRoot) {
+                reject(new Error('Invalid XMLTV document: missing complete <tv> root element'));
+                return;
+            }
             resolve({ channels, programmes, skippedProgrammes });
         });
 
         // Handle input type
-        if (typeof input === 'string') {
-            const inputStream = Readable.from([input]);
-            inputStream.pipe(saxStream);
-        } else {
-            input.pipe(saxStream);
-        }
+        const inputStream = typeof input === 'string' ? Readable.from([input]) : input;
+        inputStream.once('error', reject);
+        inputStream.pipe(saxStream);
     });
 }
 
@@ -358,8 +376,11 @@ async function* parseStreaming(input, batchSize = 1000) {
     let error = null;
     let currentProgrammeHasValidTimestamps = true;
     let skippedProgrammes = 0;
+    let sawTvRoot = false;
+    let closedTvRoot = false;
 
     saxStream.on('error', function (e) {
+        error ||= new Error(`Invalid XMLTV document: ${e.message}`);
         this._parser.error = null;
         this._parser.resume();
         console.warn('XML Parse Warning:', e.message);
@@ -368,6 +389,10 @@ async function* parseStreaming(input, batchSize = 1000) {
     saxStream.on('opentag', function (node) {
         currentTag = node.name;
         const attr = node.attributes;
+
+        if (String(currentTag).toLowerCase() === 'tv') {
+            sawTvRoot = true;
+        }
 
         if (currentTag === 'channel') {
             currentObject = {
@@ -409,6 +434,10 @@ async function* parseStreaming(input, batchSize = 1000) {
     });
 
     saxStream.on('closetag', function (tagName) {
+        if (String(tagName).toLowerCase() === 'tv') {
+            closedTvRoot = true;
+        }
+
         if (tagName === 'channel') {
             if (currentObject) channels.push(currentObject);
             currentObject = null;
@@ -471,6 +500,19 @@ async function* parseStreaming(input, batchSize = 1000) {
 
     saxStream.on('end', function () {
         ended = true;
+        if (!sawTvRoot || !closedTvRoot) {
+            error ||= new Error('Invalid XMLTV document: missing complete <tv> root element');
+        }
+
+        if (error) {
+            pendingBatch = null;
+            if (resolveNext) {
+                resolveNext(null);
+                resolveNext = null;
+            }
+            return;
+        }
+
         // Yield final batch
         const batch = {
             channels: !channelsYielded ? channels : null,
@@ -486,10 +528,13 @@ async function* parseStreaming(input, batchSize = 1000) {
         }
     });
 
-    saxStream.on('error', function (e) {
-        error = e;
+    input.once('error', function (e) {
+        error ||= e;
+        ended = true;
+        pendingBatch = null;
         if (resolveNext) {
             resolveNext(null);
+            resolveNext = null;
         }
     });
 
