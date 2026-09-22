@@ -277,7 +277,10 @@ async function run() {
         assert.match(manifest, /[?&]token=/);
         assert.match(manifest, /[?&]expires=/);
         const segmentProxyUrl = manifest.split('\n').find(line => line.includes('segment.ts'));
-        const segmentResponse = await fetch(segmentProxyUrl, { headers: { Cookie: cookie } });
+        // Rewritten manifest URLs must stay root-relative so the browser inherits
+        // the page scheme (HTTPS deployments never emit http:// segment URLs).
+        assert.ok(segmentProxyUrl.startsWith('/api/proxy/stream?url='));
+        const segmentResponse = await fetch(`${appBaseUrl}${segmentProxyUrl}`, { headers: { Cookie: cookie } });
         assert.equal(segmentResponse.status, 200);
         assert.equal(await segmentResponse.text(), 'controlled-media');
 
