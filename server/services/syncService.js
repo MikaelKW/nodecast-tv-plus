@@ -1,5 +1,6 @@
 const { getDb, catalogueRevisions } = require('../db/sqlite');
 const { sources, settings } = require('../db'); // For source config and settings
+const { randomUUID } = require('node:crypto');
 const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
 const epgParser = require('./epgParser');
@@ -7,6 +8,8 @@ const { redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 
 // Sync tracking
 const activeSyncs = new Set(); // sourceId
+const activeEpgSyncs = new Set(); // sourceId
+const epgSourceGenerations = new Map(); // sourceId -> deletion invalidation generation
 
 function normalizeChannelNumber(value) {
     if (value === null || value === undefined || String(value).trim() === '') return null;
@@ -26,6 +29,15 @@ class SyncService {
      */
     getLastSyncTime() {
         return this.lastSyncTime;
+    }
+
+    /**
+     * Prevent a running EPG refresh from activating data after source deletion.
+     */
+    invalidateEpgSource(sourceId) {
+        const sourceKey = String(sourceId);
+        const generation = epgSourceGenerations.get(sourceKey) || 0;
+        epgSourceGenerations.set(sourceKey, generation + 1);
     }
 
     /**
@@ -426,6 +438,17 @@ class SyncService {
         url = validateHttpUrl(url, 'EPG URL');
         console.log(`[Sync] Fetching EPG from: ${redactUrl(url)}`);
 
+        const sourceKey = String(sourceId);
+        if (activeEpgSyncs.has(sourceKey)) {
+            throw new Error(`EPG refresh already in progress for source ${sourceId}`);
+        }
+        activeEpgSyncs.add(sourceKey);
+        const sourceGeneration = epgSourceGenerations.get(sourceKey) || 0;
+        let cleanupRun = null;
+        let refreshError = null;
+
+        try {
+
         // Temporary memory logging for verification
         const logMemory = () => {
             const used = process.memoryUsage();
@@ -435,111 +458,193 @@ class SyncService {
         logMemory();
 
         const db = getDb();
-        let allChannels = [];
+        const runId = randomUUID();
+        let totalChannels = 0;
         let totalProgrammes = 0;
         let skippedProgrammes = 0;
         let batchCount = 0;
+        let sawFinalBatch = false;
 
-        // Clear old programmes first
-        db.prepare('DELETE FROM epg_programs WHERE source_id = ?').run(sourceId);
+        db.exec(`
+            CREATE TEMP TABLE IF NOT EXISTS epg_programs_staging (
+                run_id TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                channel_id TEXT NOT NULL,
+                start_time INTEGER NOT NULL,
+                end_time INTEGER NOT NULL,
+                title TEXT,
+                description TEXT,
+                data JSON
+            );
+            CREATE INDEX IF NOT EXISTS temp.idx_epg_programs_staging_run
+                ON epg_programs_staging(run_id, source_id);
 
-        const programmeStmt = db.prepare(`
-            INSERT INTO epg_programs (channel_id, source_id, start_time, end_time, title, description, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            CREATE TEMP TABLE IF NOT EXISTS epg_channels_staging (
+                run_id TEXT NOT NULL,
+                source_id INTEGER NOT NULL,
+                id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                name TEXT,
+                stream_icon TEXT,
+                data JSON,
+                PRIMARY KEY (run_id, id)
+            );
         `);
 
-        const insertProgrammes = db.transaction((progs) => {
-            for (const p of progs) {
+        const deleteStagedProgrammes = db.prepare(
+            'DELETE FROM temp.epg_programs_staging WHERE run_id = ?'
+        );
+        const deleteStagedChannels = db.prepare(
+            'DELETE FROM temp.epg_channels_staging WHERE run_id = ?'
+        );
+        cleanupRun = () => {
+            deleteStagedProgrammes.run(runId);
+            deleteStagedChannels.run(runId);
+        };
+
+        // A prior interrupted attempt in this process must never be reused.
+        db.prepare('DELETE FROM temp.epg_programs_staging WHERE source_id = ?').run(sourceId);
+        db.prepare('DELETE FROM temp.epg_channels_staging WHERE source_id = ?').run(sourceId);
+
+        const programmeStmt = db.prepare(`
+            INSERT INTO temp.epg_programs_staging (
+                run_id, source_id, channel_id, start_time, end_time, title, description, data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const channelStmt = db.prepare(`
+            INSERT INTO temp.epg_channels_staging (
+                run_id, source_id, id, item_id, name, stream_icon, data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, id) DO UPDATE SET
+                item_id = excluded.item_id,
+                name = excluded.name,
+                stream_icon = excluded.stream_icon,
+                data = excluded.data
+        `);
+
+        const stageProgrammes = db.transaction((programmes) => {
+            for (const programme of programmes) {
                 programmeStmt.run(
-                    p.channelId,
+                    runId,
                     sourceId,
-                    p.start ? p.start.getTime() : 0,
-                    p.stop ? p.stop.getTime() : 0,
-                    p.title,
-                    p.description || p.desc,
-                    JSON.stringify(p)
+                    programme.channelId,
+                    programme.start ? programme.start.getTime() : 0,
+                    programme.stop ? programme.stop.getTime() : 0,
+                    programme.title,
+                    programme.description || programme.desc,
+                    JSON.stringify(programme)
+                );
+            }
+        });
+        const stageChannels = db.transaction((channels) => {
+            for (const channel of channels) {
+                // EPG channel IDs often overlap Xtream stream IDs. Keep the
+                // staged row in the same dedicated namespace as the active row.
+                const id = `${sourceId}:epg_channel:${channel.id}`;
+                channelStmt.run(
+                    runId,
+                    sourceId,
+                    id,
+                    channel.id,
+                    channel.name,
+                    channel.icon || null,
+                    JSON.stringify(channel)
                 );
             }
         });
 
-        // Stream and process in batches (default 1000 programmes per batch)
-        for await (const batch of epgParser.fetchAndParseStreaming(url)) {
-            batchCount++;
-            skippedProgrammes += batch.skippedProgrammes || 0;
+        const activateStagedGuide = db.transaction(() => {
+            db.prepare('DELETE FROM epg_programs WHERE source_id = ?').run(sourceId);
+            db.prepare(`
+                INSERT INTO epg_programs (
+                    channel_id, source_id, start_time, end_time, title, description, data
+                )
+                SELECT channel_id, source_id, start_time, end_time, title, description, data
+                FROM temp.epg_programs_staging
+                WHERE run_id = ? AND source_id = ?
+            `).run(runId, sourceId);
 
-            // Collect channels from first batch
-            if (batch.channels) {
-                allChannels = batch.channels;
-            }
-
-            // Save this batch of programmes immediately
-            if (batch.programmes.length > 0) {
-                insertProgrammes(batch.programmes);
-                totalProgrammes += batch.programmes.length;
-            }
-
-            // Log progress every 10 batches
-            if (batchCount % 10 === 0) {
-                console.log(`[Sync] Processed ${totalProgrammes} programmes so far...`);
-                logMemory();
-            }
-
-            // Yield to event loop
-            await new Promise(resolve => setImmediate(resolve));
-        }
-
-        console.log(`[Sync] EPG Parsed: ${allChannels.length} channels, ${totalProgrammes} programmes`);
-        if (skippedProgrammes > 0) {
-            console.warn(`[Sync] Skipped ${skippedProgrammes} programme entries with invalid XMLTV timestamps`);
-        }
-        logMemory();
-
-        // Save EPG Channels
-        if (allChannels.length > 0) {
-            const deleteChannels = db.prepare(`
+            db.prepare(`
                 DELETE FROM playlist_items
                 WHERE source_id = ? AND type = 'epg_channel'
-            `);
-            const channelStmt = db.prepare(`
+            `).run(sourceId);
+            db.prepare(`
                 INSERT INTO playlist_items (
-                    id, source_id, item_id, type, name, stream_icon, 
+                    id, source_id, item_id, type, name, stream_icon,
                     stream_url, category_id, data
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    stream_icon = excluded.stream_icon,
-                    data = excluded.data
-            `);
+                SELECT id, source_id, item_id, 'epg_channel', name, stream_icon,
+                       NULL, NULL, data
+                FROM temp.epg_channels_staging
+                WHERE run_id = ? AND source_id = ?
+            `).run(runId, sourceId);
 
-            const insertChannels = db.transaction((chanList) => {
-                // EPG channel IDs often overlap Xtream stream IDs (for example,
-                // EPG channel "10" and live stream 10). Keep EPG rows in their
-                // own ID namespace so their names and logos cannot overwrite
-                // playable items that share the same provider identifier.
-                deleteChannels.run(sourceId);
+            cleanupRun();
+        });
 
-                for (const ch of chanList) {
-                    const id = `${sourceId}:epg_channel:${ch.id}`;
-                    channelStmt.run(
-                        id,
-                        sourceId,
-                        ch.id,
-                        'epg_channel',
-                        ch.name,
-                        ch.icon || null,
-                        null,
-                        null,
-                        JSON.stringify(ch)
-                    );
+            const sourceAtStart = await sources.getById(sourceId);
+
+            // Stream into isolated staging tables. The active guide remains
+            // readable throughout download and parsing.
+            for await (const batch of epgParser.fetchAndParseStreaming(url)) {
+                batchCount++;
+                skippedProgrammes += batch.skippedProgrammes || 0;
+
+                if (batch.channels !== null && batch.channels !== undefined) {
+                    stageChannels(batch.channels);
+                    totalChannels += batch.channels.length;
                 }
-            });
 
-            insertChannels(allChannels);
-            console.log(`[Sync] Saved ${allChannels.length} EPG channels`);
+                if (batch.programmes.length > 0) {
+                    stageProgrammes(batch.programmes);
+                    totalProgrammes += batch.programmes.length;
+                }
+
+                if (batch.isLast) sawFinalBatch = true;
+
+                if (batchCount % 10 === 0) {
+                    console.log(`[Sync] Staged ${totalProgrammes} programmes so far...`);
+                    logMemory();
+                }
+
+                // Keep requests responsive between SQLite batches.
+                await new Promise(resolve => setImmediate(resolve));
+            }
+
+            if (!sawFinalBatch) {
+                throw new Error('EPG refresh ended before the XMLTV document completed');
+            }
+
+            // If a real configured source disappeared while its download was
+            // running, do not recreate any of its guide data.
+            const sourceWasInvalidated = (epgSourceGenerations.get(sourceKey) || 0) !== sourceGeneration;
+            if (sourceWasInvalidated || (sourceAtStart && !await sources.getById(sourceId))) {
+                throw new Error(`EPG source ${sourceId} was removed during refresh`);
+            }
+
+            console.log(`[Sync] EPG Parsed: ${totalChannels} channels, ${totalProgrammes} programmes`);
+            if (skippedProgrammes > 0) {
+                console.warn(`[Sync] Skipped ${skippedProgrammes} programme entries with invalid XMLTV timestamps`);
+            }
+            logMemory();
+
+            // One short transaction makes programmes and channel mapping
+            // visible together. A valid empty feed intentionally clears both.
+            activateStagedGuide();
+            console.log(`[Sync] Activated ${totalChannels} EPG channels and ${totalProgrammes} programmes`);
+        } catch (error) {
+            refreshError = error;
+            throw error;
+        } finally {
+            try {
+                if (cleanupRun) cleanupRun();
+            } catch (cleanupError) {
+                console.warn('[Sync] Failed to clean EPG staging data:', redactText(cleanupError.message));
+                if (!refreshError) throw cleanupError;
+            } finally {
+                activeEpgSyncs.delete(sourceKey);
+            }
         }
-
-        console.log(`[Sync] Saved ${totalProgrammes} programmes`);
     }
 
     /**

@@ -4,6 +4,26 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.6.2] - 2026-09-20
+
+This release improves TV Guide refresh safety, proxied HLS compatibility, and current dependency maintenance.
+
+### Changed
+
+- Refresh compatible runtime compression and browser-test dependencies while retaining the existing supported runtime and protected validation paths ([#412]).
+
+### Fixed
+
+- Keep proxied HLS playlist URLs root-relative so playback inherits the browser-facing scheme and configured base path, including HTTPS deployments whose proxy or CDN connects to the application over plain HTTP ([#413]). (@smyrnode)
+- Preserve the last complete TV Guide while downloading, parsing, and staging a replacement. Malformed or interrupted XMLTV refreshes now fail without erasing active guide data, while a valid empty feed remains an intentional clear ([#425]).
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.6.1. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. EPG replacement staging is temporary and does not add a persistent schema migration. The release migration gate covers supported upstream v2.1.1 and 2.1.4 baselines and the published Plus v2.6.1 image.
+- Reverse-proxy deployments must still configure `APP_ORIGIN` and `TRUST_PROXY` appropriately for their topology; the playlist correction prevents generated media URLs from forcing the wrong browser-facing scheme.
+- To roll back, restore the pre-upgrade data backup and recreate the container with 2.6.1 and the original deployment secrets.
+
 ## [2.6.1] - 2026-09-13
 
 This release improves Live TV navigation, cross-host M3U playback, quality transitions, large-catalogue browsing options, startup playback, and current dependency and workflow maintenance.
@@ -432,6 +452,7 @@ Inherited work after upstream `v2.1.1` included:
 
 For older published history, see the [upstream NodeCast TV releases](https://github.com/technomancer702/nodecast-tv/releases).
 
+[2.6.2]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.4...v2.6.0
 [2.5.4]: https://github.com/MikaelKW/nodecast-tv-plus/compare/v2.5.3...v2.5.4
@@ -543,3 +564,6 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#397]: https://github.com/MikaelKW/nodecast-tv-plus/pull/397
 [#399]: https://github.com/MikaelKW/nodecast-tv-plus/pull/399
 [#401]: https://github.com/MikaelKW/nodecast-tv-plus/pull/401
+[#412]: https://github.com/MikaelKW/nodecast-tv-plus/pull/412
+[#413]: https://github.com/MikaelKW/nodecast-tv-plus/pull/413
+[#425]: https://github.com/MikaelKW/nodecast-tv-plus/issues/425
