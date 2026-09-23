@@ -199,27 +199,39 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
         .evaluate(heading => heading.getBoundingClientRect().bottom);
     await page.locator('#diagnostics-tab').click();
     await settings.evaluate(element => { element.scrollTop = 0; });
-    const diagnosticsHeadingTop = await page.locator('#tab-diagnostics .section-header h3')
+    const diagnosticsHeadingTop = await page.locator('#tab-diagnostics > .settings-section:first-child > h3')
         .evaluate(heading => heading.getBoundingClientRect().top);
-    const diagnosticsDividerBottom = await page.locator('#tab-diagnostics .section-header h3')
+    const diagnosticsDividerBottom = await page.locator('#tab-diagnostics > .settings-section:first-child > h3')
         .evaluate(heading => heading.getBoundingClientRect().bottom);
     expect(Math.abs(diagnosticsHeadingTop - interfaceHeadingTop)).toBeLessThanOrEqual(1);
     expect(Math.abs(diagnosticsDividerBottom - interfaceDividerBottom)).toBeLessThanOrEqual(1);
     await expect(page.locator('#diagnostics-content')).toContainText('Source synchronization');
     const diagnosticsIntroGap = await page.locator('#tab-diagnostics').evaluate(tab => {
-        const header = tab.querySelector('.section-header');
-        const intro = tab.querySelector('.section-header + .hint');
+        const header = tab.querySelector('.settings-section > h3');
+        const intro = tab.querySelector('.settings-section > h3 + .hint');
         return intro.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     expect(diagnosticsIntroGap).toBeGreaterThanOrEqual(8);
     expect(diagnosticsIntroGap).toBeLessThanOrEqual(20);
     const diagnosticsStatusGap = await page.locator('#tab-diagnostics').evaluate(tab => {
-        const intro = tab.querySelector('.section-header + .hint');
+        const intro = tab.querySelector('.settings-section > h3 + .hint');
         const status = tab.querySelector('#diagnostics-status');
         return status.getBoundingClientRect().top - intro.getBoundingClientRect().bottom;
     });
     expect(diagnosticsStatusGap).toBeGreaterThanOrEqual(12);
     expect(diagnosticsStatusGap).toBeLessThanOrEqual(20);
+    const diagnosticsRefreshLayout = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const intro = tab.querySelector('.settings-section > h3 + .hint').getBoundingClientRect();
+        const status = tab.querySelector('#diagnostics-status').getBoundingClientRect();
+        const button = tab.querySelector('#diagnostics-refresh').getBoundingClientRect();
+        const card = tab.querySelector('.diagnostics-card').getBoundingClientRect();
+        const overlapsStatus = Math.max(status.left, button.left) < Math.min(status.right, button.right)
+            && Math.max(status.top, button.top) < Math.min(status.bottom, button.bottom);
+        return { introBottom: intro.bottom, buttonTop: button.top, buttonBottom: button.bottom, cardTop: card.top, overlapsStatus };
+    });
+    expect(diagnosticsRefreshLayout.buttonTop).toBeGreaterThanOrEqual(diagnosticsRefreshLayout.introBottom + 8);
+    expect(diagnosticsRefreshLayout.cardTop).toBeGreaterThanOrEqual(diagnosticsRefreshLayout.buttonBottom + 8);
+    expect(diagnosticsRefreshLayout.overlapsStatus).toBe(false);
     const diagnosticsLayout = await page.locator('.diagnostics-content').evaluate(section => ({
         viewportWidth: window.innerWidth,
         left: section.getBoundingClientRect().left,
