@@ -87,6 +87,7 @@ async function run() {
     await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
     const fixturePort = fixture.address().port;
     const baseUrl = `http://127.0.0.1:${port}`;
+    const revision = crypto.randomBytes(20).toString('hex');
     let output = '';
     const child = spawn(process.execPath, ['server/index.js'], {
         cwd: path.join(__dirname, '..'),
@@ -98,6 +99,7 @@ async function run() {
             NODECAST_DISABLE_BACKGROUND_JOBS: 'true',
             ALLOW_LOCAL_MEDIA_URLS: 'true',
             PORT: String(port),
+            NODECAST_REVISION: revision,
             JWT_SECRET: crypto.randomBytes(48).toString('hex'),
             SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
             OIDC_ISSUER_URL: '',
@@ -115,6 +117,8 @@ async function run() {
         await waitFor(async () => (await fetch(`${baseUrl}/api/health`)).ok, 'application readiness');
         const unauthenticated = await fetch(`${baseUrl}/api/diagnostics/events`);
         assert.equal(unauthenticated.status, 401);
+        const unauthenticatedSummary = await fetch(`${baseUrl}/api/diagnostics/summary`);
+        assert.equal(unauthenticatedSummary.status, 401);
 
         const adminPassword = crypto.randomBytes(24).toString('base64url');
         const setup = await fetch(`${baseUrl}/api/auth/setup`, {
@@ -151,6 +155,10 @@ async function run() {
             headers: { Cookie: viewerCookie }
         });
         assert.equal(viewer.status, 403);
+        const viewerSummary = await fetch(`${baseUrl}/api/diagnostics/summary`, {
+            headers: { Cookie: viewerCookie }
+        });
+        assert.equal(viewerSummary.status, 403);
 
         const sourceUrl = `http://127.0.0.1:${fixturePort}/playlist.m3u?token=${privateMarker}`;
         const createSource = await fetch(`${baseUrl}/api/sources`, {
@@ -178,7 +186,29 @@ async function run() {
         assert.equal(JSON.stringify(observed).includes(privateMarker), false);
         assert.equal(JSON.stringify(observed).includes(sourceUrl), false);
 
-        console.log('Diagnostic event contract, access control, bounded storage, and sync trace tests passed.');
+        const summaryResponse = await fetch(`${baseUrl}/api/diagnostics/summary`, {
+            headers: { Cookie: adminCookie }
+        });
+        assert.equal(summaryResponse.status, 200);
+        assert.equal(summaryResponse.headers.get('cache-control'), 'no-store');
+        const summary = await summaryResponse.json();
+        assert.equal(summary.version, require('../package.json').version);
+        assert.equal(summary.revision, revision);
+        assert.ok(Number.isSafeInteger(summary.resources.processUptimeSeconds));
+        assert.ok(Number.isSafeInteger(summary.resources.processRssBytes));
+        assert.ok(Array.isArray(summary.playback.managedSessions));
+        assert.equal(summary.synchronization.available, true);
+        assert.ok(summary.synchronization.sources.some(item => (
+            item.sourceId === source.id && item.status === 'error'
+        )));
+        assert.ok(summary.events.some(event => event.event === 'sync_failed'));
+        assert.ok(summary.events.length <= 50);
+        assert.equal(summary.retention.maxEvents, diagnostics.MAX_EVENTS);
+        assert.equal(JSON.stringify(summary).includes(privateMarker), false);
+        assert.equal(JSON.stringify(summary).includes(sourceUrl), false);
+        assert.equal(JSON.stringify(summary).includes('errorText'), false);
+
+        console.log('Diagnostic event, admin summary, access control, bounded storage, and sync trace tests passed.');
     } catch (error) {
         console.error(output.replaceAll(privateMarker, '[synthetic marker]'));
         throw error;

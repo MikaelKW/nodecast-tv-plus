@@ -1057,6 +1057,19 @@ function getAllSessions() {
     }));
 }
 
+// Diagnostics may show only generated correlation IDs and fixed state labels.
+// Never reuse getAllSessions here: even a redacted URL can reveal provider data.
+function getDiagnosticSessions() {
+    const allowedStatuses = new Set(['pending', 'starting', 'running', 'reconnecting', 'stopped', 'error']);
+    return Array.from(sessions.values())
+        .filter(session => !['stopped', 'error'].includes(session.status))
+        .slice(0, MAX_ACTIVE_SESSIONS).map(session => ({
+        traceId: session.diagnosticTraceId,
+        status: allowedStatuses.has(session.status) ? session.status : 'unavailable',
+        ageSeconds: Math.max(0, Math.floor((Date.now() - session.startTime) / 1000))
+        }));
+}
+
 module.exports = {
     TranscodeSession,
     createSession,
@@ -1069,6 +1082,7 @@ module.exports = {
     cleanupStaleSessions,
     startCleanupInterval,
     getAllSessions,
+    getDiagnosticSessions,
     CACHE_DIR,
     SEGMENT_DURATION
 };
