@@ -19,6 +19,7 @@ const EventEmitter = require('events');
 const hwDetect = require('./hwDetect');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
+const diagnosticEvents = require('./diagnosticEvents');
 
 // Session storage
 const sessions = new Map();
@@ -43,6 +44,27 @@ const MAX_ACTIVE_SESSIONS_PER_USER = 4;
 const LIVE_RESTART_DELAY_MS = 250;
 const LIVE_STABLE_RUN_MS = 10 * 1000;
 const MAX_RAPID_LIVE_RESTARTS = 4;
+
+const CLEANUP_REASONS = Object.freeze({
+    replaced: 'replaced',
+    'lease released': 'lease_released',
+    'abandoned playback lease': 'lease_released',
+    stale: 'stale',
+    'client disconnected': 'client_disconnected',
+    'client request': 'client_request',
+    'startup failed': 'startup_failed'
+});
+
+function selectedPathReason(args) {
+    const videoIndex = args.lastIndexOf('-c:v');
+    const audioIndex = args.lastIndexOf('-c:a');
+    const videoCopy = videoIndex !== -1 && args[videoIndex + 1] === 'copy';
+    const audioCopy = audioIndex !== -1 && args[audioIndex + 1] === 'copy';
+    if (videoCopy && audioCopy) return 'video_audio_copy';
+    if (videoCopy) return 'video_copy_audio_encode';
+    if (audioCopy) return 'video_encode_audio_copy';
+    return 'video_audio_encode';
+}
 
 /**
  * Generate a unique session ID
@@ -107,6 +129,9 @@ class TranscodeSession extends EventEmitter {
     constructor(url, options = {}) {
         super();
         this.id = generateSessionId();
+        this.diagnosticTraceId = diagnosticEvents.createTraceId();
+        this.diagnosticStartAttempts = 0;
+        this.diagnosticFailureRecorded = false;
         this.url = validateHttpUrl(url);
         this.dir = path.join(CACHE_DIR, this.id);
         this.playlistPath = path.join(this.dir, 'stream.m3u8');
@@ -155,6 +180,9 @@ class TranscodeSession extends EventEmitter {
         }
 
         this.status = 'starting';
+        this.diagnosticStartAttempts += 1;
+        this.diagnosticFailureRecorded = false;
+        if (this.diagnosticStartAttempts === 1) this.recordDiagnostic('session_start', 'requested');
         console.log(`[TranscodeSession ${this.id}] Starting session for: ${redactUrl(this.url)}`);
 
         // Create session directory
@@ -163,6 +191,7 @@ class TranscodeSession extends EventEmitter {
         } catch (err) {
             this.status = 'error';
             this.error = err.message;
+            this.recordDiagnosticFailure('startup_error');
             throw err;
         }
 
@@ -178,6 +207,7 @@ class TranscodeSession extends EventEmitter {
             this.processStartedAt = Date.now();
 
             this.status = 'running';
+            this.recordDiagnostic('path_selected', selectedPathReason(args));
 
             // Handle stdout (should be empty for file output)
             activeProcess.stdout.on('data', (data) => {
@@ -209,10 +239,12 @@ class TranscodeSession extends EventEmitter {
                 } else if (code === 0 || code === null) {
                     console.log(`[TranscodeSession ${this.id}] FFmpeg completed successfully`);
                     this.status = 'stopped';
+                    if (!this.retired) this.recordDiagnostic('playback_completed', 'completed');
                 } else if (code !== 255) { // 255 is often from SIGKILL
                     console.error(`[TranscodeSession ${this.id}] FFmpeg exited with code ${code}`);
                     this.status = 'error';
                     this.error = `FFmpeg exited with code ${code}`;
+                    if (!this.retired) this.recordDiagnosticFailure('process_exit');
                 }
                 this.emit('exit', code);
             });
@@ -222,6 +254,7 @@ class TranscodeSession extends EventEmitter {
                 console.error(`[TranscodeSession ${this.id}] FFmpeg error:`, err);
                 this.status = 'error';
                 this.error = err.message;
+                if (!this.retired) this.recordDiagnosticFailure('process_error');
                 this.emit('error', err);
             });
 
@@ -236,8 +269,19 @@ class TranscodeSession extends EventEmitter {
         } catch (err) {
             this.status = 'error';
             this.error = err.message;
+            this.recordDiagnosticFailure('startup_error');
             throw err;
         }
+    }
+
+    recordDiagnostic(event, reason) {
+        diagnosticEvents.record({ traceId: this.diagnosticTraceId, event, reason });
+    }
+
+    recordDiagnosticFailure(reason) {
+        if (this.diagnosticFailureRecorded) return;
+        this.diagnosticFailureRecorded = true;
+        this.recordDiagnostic('playback_failed', reason);
     }
 
     scheduleLiveRestart(code) {
@@ -254,10 +298,12 @@ class TranscodeSession extends EventEmitter {
             this.status = 'error';
             this.error = 'Live input repeatedly disconnected before playback stabilized';
             console.error(`[TranscodeSession ${this.id}] ${this.error}`);
+            this.recordDiagnosticFailure('retry_limit');
             return;
         }
 
         this.status = 'reconnecting';
+        this.recordDiagnostic('playback_reconnecting', 'input_reconnect');
         console.warn(
             `[TranscodeSession ${this.id}] Live input ended (code ${code ?? 'signal'}); reopening a fresh connection`
         );
@@ -790,11 +836,13 @@ class TranscodeSession extends EventEmitter {
             await this.start();
             if (await this.waitForPlaylist(timeoutMs)) {
                 await this.resolveMediaStartTime();
+                this.recordDiagnostic('playback_ready', 'playlist_ready');
                 return true;
             }
             if (this.status !== 'error' || attempt === maxAttempts) return false;
 
             console.warn(`[TranscodeSession ${this.id}] Initial connection failed; retrying once`);
+            this.recordDiagnostic('connection_retry', 'retrying');
             await new Promise(resolve => setTimeout(resolve, 250));
         }
         return false;
@@ -832,7 +880,7 @@ class TranscodeSession extends EventEmitter {
     /**
      * Delete session directory and all segments
      */
-    async cleanup() {
+    async cleanup(reason = 'requested') {
         this.retired = true;
         await this.stop();
         try {
@@ -841,6 +889,7 @@ class TranscodeSession extends EventEmitter {
         } catch (err) {
             console.error(`[TranscodeSession ${this.id}] Failed to cleanup:`, err.message);
         }
+        this.recordDiagnostic('session_cleanup', CLEANUP_REASONS[reason] || 'cleanup_requested');
     }
 }
 
@@ -924,7 +973,7 @@ async function removeSession(sessionId, ownerId = null, reason = 'requested') {
     if (session && ownerId !== null && session.ownerId !== ownerId) return false;
     if (session) {
         console.log(`[TranscodeSession ${session.id}] Removing session (${reason})`);
-        await session.cleanup();
+        await session.cleanup(reason);
         sessions.delete(sessionId);
         return true;
     }
