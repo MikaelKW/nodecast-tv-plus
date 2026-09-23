@@ -13,46 +13,48 @@ if (!existsSync(dataDir)) {
 
 const dbPath = path.join(dataDir, 'db.json');
 
-// Initialize database structure
+function getEmptyDb() {
+  return {
+    sources: [],
+    hiddenItems: [],
+    favorites: [],
+    settings: getDefaultSettings(),
+    users: [],
+    nextId: 1
+  };
+}
+
+// Writes use this strict reader so a damaged or temporarily unreadable file
+// cannot be replaced with an empty database after an apparently successful edit.
+async function readDbForMutation() {
+  try {
+    const fileContent = await fs.readFile(dbPath, 'utf-8');
+    const data = JSON.parse(fileContent);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error('Invalid database document');
+    }
+    return {
+      ...data,
+      sources: data.sources || [],
+      hiddenItems: data.hiddenItems || [],
+      favorites: data.favorites || [],
+      settings: data.settings || getDefaultSettings(),
+      users: data.users || [],
+      nextId: data.nextId || 1
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return getEmptyDb();
+    throw error;
+  }
+}
+
+// Preserve the existing read-only fallback behavior. Mutations never use it.
 async function loadDb() {
   try {
-    // Check if file exists (using fs.access is better for async, but we can catch ENOENT)
-    try {
-      const fileContent = await fs.readFile(dbPath, 'utf-8');
-      const data = JSON.parse(fileContent);
-      return {
-        sources: data.sources || [],
-        hiddenItems: data.hiddenItems || [],
-        favorites: data.favorites || [],
-        settings: data.settings || getDefaultSettings(),
-        users: data.users || [],
-        nextId: data.nextId || 1
-      };
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        // File doesn't exist, return default
-        return {
-          sources: [],
-          hiddenItems: [],
-          favorites: [],
-          settings: getDefaultSettings(),
-          users: [],
-          nextId: 1
-        };
-      }
-      throw error;
-    }
+    return await readDbForMutation();
   } catch (err) {
     console.error('Error loading database:', err);
-    // Return safe default on error to prevent crashing, but log it
-    return {
-      sources: [],
-      hiddenItems: [],
-      favorites: [],
-      settings: getDefaultSettings(),
-      users: [],
-      nextId: 1
-    };
+    return getEmptyDb();
   }
 }
 
@@ -152,30 +154,48 @@ function getUserAgent(settings) {
   return USER_AGENT_PRESETS[settings.userAgentPreset] || USER_AGENT_PRESETS.chrome;
 }
 
-// Write lock to prevent concurrent writes from corrupting db.json
-let writeQueue = Promise.resolve();
+// Queue the entire read-modify-write transaction, not only the file write.
+let mutationQueue = Promise.resolve();
 const tmpPath = dbPath + '.tmp';
 
-async function saveDb(data) {
-  // Queue this write operation - each write waits for the previous one
-  writeQueue = writeQueue.then(async () => {
-    try {
-      const jsonString = JSON.stringify(data, null, 2);
-      // Atomic write: write to temp file, then rename
-      // Rename is atomic on most filesystems, preventing corruption on crash
-      await fs.writeFile(tmpPath, jsonString);
-      await fs.rename(tmpPath, dbPath);
-    } catch (err) {
-      console.error('Error writing database:', err);
-      // Clean up temp file if it exists
-      try { await fs.unlink(tmpPath); } catch { /* ignore */ }
-      throw err;
+async function writeDb(data) {
+  try {
+    const jsonString = JSON.stringify(data, null, 2);
+    // Rename keeps readers from observing a partially written JSON file.
+    await fs.writeFile(tmpPath, jsonString);
+    // Windows can briefly lock the destination while another request reads it.
+    // Retry only transient rename errors; persistent failures still reach the caller.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(tmpPath, dbPath);
+        break;
+      } catch (error) {
+        if (attempt >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+        await new Promise(resolve => setTimeout(resolve, 10 * (2 ** attempt)));
+      }
     }
-  }).catch(err => {
-    console.error('Database write failed:', err);
-  });
+  } catch (err) {
+    console.error('Error writing database:', err);
+    try { await fs.unlink(tmpPath); } catch { /* ignore */ }
+    throw err;
+  }
+}
 
-  return writeQueue;
+function queueMutation(operation) {
+  const result = mutationQueue.then(operation);
+  // A rejected operation must not poison later writes, but its own caller
+  // must receive the error instead of an incorrect success response.
+  mutationQueue = result.catch(() => {});
+  return result;
+}
+
+async function mutateDb(mutator) {
+  return queueMutation(async () => {
+    const data = await readDbForMutation();
+    const outcome = await mutator(data);
+    if (outcome?.changed !== false) await writeDb(data);
+    return outcome?.result;
+  });
 }
 
 const DEFAULT_SOURCE_CONTENT_VISIBILITY = Object.freeze({
@@ -218,60 +238,59 @@ const sources = {
   },
 
   async create(source) {
-    const db = await loadDb();
-    const newSource = {
-      id: db.nextId++,
-      ...source,
-      contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
-      enabled: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    db.sources.push(newSource);
-    await saveDb(db);
-    return newSource;
+    return mutateDb(db => {
+      const newSource = {
+        id: db.nextId++,
+        ...source,
+        contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
+        enabled: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      db.sources.push(newSource);
+      return { result: newSource };
+    });
   },
 
   async update(id, updates) {
-    const db = await loadDb();
-    const index = db.sources.findIndex(s => s.id === parseInt(id));
-    if (index === -1) return null;
+    return mutateDb(db => {
+      const index = db.sources.findIndex(s => s.id === parseInt(id));
+      if (index === -1) return { changed: false, result: null };
 
-    const contentVisibility = updates.contentVisibility
-      ? normalizeSourceContentVisibility({
-          ...db.sources[index].contentVisibility,
-          ...updates.contentVisibility
-        })
-      : normalizeSourceContentVisibility(db.sources[index].contentVisibility);
+      const contentVisibility = updates.contentVisibility
+        ? normalizeSourceContentVisibility({
+            ...db.sources[index].contentVisibility,
+            ...updates.contentVisibility
+          })
+        : normalizeSourceContentVisibility(db.sources[index].contentVisibility);
 
-    db.sources[index] = {
-      ...db.sources[index],
-      ...updates,
-      contentVisibility,
-      updated_at: new Date().toISOString()
-    };
-    await saveDb(db);
-    return normalizeSource(db.sources[index]);
+      db.sources[index] = {
+        ...db.sources[index],
+        ...updates,
+        contentVisibility,
+        updated_at: new Date().toISOString()
+      };
+      return { result: normalizeSource(db.sources[index]) };
+    });
   },
 
   async delete(id) {
-    const db = await loadDb();
-    db.sources = db.sources.filter(s => s.id !== parseInt(id));
-    // Also delete related hidden items and favorites
-    db.hiddenItems = db.hiddenItems.filter(h => h.source_id !== parseInt(id));
-    db.favorites = db.favorites.filter(f => f.source_id !== parseInt(id));
-    await saveDb(db);
+    return mutateDb(db => {
+      db.sources = db.sources.filter(s => s.id !== parseInt(id));
+      // Also delete related hidden items and favorites.
+      db.hiddenItems = db.hiddenItems.filter(h => h.source_id !== parseInt(id));
+      db.favorites = db.favorites.filter(f => f.source_id !== parseInt(id));
+    });
   },
 
   async toggleEnabled(id) {
-    const db = await loadDb();
-    const source = db.sources.find(s => s.id === parseInt(id));
-    if (source) {
+    return mutateDb(db => {
+      const source = db.sources.find(s => s.id === parseInt(id));
+      if (!source) return { changed: false, result: undefined };
       source.enabled = !source.enabled;
       source.updated_at = new Date().toISOString();
-      await saveDb(db);
-    }
-    return normalizeSource(source);
+      return { result: normalizeSource(source) };
+    });
   }
 };
 
@@ -286,28 +305,28 @@ const hiddenItems = {
   },
 
   async hide(sourceId, itemType, itemId) {
-    const db = await loadDb();
-    // Check if already hidden
-    const exists = db.hiddenItems.find(
-      h => h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId
-    );
-    if (!exists) {
+    return mutateDb(db => {
+      const exists = db.hiddenItems.find(
+        h => h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId
+      );
+      if (exists) return { changed: false };
       db.hiddenItems.push({
         id: db.nextId++,
         source_id: parseInt(sourceId),
         item_type: itemType,
         item_id: itemId
       });
-      await saveDb(db);
-    }
+    });
   },
 
   async show(sourceId, itemType, itemId) {
-    const db = await loadDb();
-    db.hiddenItems = db.hiddenItems.filter(
-      h => !(h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId)
-    );
-    await saveDb(db);
+    return mutateDb(db => {
+      const originalLength = db.hiddenItems.length;
+      db.hiddenItems = db.hiddenItems.filter(
+        h => !(h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId)
+      );
+      return { changed: db.hiddenItems.length !== originalLength };
+    });
   },
 
   async isHidden(sourceId, itemType, itemId) {
@@ -318,47 +337,37 @@ const hiddenItems = {
   },
 
   async bulkHide(items) {
-    const db = await loadDb();
-    let modified = false;
+    return mutateDb(db => {
+      let modified = false;
+      items.forEach(item => {
+        const { sourceId, itemType, itemId } = item;
+        const exists = db.hiddenItems.find(
+          h => h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId
+        );
 
-    items.forEach(item => {
-      const { sourceId, itemType, itemId } = item;
-      const exists = db.hiddenItems.find(
-        h => h.source_id === parseInt(sourceId) && h.item_type === itemType && h.item_id === itemId
-      );
-
-      if (!exists) {
-        db.hiddenItems.push({
-          id: db.nextId++,
-          source_id: parseInt(sourceId),
-          item_type: itemType,
-          item_id: itemId
-        });
-        modified = true;
-      }
+        if (!exists) {
+          db.hiddenItems.push({
+            id: db.nextId++,
+            source_id: parseInt(sourceId),
+            item_type: itemType,
+            item_id: itemId
+          });
+          modified = true;
+        }
+      });
+      return { changed: modified, result: true };
     });
-
-    if (modified) {
-      await saveDb(db);
-    }
-    return true;
   },
 
   async bulkShow(items) {
-    const db = await loadDb();
-    const initialLength = db.hiddenItems.length;
-
-    // Create a set of "signatures" for O(1) lookup of items to remove
-    const toRemove = new Set(items.map(i => `${i.sourceId}:${i.itemType}:${i.itemId}`));
-
-    db.hiddenItems = db.hiddenItems.filter(h =>
-      !toRemove.has(`${h.source_id}:${h.item_type}:${h.item_id}`)
-    );
-
-    if (db.hiddenItems.length !== initialLength) {
-      await saveDb(db);
-    }
-    return true;
+    return mutateDb(db => {
+      const initialLength = db.hiddenItems.length;
+      const toRemove = new Set(items.map(i => `${i.sourceId}:${i.itemType}:${i.itemId}`));
+      db.hiddenItems = db.hiddenItems.filter(h =>
+        !toRemove.has(`${h.source_id}:${h.item_type}:${h.item_id}`)
+      );
+      return { changed: db.hiddenItems.length !== initialLength, result: true };
+    });
   }
 };
 
@@ -377,12 +386,11 @@ const favorites = {
   },
 
   async add(sourceId, itemId, itemType = 'channel') {
-    const db = await loadDb();
-    // Check if already favorited
-    const exists = db.favorites.find(
-      f => f.source_id === parseInt(sourceId) && f.item_id === String(itemId) && f.item_type === itemType
-    );
-    if (!exists) {
+    return mutateDb(db => {
+      const exists = db.favorites.find(
+        f => f.source_id === parseInt(sourceId) && f.item_id === String(itemId) && f.item_type === itemType
+      );
+      if (exists) return { changed: false, result: true };
       db.favorites.push({
         id: db.nextId++,
         source_id: parseInt(sourceId),
@@ -390,18 +398,18 @@ const favorites = {
         item_type: itemType, // 'channel', 'movie', 'series'
         created_at: new Date().toISOString()
       });
-      await saveDb(db);
-    }
-    return true;
+      return { result: true };
+    });
   },
 
   async remove(sourceId, itemId, itemType = 'channel') {
-    const db = await loadDb();
-    db.favorites = db.favorites.filter(
-      f => !(f.source_id === parseInt(sourceId) && f.item_id === String(itemId) && f.item_type === itemType)
-    );
-    await saveDb(db);
-    return true;
+    return mutateDb(db => {
+      const originalLength = db.favorites.length;
+      db.favorites = db.favorites.filter(
+        f => !(f.source_id === parseInt(sourceId) && f.item_id === String(itemId) && f.item_type === itemType)
+      );
+      return { changed: db.favorites.length !== originalLength, result: true };
+    });
   },
 
   async isFavorite(sourceId, itemId, itemType = 'channel') {
@@ -422,31 +430,33 @@ const settings = {
   },
 
   async update(newSettings) {
-    const db = await loadDb();
-    const updates = { ...newSettings };
-    if (Object.prototype.hasOwnProperty.call(updates, 'automaticUpdateChecks')) {
-      updates.automaticUpdateChecks = updates.automaticUpdateChecks === true;
-    }
-    if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
-      updates.navigation = normalizeNavigationSettings({
-        ...normalizeNavigationSettings(db.settings?.navigation),
-        ...updates.navigation,
-        visibleTabs: {
-          ...normalizeNavigationSettings(db.settings?.navigation).visibleTabs,
-          ...(updates.navigation?.visibleTabs || {})
-        }
-      });
-    }
-    db.settings = { ...db.settings, ...updates };
-    await saveDb(db);
-    return this.get();
+    return mutateDb(db => {
+      const updates = { ...newSettings };
+      if (Object.prototype.hasOwnProperty.call(updates, 'automaticUpdateChecks')) {
+        updates.automaticUpdateChecks = updates.automaticUpdateChecks === true;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
+        updates.navigation = normalizeNavigationSettings({
+          ...normalizeNavigationSettings(db.settings?.navigation),
+          ...updates.navigation,
+          visibleTabs: {
+            ...normalizeNavigationSettings(db.settings?.navigation).visibleTabs,
+            ...(updates.navigation?.visibleTabs || {})
+          }
+        });
+      }
+      db.settings = { ...db.settings, ...updates };
+      const currentSettings = { ...getDefaultSettings(), ...db.settings };
+      currentSettings.navigation = normalizeNavigationSettings(db.settings?.navigation);
+      return { result: currentSettings };
+    });
   },
 
   async reset() {
-    const db = await loadDb();
-    db.settings = getDefaultSettings();
-    await saveDb(db);
-    return db.settings;
+    return mutateDb(db => {
+      db.settings = getDefaultSettings();
+      return { result: db.settings };
+    });
   }
 };
 
@@ -497,24 +507,17 @@ function toPublicUser(user) {
   };
 }
 
-let userSecurityMutationQueue = Promise.resolve();
-
 function mutateUserSecurity(id, mutator) {
-  const operation = userSecurityMutationQueue.then(async () => {
-    const db = await loadDb();
+  return mutateDb(async db => {
     const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
     if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
     const outcome = await mutator(db.users[userIndex]);
     if (outcome?.changed !== false) {
       db.users[userIndex].updatedAt = new Date().toISOString();
-      await saveDb(db);
     }
-    return outcome?.result;
+    return outcome;
   });
-
-  userSecurityMutationQueue = operation.catch(() => {});
-  return operation;
 }
 
 // User operations
@@ -557,86 +560,66 @@ const users = {
   },
 
   async create(userData) {
-    const db = await loadDb();
-    if (!db.users) {
-      db.users = [];
-    }
+    return mutateDb(db => {
+      const usernameKey = getUsernameKey(userData.username);
+      if (db.users.some(u => getUsernameKey(u.username) === usernameKey)) {
+        throw createUsernameConflictError();
+      }
 
-    // Check if username already exists
-    const usernameKey = getUsernameKey(userData.username);
-    if (db.users.some(u => getUsernameKey(u.username) === usernameKey)) {
-      throw createUsernameConflictError();
-    }
+      const newUser = {
+        id: db.nextId++,
+        username: userData.username,
+        // For OIDC users, passwordHash is optional.
+        passwordHash: userData.passwordHash || null,
+        role: userData.role || 'viewer',
+        oidcId: userData.oidcId || null,
+        email: userData.email || null,
+        subtitlePreferences: normalizePreferences(userData.subtitlePreferences),
+        liveTvPreferences: normalizeLiveTvPreferences(userData.liveTvPreferences),
+        lastLiveChannel: normalizeLastLiveChannel(userData.lastLiveChannel),
+        createdAt: new Date().toISOString()
+      };
 
-    const newUser = {
-      id: db.nextId++,
-      username: userData.username,
-      // For OIDC users, passwordHash is optional
-      passwordHash: userData.passwordHash || null,
-      role: userData.role || 'viewer',
-      oidcId: userData.oidcId || null,
-      email: userData.email || null,
-      subtitlePreferences: normalizePreferences(userData.subtitlePreferences),
-      liveTvPreferences: normalizeLiveTvPreferences(userData.liveTvPreferences),
-      lastLiveChannel: normalizeLastLiveChannel(userData.lastLiveChannel),
-      createdAt: new Date().toISOString()
-    };
-
-    db.users.push(newUser);
-    await saveDb(db);
-
-    // Return user without password hash
-    return toPublicUser(newUser);
+      db.users.push(newUser);
+      return { result: toPublicUser(newUser) };
+    });
   },
 
   async update(id, updates) {
-    const db = await loadDb();
-    const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
+    return mutateDb(db => {
+      const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
+      if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
-    if (userIndex === -1 || userIndex === undefined) {
-      throw new Error('User not found');
-    }
-
-    // Check if username is being changed and if it already exists
-    if (updates.username && updates.username !== db.users[userIndex].username) {
-      const usernameKey = getUsernameKey(updates.username);
-      if (db.users.some((u, index) => index !== userIndex && getUsernameKey(u.username) === usernameKey)) {
-        throw createUsernameConflictError();
+      if (updates.username && updates.username !== db.users[userIndex].username) {
+        const usernameKey = getUsernameKey(updates.username);
+        if (db.users.some((u, index) => index !== userIndex && getUsernameKey(u.username) === usernameKey)) {
+          throw createUsernameConflictError();
+        }
       }
-    }
 
-    db.users[userIndex] = {
-      ...db.users[userIndex],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-
-    await saveDb(db);
-
-    // Return user without password hash
-    return toPublicUser(db.users[userIndex]);
+      db.users[userIndex] = {
+        ...db.users[userIndex],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      return { result: toPublicUser(db.users[userIndex]) };
+    });
   },
 
   async delete(id) {
-    const db = await loadDb();
-    const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
+    return mutateDb(db => {
+      const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
+      if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
-    if (userIndex === -1 || userIndex === undefined) {
-      throw new Error('User not found');
-    }
-
-    // Prevent deleting the last admin
-    const user = db.users[userIndex];
-    if (user.role === 'admin') {
-      const adminCount = db.users.filter(u => u.role === 'admin').length;
-      if (adminCount <= 1) {
-        throw new Error('Cannot delete the last admin user');
+      const user = db.users[userIndex];
+      if (user.role === 'admin') {
+        const adminCount = db.users.filter(u => u.role === 'admin').length;
+        if (adminCount <= 1) throw new Error('Cannot delete the last admin user');
       }
-    }
 
-    db.users.splice(userIndex, 1);
-    await saveDb(db);
-    return true;
+      db.users.splice(userIndex, 1);
+      return { result: true };
+    });
   },
 
   async count() {
@@ -723,4 +706,4 @@ const users = {
   }
 };
 
-module.exports = { loadDb, checkHealth, saveDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };
+module.exports = { loadDb, checkHealth, mutateDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };
