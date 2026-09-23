@@ -1417,24 +1417,19 @@ video::cue {
   gap: var(--space-md);
 }
 
-#tab-diagnostics .section-header {
-  display: block;
-  position: relative;
-  margin-bottom: var(--space-md);
-}
-
-#tab-diagnostics .section-header h3 {
-  margin: 0;
-}
-
-#tab-diagnostics .section-header .btn {
-  position: absolute;
-  top: 0;
-  right: 0;
+.diagnostics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin: var(--space-md) 0 var(--space-sm);
 }
 
 #diagnostics-status {
-  margin-top: var(--space-md);
+  flex: 1 1 10rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .diagnostics-card {
