@@ -195,11 +195,16 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await settings.evaluate(element => { element.scrollTop = 0; });
     const interfaceHeadingTop = await page.locator('#tab-interface > .settings-section:first-child > h3')
         .evaluate(heading => heading.getBoundingClientRect().top);
+    const interfaceDividerBottom = await page.locator('#tab-interface > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().bottom);
     await page.locator('#diagnostics-tab').click();
     await settings.evaluate(element => { element.scrollTop = 0; });
     const diagnosticsHeadingTop = await page.locator('#tab-diagnostics .section-header h3')
         .evaluate(heading => heading.getBoundingClientRect().top);
+    const diagnosticsDividerBottom = await page.locator('#tab-diagnostics .section-header h3')
+        .evaluate(heading => heading.getBoundingClientRect().bottom);
     expect(Math.abs(diagnosticsHeadingTop - interfaceHeadingTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(diagnosticsDividerBottom - interfaceDividerBottom)).toBeLessThanOrEqual(1);
     await expect(page.locator('#diagnostics-content')).toContainText('Source synchronization');
     const diagnosticsIntroGap = await page.locator('#tab-diagnostics').evaluate(tab => {
         const header = tab.querySelector('.section-header');

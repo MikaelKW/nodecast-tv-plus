@@ -1418,16 +1418,19 @@ video::cue {
 }
 
 #tab-diagnostics .section-header {
-  align-items: flex-start;
+  display: block;
+  position: relative;
   margin-bottom: var(--space-md);
-  padding-bottom: var(--space-sm);
-  border-bottom: 1px solid var(--color-border);
 }
 
 #tab-diagnostics .section-header h3 {
   margin: 0;
-  padding: 0;
-  border: 0;
+}
+
+#tab-diagnostics .section-header .btn {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 #diagnostics-status {
