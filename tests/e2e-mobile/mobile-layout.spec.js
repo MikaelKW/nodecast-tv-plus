@@ -191,6 +191,43 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#tab-sources .source-section:last-child', '.settings-container');
 
+    await page.locator('.tab[data-tab="interface"]').click();
+    await settings.evaluate(element => { element.scrollTop = 0; });
+    const interfaceHeadingTop = await page.locator('#tab-interface > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().top);
+    await page.locator('#diagnostics-tab').click();
+    await settings.evaluate(element => { element.scrollTop = 0; });
+    const diagnosticsHeadingTop = await page.locator('#tab-diagnostics .section-header h3')
+        .evaluate(heading => heading.getBoundingClientRect().top);
+    expect(Math.abs(diagnosticsHeadingTop - interfaceHeadingTop)).toBeLessThanOrEqual(1);
+    await expect(page.locator('#diagnostics-content')).toContainText('Source synchronization');
+    const diagnosticsIntroGap = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const header = tab.querySelector('.section-header');
+        const intro = tab.querySelector('.section-header + .hint');
+        return intro.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+    });
+    expect(diagnosticsIntroGap).toBeGreaterThanOrEqual(8);
+    expect(diagnosticsIntroGap).toBeLessThanOrEqual(20);
+    const diagnosticsStatusGap = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const intro = tab.querySelector('.section-header + .hint');
+        const status = tab.querySelector('#diagnostics-status');
+        return status.getBoundingClientRect().top - intro.getBoundingClientRect().bottom;
+    });
+    expect(diagnosticsStatusGap).toBeGreaterThanOrEqual(12);
+    expect(diagnosticsStatusGap).toBeLessThanOrEqual(20);
+    const diagnosticsLayout = await page.locator('.diagnostics-content').evaluate(section => ({
+        viewportWidth: window.innerWidth,
+        left: section.getBoundingClientRect().left,
+        right: section.getBoundingClientRect().right,
+        scrollWidth: section.scrollWidth,
+        clientWidth: section.clientWidth
+    }));
+    expect(diagnosticsLayout.left).toBeGreaterThanOrEqual(0);
+    expect(diagnosticsLayout.right).toBeLessThanOrEqual(diagnosticsLayout.viewportWidth + 1);
+    expect(diagnosticsLayout.scrollWidth).toBeLessThanOrEqual(diagnosticsLayout.clientWidth + 1);
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.diagnostics-card:last-child', '.settings-container');
+
     await page.locator('.tab[data-tab="player"]').click();
     await scrollToBottom(page, '.settings-container');
     await expect(page.locator('.shortcuts-grid')).toBeVisible();

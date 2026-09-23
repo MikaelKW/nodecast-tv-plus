@@ -1379,9 +1379,12 @@ video::cue {
   gap: var(--space-xs);
   margin-bottom: var(--space-lg);
   border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab {
+  flex-shrink: 0;
   padding: var(--space-sm) var(--space-md);
   background: none;
   border: none;
@@ -1407,6 +1410,51 @@ video::cue {
 
 .tab-content.active {
   display: block;
+}
+
+.diagnostics-content {
+  display: grid;
+  gap: var(--space-md);
+}
+
+#tab-diagnostics .section-header {
+  align-items: flex-start;
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+#tab-diagnostics .section-header h3 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+#diagnostics-status {
+  margin-top: var(--space-md);
+}
+
+.diagnostics-card {
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.diagnostics-card h4 {
+  margin-bottom: var(--space-sm);
+}
+
+.diagnostics-card p,
+.diagnostics-card li {
+  overflow-wrap: anywhere;
+  margin-bottom: var(--space-xs);
+}
+
+.diagnostics-events {
+  list-style-position: inside;
+  max-height: 24rem;
+  overflow-y: auto;
 }
 
 .interface-page-select {
