@@ -123,6 +123,7 @@ jobs:
           pull: true
           build-args: |
             RUNTIME_REFRESH=publish-${{ github.run_id }}-${{ github.run_attempt }}
+            NODECAST_REVISION=${{ github.sha }}
           tags: |
             ${{ steps.ghcr_meta.outputs.tags }}
             ${{ steps.dockerhub_meta.outputs.tags }}

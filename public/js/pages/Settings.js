@@ -10,6 +10,7 @@ class SettingsPage {
         this.isVisible = false;
         this.visibilityGeneration = 0;
         this.syncStatusRequest = null;
+        this.diagnosticsPanel = new DiagnosticsPanel();
         this.subtitlePreferences = SubtitlePreferences.normalizePreferences(app.currentUser?.subtitlePreferences);
 
         this.init();
@@ -1125,8 +1126,13 @@ class SettingsPage {
 
     switchTab(tabName) {
         if (this.isViewer() && tabName !== 'preferences') tabName = 'preferences';
+        this.diagnosticsPanel.hide();
         this.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         this.tabContents.forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
+
+        if (tabName === 'diagnostics' && this.isVisible) {
+            this.diagnosticsPanel.show();
+        }
 
         // Load content browser when switching to that tab
         if (tabName === 'content') {
@@ -1165,6 +1171,10 @@ class SettingsPage {
             // manage the preferences stored on their own account.
             this.switchTab('preferences');
             return;
+        }
+
+        if (document.getElementById('tab-diagnostics')?.classList.contains('active')) {
+            this.diagnosticsPanel.show();
         }
 
         // Load sources when page is shown
@@ -1298,6 +1308,7 @@ class SettingsPage {
         this.isVisible = false;
         this.visibilityGeneration += 1;
         this.cancelSyncStatusRequest();
+        this.diagnosticsPanel.hide();
     }
 }
 

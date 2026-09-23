@@ -192,6 +192,10 @@ const API = {
         checkForUpdates: () => API.request('POST', '/settings/about/check')
     },
 
+    diagnostics: {
+        getSummary: () => API.request('GET', '/diagnostics/summary')
+    },
+
     // Users (admin only)
     users: {
         getAll: () => API.request('GET', '/auth/users'),

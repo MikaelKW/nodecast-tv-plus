@@ -79,6 +79,10 @@ COPY --from=dependency-builder /app/node_modules ./node_modules
 # Copy application files
 COPY . .
 
+# Expose the immutable build revision to the local diagnostics view.
+ARG NODECAST_REVISION=unknown
+ENV NODECAST_REVISION=${NODECAST_REVISION}
+
 # Create data and cache directories
 RUN mkdir -p /app/data /app/transcode-cache && chmod 777 /app/transcode-cache
 
