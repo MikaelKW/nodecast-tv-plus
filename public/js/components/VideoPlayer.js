@@ -1097,6 +1097,21 @@ class VideoPlayer {
         }
     }
 
+    // Best-effort diagnostics only. Playback never waits for this request and
+    // provider URLs, channel details, and browser errors are never sent.
+    reportBrowserPlaybackPath(reason, playId) {
+        if (this._playId !== playId) return;
+        try {
+            fetch(NodeCastUrl.resolve('/api/diagnostics/playback-path'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            }).catch(() => {});
+        } catch {
+            // Even an unavailable diagnostics endpoint must not affect playback.
+        }
+    }
+
     /**
      * Play a channel
      */
@@ -1313,6 +1328,7 @@ class VideoPlayer {
                         // Other browsers retain the lower-overhead direct remux.
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
+                        this.reportBrowserPlaybackPath('auto_remux', playId);
                         const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
@@ -1510,6 +1526,7 @@ class VideoPlayer {
                 }
 
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
+                this.reportBrowserPlaybackPath('forced_remux', playId);
                 const remuxUrl = this.getRemuxUrl(streamUrl);
                 this.video.src = remuxUrl;
                 this.startVideoPlayback(playId).catch(e => {
@@ -1539,6 +1556,7 @@ class VideoPlayer {
             // Priority 1: Use HLS.js for HLS streams on browsers that support it
             if (looksLikeHls && Hls.isSupported()) {
                 this.updateTranscodeStatus('direct', 'Direct HLS');
+                this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'direct_hls', playId);
 
                 // Use playHls helper logic here (or extract it)
                 // For now, let's just use existing logic but wrapped/modularized if possible?
@@ -1576,6 +1594,7 @@ class VideoPlayer {
                         if (isCorsLikely && !this.isUsingProxy && !isLocalApi) {
                             console.log('CORS/Network error detected, retrying via proxy...', data.details);
                             this.isUsingProxy = true;
+                            this.reportBrowserPlaybackPath('proxied_hls', playId);
                             this.hls.loadSource(this.getProxiedUrl(this.currentUrl));
                             this.hls.startLoad();
                         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -1613,12 +1632,14 @@ class VideoPlayer {
                 this.video.canPlayType('application/vnd.apple.mpegurl') === 'maybe')) {
                 // Priority 2: Native HLS support (Safari on iOS/macOS where HLS.js may not work)
                 this.updateTranscodeStatus('direct', 'Direct Native');
+                this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'native_hls', playId);
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     if (e.name === 'AbortError') return; // Ignore interruption by new load
                     console.log('Autoplay prevented, trying proxy if CORS error:', e);
                     if (!this.isUsingProxy) {
                         this.isUsingProxy = true;
+                        this.reportBrowserPlaybackPath('proxied_hls', playId);
                         this.video.src = this.getProxiedUrl(streamUrl);
                         this.startVideoPlayback(playId).catch(err => {
                             if (err.name !== 'AbortError') console.error('Proxy play failed:', err);
@@ -1628,6 +1649,7 @@ class VideoPlayer {
             } else {
                 // Priority 3: Try direct playback for non-HLS streams
                 this.updateTranscodeStatus('direct', 'Direct Play');
+                this.reportBrowserPlaybackPath('direct_media', playId);
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
