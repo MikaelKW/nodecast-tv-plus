@@ -262,6 +262,7 @@ app.use('/api/proxy', require('./routes/proxy'));
 app.use('/api/channels', require('./routes/channels'));
 app.use('/api/favorites', require('./routes/favorites'));
 app.use('/api/transcode', require('./routes/transcode'));
+app.use('/api/diagnostics', require('./routes/diagnostics'));
 app.use('/api/remux', require('./routes/remux'));
 app.use('/api/probe', require('./routes/probe'));
 app.use('/api/subtitle', require('./routes/subtitle'));

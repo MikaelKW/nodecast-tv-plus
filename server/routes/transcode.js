@@ -140,6 +140,7 @@ router.post('/session', async (req, res) => {
         }
 
         if (!ready) {
+            session.recordDiagnosticFailure('playlist_not_ready');
             await transcodeSession.removeSession(session.id, req.user.id, 'startup failed');
             return res.status(500).json({ error: 'Transcoding failed to start', reason: 'Playlist not generated in time' });
         }
@@ -153,6 +154,7 @@ router.post('/session', async (req, res) => {
 
     } catch (err) {
         if (clientDisconnected) return;
+        session?.recordDiagnosticFailure('startup_error');
         console.error('[Transcode] Session creation failed:', redactText(err?.stack || err));
         res.status(err.statusCode || 500).json({
             error: err.statusCode ? err.message : 'Failed to create session',
