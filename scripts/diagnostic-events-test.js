@@ -60,6 +60,12 @@ async function run() {
     assert.equal(JSON.stringify(store.list()).includes(privateMarker), false);
     assert.equal(store.record({ traceId, event: 'sync_failed', reason: 'sync_error', sourceId: 1 }), true);
     assert.equal(store.record({ traceId, event: 'sync_failed', reason: 'requested', sourceId: 1 }), false);
+    assert.equal(store.record({ traceId, event: 'browser_path_selected', reason: 'direct_hls',
+        url: `https://example.invalid/?token=${privateMarker}`,
+        error: { message: privateMarker }
+    }), true);
+    assert.equal(JSON.stringify(store.list()).includes(privateMarker), false);
+    assert.equal(store.record({ traceId, event: 'browser_path_selected', reason: 'sync_error' }), false);
     assert.equal(store.record({ traceId: privateMarker, event: 'session_start', reason: 'requested' }), false);
     assert.equal(store.record({ traceId, event: 'sync_start', reason: 'requested', sourceId: privateMarker }), false);
     assert.equal(store.record({ get traceId() { throw new Error(privateMarker); } }), false);
@@ -119,6 +125,11 @@ async function run() {
         assert.equal(unauthenticated.status, 401);
         const unauthenticatedSummary = await fetch(`${baseUrl}/api/diagnostics/summary`);
         assert.equal(unauthenticatedSummary.status, 401);
+        const unauthenticatedReport = await fetch(`${baseUrl}/api/diagnostics/playback-path`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'direct_hls' })
+        });
+        assert.equal(unauthenticatedReport.status, 401);
 
         const adminPassword = crypto.randomBytes(24).toString('base64url');
         const setup = await fetch(`${baseUrl}/api/auth/setup`, {
@@ -159,6 +170,22 @@ async function run() {
             headers: { Cookie: viewerCookie }
         });
         assert.equal(viewerSummary.status, 403);
+        const rejectedReport = await fetch(`${baseUrl}/api/diagnostics/playback-path`, {
+            method: 'POST', headers: { Cookie: viewerCookie, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'process_error', url: privateMarker })
+        });
+        assert.equal(rejectedReport.status, 400);
+        const acceptedReport = await fetch(`${baseUrl}/api/diagnostics/playback-path`, {
+            method: 'POST', headers: { Cookie: viewerCookie, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                reason: 'direct_hls', url: `https://example.invalid/?token=${privateMarker}`,
+                headers: { Authorization: privateMarker },
+                error: { message: privateMarker, cause: { message: privateMarker } },
+                args: ['-headers', privateMarker], metadata: { nested: [privateMarker] }
+            })
+        });
+        assert.equal(acceptedReport.status, 204);
+        assert.equal(acceptedReport.headers.get('cache-control'), 'no-store');
 
         const sourceUrl = `http://127.0.0.1:${fixturePort}/playlist.m3u?token=${privateMarker}`;
         const createSource = await fetch(`${baseUrl}/api/sources`, {
@@ -202,6 +229,9 @@ async function run() {
             item.sourceId === source.id && item.status === 'error'
         )));
         assert.ok(summary.events.some(event => event.event === 'sync_failed'));
+        assert.ok(summary.events.some(event => event.event === 'browser_path_selected'
+            && event.reason === 'direct_hls'
+            && event.reasonText === 'The browser plays HLS without conversion.'));
         assert.ok(summary.events.length <= 50);
         assert.equal(summary.retention.maxEvents, diagnostics.MAX_EVENTS);
         assert.equal(JSON.stringify(summary).includes(privateMarker), false);
