@@ -158,18 +158,20 @@ router.put('/:id', auth.requireAdmin, async (req, res) => {
 
         const { name, url, username, password } = req.body;
         const contentVisibility = parseContentVisibility(req.body.contentVisibility);
-        const validatedUrl = url ? validateHttpUrl(url, 'Source URL') : existing.url;
-        const connectionChanged = validatedUrl !== existing.url
+        const validatedUrl = url ? validateHttpUrl(url, 'Source URL') : undefined;
+        const connectionChanged = (validatedUrl !== undefined && validatedUrl !== existing.url)
             || (username !== undefined && username !== existing.username)
             || (password !== undefined && password !== existing.password);
-        const updates = {
-            name: name || existing.name,
-            url: validatedUrl,
-            username: username !== undefined ? username : existing.username,
-            password: password !== undefined ? password : existing.password
-        };
+        // Only submit fields present in this request. Filling absent fields from
+        // the earlier read can undo a concurrent edit to the same source.
+        const updates = {};
+        if (name) updates.name = name;
+        if (validatedUrl !== undefined) updates.url = validatedUrl;
+        if (username !== undefined) updates.username = username;
+        if (password !== undefined) updates.password = password;
         if (contentVisibility !== undefined) updates.contentVisibility = contentVisibility;
         const updated = await sources.update(req.params.id, updates);
+        if (!updated) return res.status(404).json({ error: 'Source not found' });
         if (connectionChanged) {
             syncService.syncSource(parseInt(req.params.id)).catch(console.error);
         }
