@@ -191,6 +191,60 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '#tab-sources .source-section:last-child', '.settings-container');
 
+    await page.locator('.tab[data-tab="interface"]').click();
+    await settings.evaluate(element => { element.scrollTop = 0; });
+    const interfaceHeadingTop = await page.locator('#tab-interface > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().top);
+    const interfaceDividerBottom = await page.locator('#tab-interface > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().bottom);
+    await page.locator('#diagnostics-tab').click();
+    await settings.evaluate(element => { element.scrollTop = 0; });
+    const diagnosticsHeadingTop = await page.locator('#tab-diagnostics > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().top);
+    const diagnosticsDividerBottom = await page.locator('#tab-diagnostics > .settings-section:first-child > h3')
+        .evaluate(heading => heading.getBoundingClientRect().bottom);
+    expect(Math.abs(diagnosticsHeadingTop - interfaceHeadingTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(diagnosticsDividerBottom - interfaceDividerBottom)).toBeLessThanOrEqual(1);
+    await expect(page.locator('#diagnostics-content')).toContainText('Source synchronization');
+    const diagnosticsIntroGap = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const header = tab.querySelector('.settings-section > h3');
+        const intro = tab.querySelector('.settings-section > h3 + .hint');
+        return intro.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+    });
+    expect(diagnosticsIntroGap).toBeGreaterThanOrEqual(8);
+    expect(diagnosticsIntroGap).toBeLessThanOrEqual(20);
+    const diagnosticsStatusGap = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const intro = tab.querySelector('.settings-section > h3 + .hint');
+        const status = tab.querySelector('#diagnostics-status');
+        return status.getBoundingClientRect().top - intro.getBoundingClientRect().bottom;
+    });
+    expect(diagnosticsStatusGap).toBeGreaterThanOrEqual(12);
+    expect(diagnosticsStatusGap).toBeLessThanOrEqual(20);
+    const diagnosticsRefreshLayout = await page.locator('#tab-diagnostics').evaluate(tab => {
+        const intro = tab.querySelector('.settings-section > h3 + .hint').getBoundingClientRect();
+        const status = tab.querySelector('#diagnostics-status').getBoundingClientRect();
+        const button = tab.querySelector('#diagnostics-refresh').getBoundingClientRect();
+        const card = tab.querySelector('.diagnostics-card').getBoundingClientRect();
+        const overlapsStatus = Math.max(status.left, button.left) < Math.min(status.right, button.right)
+            && Math.max(status.top, button.top) < Math.min(status.bottom, button.bottom);
+        return { introBottom: intro.bottom, buttonTop: button.top, buttonBottom: button.bottom, cardTop: card.top, overlapsStatus };
+    });
+    expect(diagnosticsRefreshLayout.buttonTop).toBeGreaterThanOrEqual(diagnosticsRefreshLayout.introBottom + 8);
+    expect(diagnosticsRefreshLayout.cardTop).toBeGreaterThanOrEqual(diagnosticsRefreshLayout.buttonBottom + 8);
+    expect(diagnosticsRefreshLayout.overlapsStatus).toBe(false);
+    const diagnosticsLayout = await page.locator('.diagnostics-content').evaluate(section => ({
+        viewportWidth: window.innerWidth,
+        left: section.getBoundingClientRect().left,
+        right: section.getBoundingClientRect().right,
+        scrollWidth: section.scrollWidth,
+        clientWidth: section.clientWidth
+    }));
+    expect(diagnosticsLayout.left).toBeGreaterThanOrEqual(0);
+    expect(diagnosticsLayout.right).toBeLessThanOrEqual(diagnosticsLayout.viewportWidth + 1);
+    expect(diagnosticsLayout.scrollWidth).toBeLessThanOrEqual(diagnosticsLayout.clientWidth + 1);
+    await scrollToBottom(page, '.settings-container');
+    await expectInsideScroller(page, '.diagnostics-card:last-child', '.settings-container');
+
     await page.locator('.tab[data-tab="player"]').click();
     await scrollToBottom(page, '.settings-container');
     await expect(page.locator('.shortcuts-grid')).toBeVisible();

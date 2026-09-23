@@ -104,6 +104,7 @@ jobs:
           pull: true
           build-args: |
             RUNTIME_REFRESH=ci-${{ github.run_id }}-${{ github.run_attempt }}
+            NODECAST_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

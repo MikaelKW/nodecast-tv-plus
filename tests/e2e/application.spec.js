@@ -131,8 +131,16 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // historical behavior of starting with subtitles off.
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('#diagnostics-tab').click();
+    await expect(page.locator('#tab-diagnostics')).toHaveClass(/active/);
+    await expect(page.locator('#diagnostics-content')).toContainText('Application and resources');
+    await expect(page.locator('#diagnostics-content')).toContainText('Managed playback sessions');
+    await expect(page.locator('#diagnostics-status')).toContainText('Updated');
+    await page.locator('#diagnostics-refresh').click();
+    await expect(page.locator('#diagnostics-status')).toContainText('Updated');
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(page.locator('#diagnostics-content')).toBeEmpty();
     await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
     await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
     await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
@@ -340,7 +348,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(viewerPage.locator('#page-settings')).toHaveClass(/active/);
     await expect(viewerPage.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(viewerPage.locator('.tab[data-tab="preferences"]')).toBeVisible();
-    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
+    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'diagnostics', 'about']) {
         await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
     }
     await expect(viewerPage.locator('#setting-live-tv-layout')).toHaveValue('grouped');
