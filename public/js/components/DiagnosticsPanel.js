@@ -93,7 +93,7 @@ class DiagnosticsPanel {
 
         const playback = DiagnosticsPanel.addCard(root, 'Managed playback sessions');
         const sessions = Array.isArray(data.playback?.managedSessions) ? data.playback.managedSessions : [];
-        if (!sessions.length) DiagnosticsPanel.addLine(playback, 'No managed sessions are currently active. Direct and remuxed playback are not tracked here.');
+        if (!sessions.length) DiagnosticsPanel.addLine(playback, 'No managed sessions are currently active. Direct and browser-remuxed paths appear only in Recent events.');
         for (const session of sessions) {
             DiagnosticsPanel.addLine(playback, `${session.status || 'Unavailable'} · ${session.ageSeconds ?? 'Unknown'} seconds · Trace ${session.traceId || 'Unavailable'}`);
         }
