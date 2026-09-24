@@ -23,6 +23,7 @@ class VideoPlayer {
         this.nowPlaying = document.getElementById('now-playing');
         this.hls = null;
         this._playId = 0;
+        this.browserPlaybackAttempt = null;
         this._startupPlaybackId = null;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
@@ -46,6 +47,7 @@ class VideoPlayer {
         this.settingsLoaded = false;
 
         window.addEventListener('pagehide', () => {
+            this.finishBrowserPlayback('page_closed');
             this.releasePlaybackLease();
         });
 
@@ -1070,8 +1072,10 @@ class VideoPlayer {
      * the existing audible behavior.
      */
     async startVideoPlayback(playId = this._playId) {
+        if (this._playId !== playId) return;
         try {
             await this.video.play();
+            this.recordBrowserPlaybackStarted(playId);
             if (this._startupPlaybackId === playId) this._startupPlaybackId = null;
         } catch (err) {
             const canRetryMuted = err.name === 'NotAllowedError'
@@ -1083,6 +1087,7 @@ class VideoPlayer {
             this.video.muted = true;
             try {
                 await this.video.play();
+                this.recordBrowserPlaybackStarted(playId);
                 this._startupPlaybackId = null;
                 const muteButton = document.getElementById('btn-mute');
                 if (muteButton) {
@@ -1101,15 +1106,56 @@ class VideoPlayer {
     // provider URLs, channel details, and browser errors are never sent.
     reportBrowserPlaybackPath(reason, playId) {
         if (this._playId !== playId) return;
+        const attempt = { playId, tracePromise: null, queue: Promise.resolve(), started: false, closed: false };
+        this.browserPlaybackAttempt = attempt;
         try {
-            fetch(NodeCastUrl.resolve('/api/diagnostics/playback-path'), {
+            attempt.tracePromise = fetch(NodeCastUrl.resolve('/api/diagnostics/playback-path'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason })
-            }).catch(() => {});
+            }).then(response => response.ok ? response.json() : null)
+                .then(data => typeof data?.traceId === 'string' ? data.traceId : null)
+                .catch(() => null);
         } catch {
             // Even an unavailable diagnostics endpoint must not affect playback.
+            attempt.tracePromise = Promise.resolve(null);
         }
+    }
+
+    reportBrowserPlaybackEvent(event, reason, playId = this._playId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed || attempt.playId !== playId || this._playId !== playId) return;
+        attempt.queue = attempt.queue.then(async () => {
+            const traceId = await attempt.tracePromise;
+            if (!traceId) return;
+            await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/events`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event, reason }),
+                keepalive: reason === 'page_closed'
+            });
+        }).catch(() => {});
+    }
+
+    recordBrowserPlaybackStarted(playId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.started || attempt.playId !== playId || this._playId !== playId) return;
+        attempt.started = true;
+        this.reportBrowserPlaybackEvent('browser_playback_started', 'media_playing', playId);
+    }
+
+    reportBrowserPlaybackFailure(error, playId = this._playId) {
+        if (error?.name === 'AbortError') return;
+        this.reportBrowserPlaybackEvent('browser_playback_failed',
+            error?.name === 'NotAllowedError' ? 'start_blocked' : 'start_failed', playId);
+    }
+
+    finishBrowserPlayback(reason = 'browser_stopped') {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed) return;
+        this.reportBrowserPlaybackEvent('browser_playback_stopped', reason, attempt.playId);
+        attempt.closed = true;
+        this.browserPlaybackAttempt = null;
     }
 
     /**
@@ -1125,6 +1171,7 @@ class VideoPlayer {
         xtreamFallbackFormat = null,
         startupPlayback = false
     } = {}) {
+        this.finishBrowserPlayback('browser_replaced');
         const playId = ++this._playId;
         this._startupPlaybackId = startupPlayback ? playId : null;
         const previousPendingRequest = this._pendingConnectionRequest;
@@ -1333,6 +1380,7 @@ class VideoPlayer {
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
                         this.startVideoPlayback(playId).catch(e => {
+                            this.reportBrowserPlaybackFailure(e, playId);
                             if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                         });
                         this.updateNowPlaying(channel);
@@ -1530,6 +1578,7 @@ class VideoPlayer {
                 const remuxUrl = this.getRemuxUrl(streamUrl);
                 this.video.src = remuxUrl;
                 this.startVideoPlayback(playId).catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
                     if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                 });
 
@@ -1568,7 +1617,9 @@ class VideoPlayer {
                 this.hls.attachMedia(this.video);
 
                 this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    if (this._playId !== playId) return;
                     this.startVideoPlayback(playId).catch(e => {
+                        this.reportBrowserPlaybackFailure(e, playId);
                         if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                     });
                 });
@@ -1584,6 +1635,7 @@ class VideoPlayer {
 
                 // Re-attach error handler for the new Hls instance
                 this.hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (this._playId !== playId) return;
                     if (data.fatal) {
                         const isCorsLikely = data.type === Hls.ErrorTypes.NETWORK_ERROR ||
                             (data.type === Hls.ErrorTypes.MEDIA_ERROR && data.details === 'fragParsingError');
@@ -1594,7 +1646,8 @@ class VideoPlayer {
                         if (isCorsLikely && !this.isUsingProxy && !isLocalApi) {
                             console.log('CORS/Network error detected, retrying via proxy...', data.details);
                             this.isUsingProxy = true;
-                            this.reportBrowserPlaybackPath('proxied_hls', playId);
+                            this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                            this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
                             this.hls.loadSource(this.getProxiedUrl(this.currentUrl));
                             this.hls.startLoad();
                         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -1606,6 +1659,7 @@ class VideoPlayer {
                                 this.hls.recoverMediaError();
                             }
                         } else {
+                            this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                             console.error('Fatal HLS error:', data);
                         }
                     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -1636,14 +1690,19 @@ class VideoPlayer {
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     if (e.name === 'AbortError') return; // Ignore interruption by new load
+                    if (this._playId !== playId) return;
                     console.log('Autoplay prevented, trying proxy if CORS error:', e);
                     if (!this.isUsingProxy) {
                         this.isUsingProxy = true;
-                        this.reportBrowserPlaybackPath('proxied_hls', playId);
+                        this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                        this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
                         this.video.src = this.getProxiedUrl(streamUrl);
                         this.startVideoPlayback(playId).catch(err => {
+                            this.reportBrowserPlaybackFailure(err, playId);
                             if (err.name !== 'AbortError') console.error('Proxy play failed:', err);
                         });
+                    } else {
+                        this.reportBrowserPlaybackFailure(e, playId);
                     }
                 });
             } else {
@@ -1652,6 +1711,7 @@ class VideoPlayer {
                 this.reportBrowserPlaybackPath('direct_media', playId);
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
                     if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                 });
             }
@@ -2026,6 +2086,7 @@ class VideoPlayer {
      * Stop playback
      */
     stop({ keepPlaybackRequest = false, skipSessionCleanup = false } = {}) {
+        this.finishBrowserPlayback(keepPlaybackRequest ? 'browser_replaced' : 'browser_stopped');
         if (!keepPlaybackRequest) {
             this._playId += 1;
             this._playAbortController?.abort();

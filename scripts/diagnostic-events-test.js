@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const diagnostics = require('../server/services/diagnosticEvents');
+const browserPlaybackTraces = require('../server/services/browserPlaybackTraces');
 
 function getFreePort() {
     return new Promise((resolve, reject) => {
@@ -83,6 +84,33 @@ async function run() {
     }
     assert.equal(boundedStore.list(1000).length, diagnostics.MAX_EVENTS);
     assert.ok(Buffer.byteLength(JSON.stringify(boundedStore.list(1000))) < 64 * 1024);
+
+    const lifecycleEvents = diagnostics.createStore({ now: () => now });
+    const lifecycle = browserPlaybackTraces.createStore({
+        now: () => now,
+        maxTraces: 2,
+        maxAgeMs: 1000,
+        events: { ...lifecycleEvents, createTraceId: diagnostics.createTraceId }
+    });
+    now = 3000;
+    const firstTrace = lifecycle.start(1, 'direct_hls');
+    assert.ok(firstTrace);
+    assert.equal(lifecycle.record(2, firstTrace, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_playback_started', privateMarker), false);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_playback_started', 'media_playing'), true);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_proxy_retry', 'proxy_retry'), true);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_path_selected', 'proxied_hls'), true);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_playback_stopped', 'browser_stopped'), true);
+    assert.equal(lifecycle.record(1, firstTrace, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(new Set(lifecycleEvents.list().map(event => event.traceId)).size, 1);
+    assert.equal(lifecycle.start(1, privateMarker), null);
+    const evictedTrace = lifecycle.start(1, 'native_hls');
+    const retainedTrace = lifecycle.start(1, 'direct_media');
+    lifecycle.start(1, 'auto_remux');
+    assert.equal(lifecycle.record(1, evictedTrace, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), true);
+    now = 4001;
+    assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), false);
 
     const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-diagnostic-events-'));
     const port = await getFreePort();
@@ -184,8 +212,33 @@ async function run() {
                 args: ['-headers', privateMarker], metadata: { nested: [privateMarker] }
             })
         });
-        assert.equal(acceptedReport.status, 204);
+        assert.equal(acceptedReport.status, 201);
         assert.equal(acceptedReport.headers.get('cache-control'), 'no-store');
+        const browserTraceId = (await acceptedReport.json()).traceId;
+        assert.match(browserTraceId, /^[0-9a-f-]{36}$/i);
+        const reportEvent = (cookie, trace, event, reason) => fetch(
+            `${baseUrl}/api/diagnostics/playback/${encodeURIComponent(trace)}/events`, {
+                method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event, reason, url: privateMarker,
+                    error: { message: privateMarker }, metadata: { nested: [privateMarker] } })
+            }
+        );
+        const unauthenticatedEvent = await reportEvent('', browserTraceId, 'browser_playback_started', 'media_playing');
+        assert.equal(unauthenticatedEvent.status, 401);
+        const invalidEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_failed', privateMarker);
+        assert.equal(invalidEvent.status, 404);
+        const startedEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_started', 'media_playing');
+        assert.equal(startedEvent.status, 204);
+        const differentAccountEvent = await reportEvent(adminCookie, browserTraceId, 'browser_proxy_retry', 'proxy_retry');
+        assert.equal(differentAccountEvent.status, 404);
+        const retryEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_proxy_retry', 'proxy_retry');
+        assert.equal(retryEvent.status, 204);
+        const proxiedEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_path_selected', 'proxied_hls');
+        assert.equal(proxiedEvent.status, 204);
+        const stoppedEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_stopped', 'browser_stopped');
+        assert.equal(stoppedEvent.status, 204);
+        const lateEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_started', 'media_playing');
+        assert.equal(lateEvent.status, 404);
 
         const sourceUrl = `http://127.0.0.1:${fixturePort}/playlist.m3u?token=${privateMarker}`;
         const createSource = await fetch(`${baseUrl}/api/sources`, {
@@ -231,7 +284,12 @@ async function run() {
         assert.ok(summary.events.some(event => event.event === 'sync_failed'));
         assert.ok(summary.events.some(event => event.event === 'browser_path_selected'
             && event.reason === 'direct_hls'
-            && event.reasonText === 'The browser plays HLS without conversion.'));
+            && event.reasonText === 'HLS playback without conversion was selected.'));
+        const browserEvents = summary.events.filter(event => event.traceId === browserTraceId);
+        assert.deepEqual(browserEvents.map(event => event.event).reverse(), [
+            'browser_path_selected', 'browser_playback_started', 'browser_proxy_retry',
+            'browser_path_selected', 'browser_playback_stopped'
+        ]);
         assert.ok(summary.events.length <= 50);
         assert.equal(summary.retention.maxEvents, diagnostics.MAX_EVENTS);
         assert.equal(JSON.stringify(summary).includes(privateMarker), false);
