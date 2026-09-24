@@ -4,16 +4,14 @@ const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const auth = require('../auth');
 const diagnosticEvents = require('../services/diagnosticEvents');
+const browserPlaybackTraces = require('../services/browserPlaybackTraces');
 const transcodeSessions = require('../services/transcodeSession');
 const { getDb } = require('../db/sqlite');
 const packageVersion = require('../../package.json').version;
 
 const router = express.Router();
-const BROWSER_PATH_REASONS = new Set([
-    'direct_hls', 'native_hls', 'direct_media', 'auto_remux', 'forced_remux', 'proxied_hls'
-]);
 const limitPathReports = rateLimit({
-    limit: 60,
+    limit: 240,
     windowMs: 60 * 1000,
     keyGenerator: req => String(req.user.id),
     standardHeaders: 'draft-7',
@@ -29,15 +27,23 @@ const limitReads = rateLimit({
     message: { error: 'Too many diagnostics requests. Try again shortly.' }
 });
 
-// Any signed-in browser can report a fixed path code. The server supplies the
-// trace ID and never accepts provider details, account data, or raw errors.
+// Any signed-in browser can report fixed lifecycle codes. The server supplies
+// the trace ID and never accepts provider details, account data, or raw errors.
 router.post('/playback-path', auth.requireAuth, limitPathReports, (req, res) => {
     const reason = req.body?.reason;
-    if (typeof reason !== 'string' || !BROWSER_PATH_REASONS.has(reason)) {
+    const traceId = browserPlaybackTraces.start(req.user.id, reason);
+    if (!traceId) {
         return res.status(400).json({ error: 'Invalid playback path' });
     }
-    const traceId = diagnosticEvents.createTraceId();
-    if (traceId) diagnosticEvents.record({ traceId, event: 'browser_path_selected', reason });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(201).json({ traceId });
+});
+
+router.post('/playback/:traceId/events', auth.requireAuth, limitPathReports, (req, res) => {
+    const { event, reason } = req.body || {};
+    if (!browserPlaybackTraces.record(req.user.id, req.params.traceId, event, reason)) {
+        return res.status(404).json({ error: 'Playback trace not found or event invalid' });
+    }
     res.setHeader('Cache-Control', 'no-store');
     return res.status(204).end();
 });
