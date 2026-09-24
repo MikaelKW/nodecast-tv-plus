@@ -12,6 +12,7 @@ const TRACE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3
 const EVENT_DOMAIN = Object.freeze({
     session_start: 'playback',
     path_selected: 'playback',
+    browser_path_selected: 'playback',
     playback_ready: 'playback',
     connection_retry: 'playback',
     playback_reconnecting: 'playback',
@@ -27,6 +28,7 @@ const EVENT_DOMAIN = Object.freeze({
 const EVENT_REASONS = Object.freeze({
     session_start: new Set(['requested', 'retrying']),
     path_selected: new Set(['video_audio_copy', 'video_copy_audio_encode', 'video_encode_audio_copy', 'video_audio_encode']),
+    browser_path_selected: new Set(['direct_hls', 'native_hls', 'direct_media', 'auto_remux', 'forced_remux', 'proxied_hls']),
     playback_ready: new Set(['playlist_ready']),
     connection_retry: new Set(['retrying']),
     playback_reconnecting: new Set(['input_reconnect']),
@@ -47,6 +49,12 @@ const REASONS = Object.freeze({
     video_copy_audio_encode: 'Video is copied and audio is converted for compatibility.',
     video_encode_audio_copy: 'Video is converted while audio is copied.',
     video_audio_encode: 'Video and audio are converted.',
+    direct_hls: 'The browser plays HLS without conversion.',
+    native_hls: 'The browser uses its native HLS player.',
+    direct_media: 'The browser plays the media stream without conversion.',
+    auto_remux: 'The stream is automatically repackaged for browser playback.',
+    forced_remux: 'The stream is repackaged because Force Remux is enabled.',
+    proxied_hls: 'The browser plays HLS through the application proxy.',
     playlist_not_ready: 'The playback playlist did not become ready.',
     startup_error: 'Playback could not start.',
     process_error: 'The playback process failed.',

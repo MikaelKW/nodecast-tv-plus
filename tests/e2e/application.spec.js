@@ -1523,6 +1523,12 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.event === 'browser_path_selected'
+            && event.reason === 'direct_media');
+    })).toBe(true);
 
     // A cap matching the original fixed-resolution stream must preserve its
     // remux path. After a lower cap encodes video, raising the cap back to the
@@ -1531,6 +1537,12 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         await window.app.player.play({ name: 'Remux quality restoration' }, url);
     }, `${fixtureBaseUrl}/sample.ts`);
     await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(() => page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.event === 'browser_path_selected'
+            && event.reason === 'auto_remux');
+    })).toBe(true);
     await expect.poll(async () => video.evaluate(element => element.videoHeight), {
         timeout: 30_000
     }).toBe(720);

@@ -9,6 +9,17 @@ const { getDb } = require('../db/sqlite');
 const packageVersion = require('../../package.json').version;
 
 const router = express.Router();
+const BROWSER_PATH_REASONS = new Set([
+    'direct_hls', 'native_hls', 'direct_media', 'auto_remux', 'forced_remux', 'proxied_hls'
+]);
+const limitPathReports = rateLimit({
+    limit: 60,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many playback reports. Try again shortly.' }
+});
 const limitReads = rateLimit({
     limit: 60,
     windowMs: 60 * 1000,
@@ -16,6 +27,19 @@ const limitReads = rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: { error: 'Too many diagnostics requests. Try again shortly.' }
+});
+
+// Any signed-in browser can report a fixed path code. The server supplies the
+// trace ID and never accepts provider details, account data, or raw errors.
+router.post('/playback-path', auth.requireAuth, limitPathReports, (req, res) => {
+    const reason = req.body?.reason;
+    if (typeof reason !== 'string' || !BROWSER_PATH_REASONS.has(reason)) {
+        return res.status(400).json({ error: 'Invalid playback path' });
+    }
+    const traceId = diagnosticEvents.createTraceId();
+    if (traceId) diagnosticEvents.record({ traceId, event: 'browser_path_selected', reason });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(204).end();
 });
 
 router.use(auth.requireAuth, auth.requireAdmin);
