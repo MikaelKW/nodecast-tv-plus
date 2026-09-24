@@ -1527,8 +1527,17 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         const response = await fetch('/api/diagnostics/events');
         const data = await response.json();
         return data.events.some(event => event.event === 'browser_path_selected'
-            && event.reason === 'direct_media');
+            && event.reason === 'direct_media'
+            && data.events.some(related => related.traceId === event.traceId
+                && related.event === 'browser_playback_started'));
     })).toBe(true);
+    const directPlaybackTrace = await page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.find(event => event.event === 'browser_path_selected'
+            && event.reason === 'direct_media')?.traceId;
+    });
+    expect(directPlaybackTrace).toBeTruthy();
 
     // A cap matching the original fixed-resolution stream must preserve its
     // remux path. After a lower cap encodes video, raising the cap back to the
@@ -1536,12 +1545,21 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.evaluate(async url => {
         await window.app.player.play({ name: 'Remux quality restoration' }, url);
     }, `${fixtureBaseUrl}/sample.ts`);
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_playback_stopped'
+            && event.reason === 'browser_replaced');
+    }, directPlaybackTrace)).toBe(true);
     await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
     await expect.poll(() => page.evaluate(async () => {
         const response = await fetch('/api/diagnostics/events');
         const data = await response.json();
         return data.events.some(event => event.event === 'browser_path_selected'
-            && event.reason === 'auto_remux');
+            && event.reason === 'auto_remux'
+            && data.events.some(related => related.traceId === event.traceId
+                && related.event === 'browser_playback_started'));
     })).toBe(true);
     await expect.poll(async () => video.evaluate(element => element.videoHeight), {
         timeout: 30_000
