@@ -4,11 +4,18 @@ class DiagnosticsPanel {
         this.content = document.getElementById('diagnostics-content');
         this.status = document.getElementById('diagnostics-status');
         this.refreshButton = document.getElementById('diagnostics-refresh');
+        this.previewButton = document.getElementById('diagnostics-preview-button');
+        this.downloadButton = document.getElementById('diagnostics-download-button');
+        this.previewStatus = document.getElementById('diagnostics-preview-status');
+        this.preview = document.getElementById('diagnostics-preview');
+        this.snapshotText = null;
         this.visible = false;
         this.generation = 0;
         this.timer = null;
         this.loadingGeneration = null;
         this.refreshButton?.addEventListener('click', () => this.load());
+        this.previewButton?.addEventListener('click', () => this.loadPreview());
+        this.downloadButton?.addEventListener('click', () => this.downloadPreview());
     }
 
     show() {
@@ -25,6 +32,61 @@ class DiagnosticsPanel {
         this.timer = null;
         this.content?.replaceChildren();
         if (this.status) this.status.textContent = '';
+        this.clearPreview();
+    }
+
+    clearPreview() {
+        this.snapshotText = null;
+        if (this.preview) {
+            this.preview.textContent = '';
+            this.preview.hidden = true;
+        }
+        if (this.previewStatus) this.previewStatus.textContent = '';
+        if (this.previewButton) this.previewButton.disabled = false;
+        if (this.downloadButton) this.downloadButton.disabled = true;
+    }
+
+    async loadPreview() {
+        if (!this.visible || this.previewButton?.disabled) return;
+        const generation = this.generation;
+        this.clearPreview();
+        if (this.previewButton) this.previewButton.disabled = true;
+        if (this.previewStatus) this.previewStatus.textContent = 'Preparing support snapshot…';
+        try {
+            const snapshot = await API.diagnostics.getSupportPreview();
+            if (!this.visible || generation !== this.generation || !snapshot) return;
+            const text = JSON.stringify(snapshot, null, 2) + '\n';
+            if (snapshot.schemaVersion !== 1 || new Blob([text]).size > 48 * 1024) {
+                throw new Error('Unexpected support snapshot format');
+            }
+            this.snapshotText = text;
+            if (this.preview) {
+                this.preview.textContent = text;
+                this.preview.hidden = false;
+            }
+            if (this.previewStatus) this.previewStatus.textContent = 'Review this snapshot before downloading or sharing it.';
+            if (this.downloadButton) this.downloadButton.disabled = false;
+        } catch {
+            if (this.visible && generation === this.generation && this.previewStatus) {
+                this.previewStatus.textContent = 'The support snapshot is unavailable. Check your session or try again.';
+            }
+        } finally {
+            if (this.visible && generation === this.generation && this.previewButton) {
+                this.previewButton.disabled = false;
+            }
+        }
+    }
+
+    downloadPreview() {
+        if (!this.visible || !this.snapshotText || this.downloadButton?.disabled) return;
+        const blobUrl = URL.createObjectURL(new Blob([this.snapshotText], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = 'nodecast-support-snapshot.json';
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     }
 
     async load() {
