@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
+const browserPlaybackTraces = require('../services/browserPlaybackTraces');
 const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../services/urlSecurity');
@@ -145,11 +146,14 @@ router.post('/session', async (req, res) => {
             return res.status(500).json({ error: 'Transcoding failed to start', reason: 'Playlist not generated in time' });
         }
 
+        const diagnosticTraceId = browserPlaybackTraces.registerManaged(req.user.id, session.diagnosticTraceId)
+            ? session.diagnosticTraceId : null;
         res.json({
             sessionId: session.id,
             playlistUrl: `/api/transcode/${session.id}/stream.m3u8`,
             mediaStartTime: session.mediaStartTime,
-            status: session.status
+            status: session.status,
+            diagnosticTraceId
         });
 
     } catch (err) {
