@@ -244,6 +244,17 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(diagnosticsLayout.scrollWidth).toBeLessThanOrEqual(diagnosticsLayout.clientWidth + 1);
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '.diagnostics-card:last-child', '.settings-container');
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
+    await page.locator('#diagnostics-preview-button').click();
+    await expect(page.locator('#diagnostics-preview')).toBeVisible();
+    await expect(page.locator('#diagnostics-download-button')).toBeEnabled();
+    const previewLayout = await page.locator('#diagnostics-preview').evaluate(element => ({
+        left: element.getBoundingClientRect().left,
+        right: element.getBoundingClientRect().right,
+        viewportWidth: window.innerWidth
+    }));
+    expect(previewLayout.left).toBeGreaterThanOrEqual(0);
+    expect(previewLayout.right).toBeLessThanOrEqual(previewLayout.viewportWidth + 1);
 
     await page.locator('.tab[data-tab="player"]').click();
     await scrollToBottom(page, '.settings-container');

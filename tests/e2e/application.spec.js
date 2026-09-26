@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
 const { test, expect } = require('@playwright/test');
 const OTPAuth = require('otpauth');
 
@@ -138,9 +139,23 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#diagnostics-status')).toContainText('Updated');
     await page.locator('#diagnostics-refresh').click();
     await expect(page.locator('#diagnostics-status')).toContainText('Updated');
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
+    await page.locator('#diagnostics-preview-button').click();
+    await expect(page.locator('#diagnostics-preview')).toBeVisible();
+    await expect(page.locator('#diagnostics-preview-status')).toContainText('Review this snapshot');
+    await expect(page.locator('#diagnostics-download-button')).toBeEnabled();
+    const reviewedSnapshot = await page.locator('#diagnostics-preview').textContent();
+    expect(JSON.parse(reviewedSnapshot).schemaVersion).toBe(1);
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#diagnostics-download-button').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('nodecast-support-snapshot.json');
+    expect(await fs.readFile(await download.path(), 'utf8')).toBe(reviewedSnapshot);
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(page.locator('#diagnostics-content')).toBeEmpty();
+    await expect(page.locator('#diagnostics-preview')).toBeEmpty();
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
     await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
     await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
     await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
