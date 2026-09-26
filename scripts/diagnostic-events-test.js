@@ -139,6 +139,19 @@ async function run() {
     assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), true);
     now = 4001;
     assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), false);
+    const managedTraceId = diagnostics.createTraceId();
+    assert.equal(lifecycle.registerManaged(1, privateMarker), false);
+    assert.equal(lifecycle.registerManaged(1, managedTraceId), true);
+    assert.equal(lifecycle.registerManaged(2, managedTraceId), false, 'a managed trace cannot change owners');
+    assert.equal(lifecycle.record(2, managedTraceId, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_path_selected', 'proxied_hls'), false);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_proxy_retry', 'proxy_retry'), false);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_playback_started', 'media_playing'), true);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_playback_failed', 'hls_failed'), true);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_playback_stopped', 'browser_replaced'), true);
+    assert.equal(lifecycle.record(1, managedTraceId, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(new Set(lifecycleEvents.list().filter(event => event.traceId === managedTraceId)
+        .map(event => event.reason)).has('hls_failed'), true);
 
     const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-diagnostic-events-'));
     const port = await getFreePort();
