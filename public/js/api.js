@@ -193,7 +193,8 @@ const API = {
     },
 
     diagnostics: {
-        getSummary: () => API.request('GET', '/diagnostics/summary')
+        getSummary: () => API.request('GET', '/diagnostics/summary'),
+        getSupportPreview: () => API.request('GET', '/diagnostics/support-preview')
     },
 
     // Users (admin only)

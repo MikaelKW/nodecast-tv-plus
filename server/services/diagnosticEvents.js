@@ -102,6 +102,22 @@ function createTraceId() {
     }
 }
 
+// Rebuild an event from fixed codes for support output. Do not copy arbitrary
+// properties from callers or trust reasonText supplied by a caller.
+function toPublicEvent(input) {
+    if (!input || typeof input !== 'object') return null;
+    const { at, traceId, event, reason, sourceId } = input;
+    if (typeof traceId !== 'string' || !TRACE_ID_PATTERN.test(traceId)) return null;
+    const domain = Object.hasOwn(EVENT_DOMAIN, event) ? EVENT_DOMAIN[event] : null;
+    if (!domain || !EVENT_REASONS[event].has(reason)) return null;
+    if (typeof at !== 'string' || !Number.isFinite(Date.parse(at)) || new Date(at).toISOString() !== at) return null;
+    if (domain === 'sync' && (!Number.isSafeInteger(sourceId) || sourceId < 0)) return null;
+    return {
+        at, traceId, domain, event, reason, reasonText: REASONS[reason],
+        ...(domain === 'sync' ? { sourceId } : {})
+    };
+}
+
 function createStore({ now = Date.now, maxEvents = MAX_EVENTS, maxAgeMs = MAX_AGE_MS } = {}) {
     const events = [];
 
@@ -155,4 +171,4 @@ function createStore({ now = Date.now, maxEvents = MAX_EVENTS, maxAgeMs = MAX_AG
 
 const store = createStore();
 
-module.exports = { createTraceId, createStore, record: store.record, list: store.list, MAX_EVENTS, MAX_AGE_MS };
+module.exports = { createTraceId, createStore, toPublicEvent, record: store.record, list: store.list, MAX_EVENTS, MAX_AGE_MS };

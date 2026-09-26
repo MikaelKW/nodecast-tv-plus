@@ -4,6 +4,7 @@ const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const auth = require('../auth');
 const diagnosticEvents = require('../services/diagnosticEvents');
+const supportSnapshot = require('../services/supportSnapshot');
 const browserPlaybackTraces = require('../services/browserPlaybackTraces');
 const transcodeSessions = require('../services/transcodeSession');
 const { getDb } = require('../db/sqlite');
@@ -59,7 +60,7 @@ router.get('/events', limitReads, (req, res) => {
     res.json({ events: diagnosticEvents.list(limit) });
 });
 
-router.get('/summary', limitReads, (req, res) => {
+function getSummary() {
     const memory = process.memoryUsage();
     let synchronization = { available: false, sources: [] };
     try {
@@ -82,8 +83,7 @@ router.get('/summary', limitReads, (req, res) => {
         // A diagnostics failure must not affect the source or playback paths.
     }
 
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({
+    return {
         version: packageVersion,
         revision: /^[a-f0-9]{40}$/i.test(process.env.NODECAST_REVISION || '')
             ? process.env.NODECAST_REVISION : null,
@@ -96,7 +96,21 @@ router.get('/summary', limitReads, (req, res) => {
         synchronization,
         events: diagnosticEvents.list(50),
         retention: { maxEvents: diagnosticEvents.MAX_EVENTS, maxAgeSeconds: diagnosticEvents.MAX_AGE_MS / 1000 }
-    });
+    };
+}
+
+router.get('/summary', limitReads, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(getSummary());
+});
+
+router.get('/support-preview', limitReads, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+        res.json(supportSnapshot.createSnapshot(getSummary()));
+    } catch {
+        res.status(503).json({ error: 'Support preview is unavailable.' });
+    }
 });
 
 module.exports = router;

@@ -10,6 +10,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const diagnostics = require('../server/services/diagnosticEvents');
 const browserPlaybackTraces = require('../server/services/browserPlaybackTraces');
+const supportSnapshot = require('../server/services/supportSnapshot');
 
 function getFreePort() {
     return new Promise((resolve, reject) => {
@@ -84,6 +85,33 @@ async function run() {
     }
     assert.equal(boundedStore.list(1000).length, diagnostics.MAX_EVENTS);
     assert.ok(Buffer.byteLength(JSON.stringify(boundedStore.list(1000))) < 64 * 1024);
+    const maliciousSummary = {
+        version: '2.6.2', revision: 'a'.repeat(40),
+        resources: { processUptimeSeconds: 42, processRssBytes: 1000,
+            processHeapUsedBytes: 500, secret: privateMarker },
+        playback: { managedSessions: [{ traceId, status: 'running', ageSeconds: 3,
+            url: privateMarker, args: [privateMarker], metadata: { nested: privateMarker } }] },
+        synchronization: { available: true, sources: [{ sourceId: 4, status: 'error',
+            at: new Date().toISOString(), url: privateMarker,
+            error: { cause: { message: privateMarker } } }] },
+        events: [{ at: new Date().toISOString(), traceId, domain: 'playback',
+            event: 'session_start', reason: 'requested', reasonText: privateMarker,
+            headers: { Authorization: privateMarker }, query: `token=${privateMarker}` }],
+        rawLogs: privateMarker,
+        user: { email: privateMarker }
+    };
+    const safeSnapshot = supportSnapshot.createSnapshot(maliciousSummary);
+    assert.deepEqual(Object.keys(safeSnapshot), [
+        'schemaVersion', 'generatedAt', 'application', 'resources', 'playback',
+        'synchronization', 'events', 'retention'
+    ]);
+    assert.equal(safeSnapshot.events[0].reasonText, 'Playback was requested.');
+    assert.equal(JSON.stringify(safeSnapshot).includes(privateMarker), false);
+    assert.equal(Buffer.byteLength(JSON.stringify(safeSnapshot, null, 2) + '\n') <= supportSnapshot.MAX_EXPORT_BYTES, true);
+    maliciousSummary.events = Array.from({ length: 1000 }, () => maliciousSummary.events[0]);
+    assert.equal(supportSnapshot.createSnapshot(maliciousSummary).events.length <= supportSnapshot.MAX_EXPORT_EVENTS, true);
+    maliciousSummary.events[0] = { ...maliciousSummary.events[0], reason: privateMarker };
+    assert.equal(supportSnapshot.createSnapshot(maliciousSummary).events.some(event => event.reason === privateMarker), false);
 
     const lifecycleEvents = diagnostics.createStore({ now: () => now });
     const lifecycle = browserPlaybackTraces.createStore({
@@ -153,6 +181,8 @@ async function run() {
         assert.equal(unauthenticated.status, 401);
         const unauthenticatedSummary = await fetch(`${baseUrl}/api/diagnostics/summary`);
         assert.equal(unauthenticatedSummary.status, 401);
+        const unauthenticatedPreview = await fetch(`${baseUrl}/api/diagnostics/support-preview`);
+        assert.equal(unauthenticatedPreview.status, 401);
         const unauthenticatedReport = await fetch(`${baseUrl}/api/diagnostics/playback-path`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reason: 'direct_hls' })
@@ -198,6 +228,10 @@ async function run() {
             headers: { Cookie: viewerCookie }
         });
         assert.equal(viewerSummary.status, 403);
+        const viewerPreview = await fetch(`${baseUrl}/api/diagnostics/support-preview`, {
+            headers: { Cookie: viewerCookie }
+        });
+        assert.equal(viewerPreview.status, 403);
         const rejectedReport = await fetch(`${baseUrl}/api/diagnostics/playback-path`, {
             method: 'POST', headers: { Cookie: viewerCookie, 'Content-Type': 'application/json' },
             body: JSON.stringify({ reason: 'process_error', url: privateMarker })
@@ -295,6 +329,21 @@ async function run() {
         assert.equal(JSON.stringify(summary).includes(privateMarker), false);
         assert.equal(JSON.stringify(summary).includes(sourceUrl), false);
         assert.equal(JSON.stringify(summary).includes('errorText'), false);
+
+        const previewResponse = await fetch(`${baseUrl}/api/diagnostics/support-preview`, {
+            headers: { Cookie: adminCookie }
+        });
+        assert.equal(previewResponse.status, 200);
+        assert.equal(previewResponse.headers.get('cache-control'), 'no-store');
+        const preview = await previewResponse.json();
+        assert.equal(preview.schemaVersion, 1);
+        assert.equal(preview.application.version, require('../package.json').version);
+        assert.equal(preview.application.revision, revision);
+        assert.ok(preview.events.some(event => event.event === 'sync_failed'));
+        assert.ok(preview.events.some(event => event.traceId === browserTraceId));
+        assert.equal(JSON.stringify(preview).includes(privateMarker), false);
+        assert.equal(JSON.stringify(preview).includes(sourceUrl), false);
+        assert.ok(Buffer.byteLength(JSON.stringify(preview, null, 2) + '\n') <= supportSnapshot.MAX_EXPORT_BYTES);
 
         console.log('Diagnostic event, admin summary, access control, bounded storage, and sync trace tests passed.');
     } catch (error) {
