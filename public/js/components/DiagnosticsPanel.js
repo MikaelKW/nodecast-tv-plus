@@ -9,6 +9,7 @@ class DiagnosticsPanel {
         this.previewStatus = document.getElementById('diagnostics-preview-status');
         this.preview = document.getElementById('diagnostics-preview');
         this.snapshotText = null;
+        this.previewGeneration = 0;
         this.visible = false;
         this.generation = 0;
         this.timer = null;
@@ -36,6 +37,7 @@ class DiagnosticsPanel {
     }
 
     clearPreview() {
+        this.previewGeneration += 1;
         this.snapshotText = null;
         if (this.preview) {
             this.preview.textContent = '';
@@ -50,11 +52,13 @@ class DiagnosticsPanel {
         if (!this.visible || this.previewButton?.disabled) return;
         const generation = this.generation;
         this.clearPreview();
+        const previewGeneration = this.previewGeneration;
         if (this.previewButton) this.previewButton.disabled = true;
         if (this.previewStatus) this.previewStatus.textContent = 'Preparing support snapshot…';
         try {
             const snapshot = await API.diagnostics.getSupportPreview();
-            if (!this.visible || generation !== this.generation || !snapshot) return;
+            if (!snapshot) throw new Error('Support snapshot unavailable');
+            if (!this.visible || generation !== this.generation || previewGeneration !== this.previewGeneration) return;
             const text = JSON.stringify(snapshot, null, 2) + '\n';
             if (snapshot.schemaVersion !== 1 || new Blob([text]).size > 48 * 1024) {
                 throw new Error('Unexpected support snapshot format');
@@ -67,11 +71,11 @@ class DiagnosticsPanel {
             if (this.previewStatus) this.previewStatus.textContent = 'Review this snapshot before downloading or sharing it.';
             if (this.downloadButton) this.downloadButton.disabled = false;
         } catch {
-            if (this.visible && generation === this.generation && this.previewStatus) {
+            if (this.visible && generation === this.generation && previewGeneration === this.previewGeneration && this.previewStatus) {
                 this.previewStatus.textContent = 'The support snapshot is unavailable. Check your session or try again.';
             }
         } finally {
-            if (this.visible && generation === this.generation && this.previewButton) {
+            if (this.visible && generation === this.generation && previewGeneration === this.previewGeneration && this.previewButton) {
                 this.previewButton.disabled = false;
             }
         }
@@ -99,12 +103,14 @@ class DiagnosticsPanel {
 
         try {
             const data = await API.diagnostics.getSummary();
-            if (!this.visible || generation !== this.generation || !data) return;
+            if (!this.visible || generation !== this.generation) return;
+            if (!data) throw new Error('Diagnostics unavailable');
             this.render(data);
             if (this.status) this.status.textContent = `Updated ${new Date().toLocaleTimeString()}.`;
         } catch {
             if (!this.visible || generation !== this.generation) return;
             this.content?.replaceChildren();
+            this.clearPreview();
             if (this.status) this.status.textContent = 'Diagnostics are unavailable. Check your session or try again.';
         } finally {
             if (this.loadingGeneration === generation) this.loadingGeneration = null;

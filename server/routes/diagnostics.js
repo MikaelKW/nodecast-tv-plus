@@ -49,6 +49,14 @@ router.post('/playback/:traceId/events', auth.requireAuth, limitPathReports, (re
     return res.status(204).end();
 });
 
+router.post('/playback/:traceId/renew', auth.requireAuth, limitPathReports, (req, res) => {
+    if (!browserPlaybackTraces.renew(req.user.id, req.params.traceId)) {
+        return res.status(404).json({ error: 'Playback trace not found' });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(204).end();
+});
+
 router.use(auth.requireAuth, auth.requireAdmin);
 
 router.get('/events', limitReads, (req, res) => {

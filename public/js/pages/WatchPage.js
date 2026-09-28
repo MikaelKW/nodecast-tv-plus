@@ -77,6 +77,9 @@ class WatchPage {
 
         // State
         this.hls = null;
+        this._diagnosticPlayId = 0;
+        this.browserPlaybackAttempt = null;
+        this.browserPlaybackRenewalTimer = null;
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
         this.hlsMediaRecoveryCount = 0;
@@ -286,16 +289,23 @@ class WatchPage {
             this.onPlay();
             this.scheduleSelectedSubtitleRestore();
         });
+        this.video?.addEventListener('playing', () => {
+            this.recordBrowserPlaybackStarted(this._diagnosticPlayId);
+        });
         this.video?.addEventListener('seeked', () => this.scheduleSelectedSubtitleRestore());
         this.video?.addEventListener('pause', () => this.onPause());
         this.video?.addEventListener('ended', () => this.onEnded());
-        this.video?.addEventListener('error', (e) => this.onError(e));
+        this.video?.addEventListener('error', (e) => {
+            this.onError(e);
+            this.reportBrowserPlaybackEvent('browser_playback_failed', 'media_error', this._diagnosticPlayId);
+        });
         this.video?.addEventListener('waiting', () => this.showLoading());
         this.video?.addEventListener('canplay', () => {
             this.hlsMediaRecoveryCount = 0;
             this.hideLoading();
             this.scheduleSelectedSubtitleRestore();
         });
+        window.addEventListener('pagehide', () => this.finishBrowserPlayback('page_closed'));
 
         // Overlay auto-hide + click to toggle play
         const watchSection = document.querySelector('.watch-video-section');
@@ -469,10 +479,100 @@ class WatchPage {
         }
     }
 
+    // Best-effort diagnostics only. Provider URLs, content details, and raw
+    // browser errors are never sent. Playback never waits for these requests.
+    reportBrowserPlaybackPath(reason, playId = this._diagnosticPlayId) {
+        if (this._diagnosticPlayId !== playId) return;
+        this.finishBrowserPlayback('browser_replaced');
+        const attempt = { playId, tracePromise: null, queue: Promise.resolve(), started: false, closed: false };
+        this.browserPlaybackAttempt = attempt;
+        try {
+            attempt.tracePromise = fetch(NodeCastUrl.resolve('/api/diagnostics/playback-path'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            }).then(response => response.ok ? response.json() : null)
+                .then(data => typeof data?.traceId === 'string' ? data.traceId : null)
+                .catch(() => null);
+        } catch {
+            attempt.tracePromise = Promise.resolve(null);
+        }
+    }
+
+    linkManagedPlaybackTrace(traceId, playId = this._diagnosticPlayId) {
+        if (this._diagnosticPlayId !== playId || typeof traceId !== 'string') return;
+        this.finishBrowserPlayback('browser_replaced');
+        this.browserPlaybackAttempt = {
+            playId, tracePromise: Promise.resolve(traceId), queue: Promise.resolve(),
+            started: false, closed: false
+        };
+    }
+
+    reportBrowserPlaybackEvent(event, reason, playId = this._diagnosticPlayId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed || attempt.playId !== playId || this._diagnosticPlayId !== playId) return;
+        attempt.queue = attempt.queue.then(async () => {
+            const traceId = await attempt.tracePromise;
+            if (!traceId) return;
+            await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/events`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event, reason }),
+                keepalive: reason === 'page_closed'
+            });
+        }).catch(() => {});
+    }
+
+    recordBrowserPlaybackStarted(playId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.started || attempt.playId !== playId || this._diagnosticPlayId !== playId) return;
+        attempt.started = true;
+        this.reportBrowserPlaybackEvent('browser_playback_started', 'media_playing', playId);
+        this.startBrowserPlaybackRenewal(playId);
+    }
+
+    reportBrowserPlaybackFailure(error, playId = this._diagnosticPlayId) {
+        if (error?.name === 'AbortError') return;
+        this.reportBrowserPlaybackEvent('browser_playback_failed',
+            error?.name === 'NotAllowedError' ? 'start_blocked' : 'start_failed', playId);
+    }
+
+    startBrowserPlaybackRenewal(playId) {
+        this.stopBrowserPlaybackRenewal();
+        this.browserPlaybackRenewalTimer = setInterval(() => {
+            const attempt = this.browserPlaybackAttempt;
+            if (!attempt || attempt.closed || !attempt.started || attempt.playId !== playId || this._diagnosticPlayId !== playId) {
+                this.stopBrowserPlaybackRenewal();
+                return;
+            }
+            attempt.queue = attempt.queue.then(async () => {
+                const traceId = await attempt.tracePromise;
+                if (!traceId) return;
+                await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/renew`), {
+                    method: 'POST'
+                });
+            }).catch(() => {});
+        }, 10 * 60 * 1000);
+    }
+
+    stopBrowserPlaybackRenewal() {
+        clearInterval(this.browserPlaybackRenewalTimer);
+        this.browserPlaybackRenewalTimer = null;
+    }
+
+    finishBrowserPlayback(reason = 'browser_stopped') {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed) return;
+        this.stopBrowserPlaybackRenewal();
+        this.reportBrowserPlaybackEvent('browser_playback_stopped', reason, attempt.playId);
+        attempt.closed = true;
+        this.browserPlaybackAttempt = null;
+    }
+
     /**
      * Start a HLS transcode session
      */
-    async startTranscodeSession(url, options = {}) {
+    async startTranscodeSession(url, options = {}, playId = this._diagnosticPlayId) {
         try {
             console.log('[WatchPage] Starting HLS transcode session...', options);
             const seekOffset = Math.max(0, Number(options.seekOffset ?? this.resumeTime) || 0);
@@ -487,7 +587,14 @@ class WatchPage {
             });
             if (!res.ok) throw new Error('Failed to start session');
             const session = await res.json();
+            if (this._diagnosticPlayId !== playId) {
+                await fetch(NodeCastUrl.resolve(`/api/transcode/${session.sessionId}`), {
+                    method: 'DELETE'
+                }).catch(() => {});
+                throw new DOMException('Playback request was replaced', 'AbortError');
+            }
             this.currentSessionId = session.sessionId;
+            this.linkManagedPlaybackTrace(session.diagnosticTraceId, playId);
             const mediaStartTime = Number(session.mediaStartTime);
             this.playbackTimeOffset = Number.isFinite(mediaStartTime) && mediaStartTime >= 0
                 ? mediaStartTime
@@ -501,6 +608,7 @@ class WatchPage {
             this.currentTranscodeOptions = sessionOptions;
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
+            if (err?.name === 'AbortError') throw err;
             if (options.maxResolution || options.forceAudioTranscode || Number.isInteger(options.audioStreamIndex)) {
                 console.warn('[WatchPage] Selected playback session failed:', err.message);
                 throw err;
@@ -729,10 +837,13 @@ class WatchPage {
         if (!skipStop) {
             this.stop();
         } else {
+            this.finishBrowserPlayback('browser_replaced');
+            this._diagnosticPlayId += 1;
             this.currentTranscodeOptions = null;
             this.seekChanging = false;
             this.progressScrubbing = false;
         }
+        const diagnosticPlayId = this._diagnosticPlayId;
         const knownDuration = Number(qualitySourceInfo?.duration);
         this.setSourceDuration(VodDuration.firstValid(
             knownDuration,
@@ -862,8 +973,10 @@ class WatchPage {
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
                     const finalUrl = NodeCastUrl.remux(url, info);
+                    this.reportBrowserPlaybackPath('auto_remux', diagnosticPlayId);
                     this.video.src = finalUrl;
                     this.video.play().catch(e => {
+                        this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                         if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
                     });
                     this.setVolumeFromStorage();
@@ -947,8 +1060,10 @@ class WatchPage {
 
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
             const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
+            this.reportBrowserPlaybackPath('forced_remux', diagnosticPlayId);
             this.video.src = finalUrl;
             this.video.play().catch(e => {
+                this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
             this.setVolumeFromStorage();
@@ -965,12 +1080,15 @@ class WatchPage {
         // Use HLS.js for HLS streams
         if (looksLikeHls && Hls.isSupported()) {
             this.updateTranscodeStatus('direct', 'Direct HLS');
-            this.playHls(finalUrl);
+            this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'direct_hls', diagnosticPlayId);
+            this.playHls(finalUrl, { playId: diagnosticPlayId });
         } else {
             // Direct playback for mp4/mkv/avi
             this.updateTranscodeStatus('direct', 'Direct Play');
+            this.reportBrowserPlaybackPath(looksLikeHls ? 'native_hls' : 'direct_media', diagnosticPlayId);
             this.video.src = finalUrl;
             this.video.play().catch(e => {
+                this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
         }
@@ -984,7 +1102,7 @@ class WatchPage {
     /**
      * Play HLS stream using Hls.js
      */
-    playHls(url, { autoPlay = true } = {}) {
+    playHls(url, { autoPlay = true, playId = this._diagnosticPlayId } = {}) {
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
@@ -1052,6 +1170,7 @@ class WatchPage {
             }
             if (autoPlay) {
                 this.video.play().catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
                     if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
                 });
             } else {
@@ -1114,7 +1233,9 @@ class WatchPage {
 
                 if (manifestFailedBeforePlayback && canTryProxy) {
                     console.warn('[WatchPage] Direct HLS manifest failed; retrying through the stream proxy.');
-                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`));
+                    this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                    this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
+                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`), { playId });
                     return;
                 }
 
@@ -1130,12 +1251,15 @@ class WatchPage {
 
                 if (canTryProxy) {
                     console.warn('[WatchPage] Direct HLS recovery was exhausted; retrying through the stream proxy.');
-                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`));
+                    this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                    this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
+                    this.playHls(NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(this.currentUrl)}`), { playId });
                     return;
                 }
             }
 
             console.error('[WatchPage] HLS playback could not recover:', data.type, data.details);
+            this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
             this.hideLoading();
             this.updateTranscodeStatus('warning', 'Playback stopped · Try again');
             activeHls.destroy();
@@ -1155,6 +1279,8 @@ class WatchPage {
     }
 
     stop({ saveHistory = true } = {}) {
+        this.finishBrowserPlayback('browser_stopped');
+        this._diagnosticPlayId += 1;
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
@@ -1542,6 +1668,7 @@ class WatchPage {
     }
 
     onEnded() {
+        this.finishBrowserPlayback('browser_stopped');
         // For series, show next episode panel if not already showing and auto-play is enabled
         const autoPlayEnabled = this.app?.player?.settings?.autoPlayNextEpisode;
         if (autoPlayEnabled && this.contentType === 'series' && this.seriesInfo && !this.nextEpisodeShowing) {
