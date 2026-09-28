@@ -102,6 +102,10 @@ function createTraceId() {
     }
 }
 
+function isTraceId(value) {
+    return typeof value === 'string' && TRACE_ID_PATTERN.test(value);
+}
+
 // Rebuild an event from fixed codes for support output. Do not copy arbitrary
 // properties from callers or trust reasonText supplied by a caller.
 function toPublicEvent(input) {
@@ -171,4 +175,4 @@ function createStore({ now = Date.now, maxEvents = MAX_EVENTS, maxAgeMs = MAX_AG
 
 const store = createStore();
 
-module.exports = { createTraceId, createStore, toPublicEvent, record: store.record, list: store.list, MAX_EVENTS, MAX_AGE_MS };
+module.exports = { createTraceId, isTraceId, createStore, toPublicEvent, record: store.record, list: store.list, MAX_EVENTS, MAX_AGE_MS };

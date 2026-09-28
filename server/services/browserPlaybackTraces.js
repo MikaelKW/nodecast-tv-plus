@@ -28,15 +28,35 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
         prune();
         const traceId = events.createTraceId();
         if (!traceId || !events.record({ traceId, event: 'browser_path_selected', reason })) return null;
-        traces.set(traceId, { ownerId, createdAt: now() });
+        traces.set(traceId, { ownerId, createdAt: now(), managed: false });
         prune();
         return traceId;
+    }
+
+    // A managed session already has a server-generated trace. Associate its
+    // authenticated owner so the browser can report fixed lifecycle codes on
+    // that same trace, without accepting an arbitrary browser-supplied ID.
+    function registerManaged(ownerId, traceId) {
+        try {
+            if (!Number.isSafeInteger(ownerId) || !diagnosticEvents.isTraceId(traceId)) return false;
+            prune();
+            if (traces.has(traceId)) return false;
+            traces.set(traceId, { ownerId, createdAt: now(), managed: true });
+            prune();
+            return true;
+        } catch {
+            // Diagnostics must never prevent a managed session from starting.
+            return false;
+        }
     }
 
     function record(ownerId, traceId, event, reason) {
         prune();
         const trace = typeof traceId === 'string' ? traces.get(traceId) : null;
         if (!trace || trace.ownerId !== ownerId) return false;
+        if (trace.managed && (event === 'browser_path_selected' || event === 'browser_proxy_retry')) {
+            return false;
+        }
         if (event === 'browser_path_selected') {
             if (reason !== 'proxied_hls') return false;
         } else if (!Object.hasOwn(LIFECYCLE_REASONS, event) || !LIFECYCLE_REASONS[event].has(reason)) {
@@ -47,8 +67,8 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
         return true;
     }
 
-    return Object.freeze({ start, record });
+    return Object.freeze({ start, registerManaged, record });
 }
 
 const store = createStore();
-module.exports = { createStore, start: store.start, record: store.record, MAX_TRACES, MAX_AGE_MS };
+module.exports = { createStore, start: store.start, registerManaged: store.registerManaged, record: store.record, MAX_TRACES, MAX_AGE_MS };
