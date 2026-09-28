@@ -8,7 +8,7 @@ const PATH_REASONS = new Set(['direct_hls', 'native_hls', 'direct_media', 'auto_
 const LIFECYCLE_REASONS = Object.freeze({
     browser_playback_started: new Set(['media_playing']),
     browser_proxy_retry: new Set(['proxy_retry']),
-    browser_playback_failed: new Set(['start_blocked', 'start_failed', 'hls_failed']),
+    browser_playback_failed: new Set(['start_blocked', 'start_failed', 'hls_failed', 'media_error']),
     browser_playback_stopped: new Set(['browser_replaced', 'browser_stopped', 'page_closed'])
 });
 
@@ -18,7 +18,7 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
     function prune() {
         const cutoff = now() - maxAgeMs;
         for (const [traceId, trace] of traces) {
-            if (trace.createdAt < cutoff) traces.delete(traceId);
+            if (trace.lastSeenAt < cutoff) traces.delete(traceId);
         }
         while (traces.size > maxTraces) traces.delete(traces.keys().next().value);
     }
@@ -28,7 +28,7 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
         prune();
         const traceId = events.createTraceId();
         if (!traceId || !events.record({ traceId, event: 'browser_path_selected', reason })) return null;
-        traces.set(traceId, { ownerId, createdAt: now(), managed: false });
+        traces.set(traceId, { ownerId, lastSeenAt: now(), managed: false });
         prune();
         return traceId;
     }
@@ -41,7 +41,7 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
             if (!Number.isSafeInteger(ownerId) || !diagnosticEvents.isTraceId(traceId)) return false;
             prune();
             if (traces.has(traceId)) return false;
-            traces.set(traceId, { ownerId, createdAt: now(), managed: true });
+            traces.set(traceId, { ownerId, lastSeenAt: now(), managed: true });
             prune();
             return true;
         } catch {
@@ -63,12 +63,37 @@ function createStore({ now = Date.now, events = diagnosticEvents, maxTraces = MA
             return false;
         }
         if (!events.record({ traceId, event, reason })) return false;
-        if (event === 'browser_playback_stopped') traces.delete(traceId);
+        trace.lastSeenAt = now();
+        traces.delete(traceId);
+        if (event !== 'browser_playback_stopped') traces.set(traceId, trace);
         return true;
     }
 
-    return Object.freeze({ start, registerManaged, record });
+    function renew(ownerId, traceId) {
+        try {
+            prune();
+            const trace = typeof traceId === 'string' ? traces.get(traceId) : null;
+            if (!trace || trace.ownerId !== ownerId) return false;
+            trace.lastSeenAt = now();
+            traces.delete(traceId);
+            traces.set(traceId, trace);
+            return true;
+        } catch {
+            // Diagnostics must never interrupt active playback.
+            return false;
+        }
+    }
+
+    return Object.freeze({ start, registerManaged, record, renew });
 }
 
 const store = createStore();
-module.exports = { createStore, start: store.start, registerManaged: store.registerManaged, record: store.record, MAX_TRACES, MAX_AGE_MS };
+module.exports = {
+    createStore,
+    start: store.start,
+    registerManaged: store.registerManaged,
+    record: store.record,
+    renew: store.renew,
+    MAX_TRACES,
+    MAX_AGE_MS
+};

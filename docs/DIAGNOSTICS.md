@@ -35,7 +35,7 @@ Common states are:
 
 ### Recent events and trace IDs
 
-Recent events explain the selected playback path and important lifecycle changes in plain language. Events belonging to the same playback attempt or synchronization run share a generated trace ID. Follow that ID from the first event to the last to understand one attempt without mixing it with another channel change or refresh.
+Recent events explain the selected playback path and important lifecycle changes in plain language for Live TV, Movies, and Series. Events belonging to the same playback attempt or synchronization run share a generated trace ID. Follow that ID from the first event to the last to understand one attempt without mixing it with another channel change or refresh.
 
 Examples include:
 
@@ -47,12 +47,13 @@ Examples include:
 | Video is copied and audio is converted for compatibility. | The video is preserved while the audio is converted. |
 | A playable playlist is ready. | A server-managed HLS playlist became available to the browser. |
 | The browser started playback. | The media element reported that playback began. |
+| The browser reported a media playback error. | Playback began or was attempted, but the browser later reported a media-element failure. |
 | The live input disconnected; reconnecting. | The input was interrupted and the server is attempting to recover it. |
 | The first connection failed; retrying once. | The initial connection failed and the bounded retry is in progress. |
 | Playback was replaced by another request. | A channel change or another playback request replaced the earlier attempt. |
 | Source synchronization failed. | The synchronization did not complete. Provider details and raw errors remain excluded. |
 
-The event history is held only in application memory. It contains at most 128 entries, events expire after one hour, and restarting the application clears it. The page refreshes while it is open; **Refresh** requests an immediate update.
+The event history is held only in application memory. It contains at most 128 entries, events expire after one hour, and restarting the application clears it. While media continues playing, the browser periodically renews its account-bound trace so later lifecycle events remain correlated without extending the one-hour event history. The page refreshes while it is open; **Refresh** requests an immediate update.
 
 ## Investigate a playback problem
 
@@ -82,6 +83,8 @@ The support snapshot is a small JSON document intended for issue investigation.
 4. Select **Download reviewed snapshot**. The downloaded file contains the exact text shown in the preview.
 
 Preparing or downloading a snapshot does not upload it. Share it only through a destination you choose.
+
+Leaving the Diagnostics tab, signing out, or losing access to administrator diagnostics clears any prepared preview and disables its download.
 
 The snapshot is limited to 48 KiB and contains no more than:
 
