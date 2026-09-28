@@ -499,6 +499,12 @@ See the [changelog](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/CHANG
 
 ## Troubleshooting
 
+### Diagnostics and support snapshots
+
+Administrators can open **Settings > Diagnostics** to review recent playback and synchronization events, correlate related events by trace ID, and prepare a bounded support snapshot. Nothing is uploaded automatically; review the preview before downloading or sharing it.
+
+See [Diagnostics and support snapshots](docs/DIAGNOSTICS.md) for event explanations, retention limits, and safe-sharing guidance.
+
 ### Container does not become healthy
 
 ```bash
