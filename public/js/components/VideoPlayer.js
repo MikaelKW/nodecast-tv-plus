@@ -932,6 +932,7 @@ class VideoPlayer {
 
     async startTranscodeSession(url, options = {}, signal = null) {
         console.log('[Player] Starting HLS transcode session...', options);
+        const playId = this._playId;
         const res = await this.requestPlaybackResource('/api/transcode/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -948,13 +949,14 @@ class VideoPlayer {
             throw new Error(detail.reason || detail.error || 'Failed to start session');
         }
         const session = await res.json();
-        if (signal?.aborted) {
+        if (signal?.aborted || this._playId !== playId) {
             await fetch(NodeCastUrl.resolve(`/api/transcode/${session.sessionId}`), {
                 method: 'DELETE'
             }).catch(() => {});
             throw new DOMException('Playback request was replaced', 'AbortError');
         }
         this.currentSessionId = session.sessionId;
+        this.linkManagedPlaybackTrace(session.diagnosticTraceId, playId);
         this.startPlaybackLeaseHeartbeat();
         return NodeCastUrl.resolve(session.playlistUrl);
     }
@@ -1120,6 +1122,14 @@ class VideoPlayer {
             // Even an unavailable diagnostics endpoint must not affect playback.
             attempt.tracePromise = Promise.resolve(null);
         }
+    }
+
+    linkManagedPlaybackTrace(traceId, playId) {
+        if (this._playId !== playId || typeof traceId !== 'string') return;
+        this.browserPlaybackAttempt = {
+            playId, tracePromise: Promise.resolve(traceId), queue: Promise.resolve(),
+            started: false, closed: false
+        };
     }
 
     reportBrowserPlaybackEvent(event, reason, playId = this._playId) {
@@ -1469,12 +1479,16 @@ class VideoPlayer {
                     this.hls.loadSource(playlistUrl);
                     this.hls.attachMedia(this.video);
                     this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                        this.startVideoPlayback(playId).catch(console.error);
+                        this.startVideoPlayback(playId).catch(error => {
+                            this.reportBrowserPlaybackFailure(error, playId);
+                            if (error.name !== 'AbortError') console.error(error);
+                        });
                     });
                     // Handle errors
                     this.hls.on(Hls.Events.ERROR, (event, data) => {
                         if (data.fatal) {
                             console.log('[Player] HLS fatal error');
+                            this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                             this.hls.destroy();
                         }
                     });
@@ -1752,10 +1766,12 @@ class VideoPlayer {
         this.hls.attachMedia(this.video);
 
         this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (this._playId !== playId) return;
             if (!this.currentSessionId && this.playbackQuality !== 'auto') {
                 this.applyAdaptiveQuality(this.playbackQuality);
             }
             this.startVideoPlayback(playId).catch(e => {
+                this.reportBrowserPlaybackFailure(e, playId);
                 if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
             });
         });
@@ -1771,6 +1787,7 @@ class VideoPlayer {
         this.hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
                 // Simple error handling for forced HLS/transcode modes
+                this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                 console.error('Fatal HLS error in transcode mode:', data);
                 this.hls.destroy();
             }

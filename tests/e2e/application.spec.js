@@ -1525,6 +1525,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBe(480);
     await expect(page.locator('#player-quality-badge')).toHaveText('480p');
+    const managedTraceId = await page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/summary');
+        const summary = await response.json();
+        return summary.playback.managedSessions[0]?.traceId || null;
+    });
+    expect(managedTraceId).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        const related = data.events.filter(event => event.traceId === traceId);
+        return related.some(event => event.event === 'path_selected')
+            && related.some(event => event.event === 'browser_playback_started');
+    }, managedTraceId)).toBe(true);
 
     // Returning to Auto stops the temporary session and restores the provider's
     // original stream without changing the saved global transcoding setting.
@@ -1535,6 +1548,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
         timeout: 30_000
     }).toBeNull();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_playback_stopped'
+            && event.reason === 'browser_replaced');
+    }, managedTraceId)).toBe(true);
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
