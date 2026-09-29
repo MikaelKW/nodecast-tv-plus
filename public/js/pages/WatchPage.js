@@ -427,8 +427,15 @@ class WatchPage {
         this.titleEl.textContent = content.title || '';
         this.subtitleEl.textContent = content.subtitle || '';
 
-        // Load video
-        await this.loadVideo(streamUrl);
+        // Load video. A second selection may replace this request while its
+        // settings, probe, or managed session is still loading.
+        try {
+            await this.loadVideo(streamUrl);
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            throw error;
+        }
+        if (this.content !== content || this.sourceUrl !== streamUrl) return;
         this.subtitleLoadingEnabled = true;
 
         // Show Now Playing indicator in navbar
@@ -569,11 +576,24 @@ class WatchPage {
         this.browserPlaybackAttempt = null;
     }
 
+    createPlaybackAbortError() {
+        const error = new Error('Playback request was replaced');
+        error.name = 'AbortError';
+        return error;
+    }
+
+    assertPlaybackRequestCurrent(playId) {
+        if (this._diagnosticPlayId !== playId) {
+            throw this.createPlaybackAbortError();
+        }
+    }
+
     /**
      * Start a HLS transcode session
      */
     async startTranscodeSession(url, options = {}, playId = this._diagnosticPlayId) {
         try {
+            this.assertPlaybackRequestCurrent(playId);
             console.log('[WatchPage] Starting HLS transcode session...', options);
             const seekOffset = Math.max(0, Number(options.seekOffset ?? this.resumeTime) || 0);
             const res = await fetch(NodeCastUrl.resolve('/api/transcode/session'), {
@@ -591,7 +611,7 @@ class WatchPage {
                 await fetch(NodeCastUrl.resolve(`/api/transcode/${session.sessionId}`), {
                     method: 'DELETE'
                 }).catch(() => {});
-                throw new DOMException('Playback request was replaced', 'AbortError');
+                throw this.createPlaybackAbortError();
             }
             this.currentSessionId = session.sessionId;
             this.linkManagedPlaybackTrace(session.diagnosticTraceId, playId);
@@ -609,6 +629,7 @@ class WatchPage {
             return NodeCastUrl.resolve(session.playlistUrl);
         } catch (err) {
             if (err?.name === 'AbortError') throw err;
+            this.assertPlaybackRequestCurrent(playId);
             if (options.maxResolution || options.forceAudioTranscode || Number.isInteger(options.audioStreamIndex)) {
                 console.warn('[WatchPage] Selected playback session failed:', err.message);
                 throw err;
@@ -619,7 +640,8 @@ class WatchPage {
         }
     }
 
-    async startQualityPlayback(url, resolution, streamInfo = null) {
+    async startQualityPlayback(url, resolution, streamInfo = null, playId = this._diagnosticPlayId) {
+        this.assertPlaybackRequestCurrent(playId);
         const label = PlaybackQuality.getLabel(resolution);
         console.log(`[WatchPage] Applying session quality cap: ${label}`);
         this.updateTranscodeStatus('transcoding', 'Transcoding (Video)');
@@ -631,8 +653,9 @@ class WatchPage {
             audioChannels: streamInfo?.audioChannels,
             videoHeight: Number(streamInfo?.height) || undefined,
             ...this.getSelectedAudioOptions(streamInfo)
-        });
-        this.playHls(playlistUrl);
+        }, playId);
+        this.assertPlaybackRequestCurrent(playId);
+        this.playHls(playlistUrl, { playId });
         this.setVolumeFromStorage();
     }
 
@@ -756,6 +779,7 @@ class WatchPage {
         }
 
         const previousQuality = this.playbackQuality;
+        const operationPlayId = this._diagnosticPlayId;
         const sourceInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : null;
         const hasActivePlayback = Boolean(this.video?.currentSrc) && this.video.readyState > 0;
         const previousWasDirect = !this.currentSessionId && hasActivePlayback;
@@ -782,6 +806,7 @@ class WatchPage {
             this.stopHistoryTracking();
             this.saveProgress();
             await this.stopTranscodeSession();
+            this.assertPlaybackRequestCurrent(operationPlayId);
             if (this.hls) {
                 this.hls.destroy();
                 this.hls = null;
@@ -793,6 +818,7 @@ class WatchPage {
             this.resumeTime = resumeAt;
             if (value !== 'auto') {
                 await new Promise(resolve => setTimeout(resolve, 900));
+                this.assertPlaybackRequestCurrent(operationPlayId);
             }
             await this.loadVideo(this.sourceUrl, {
                 skipStop: true,
@@ -800,11 +826,14 @@ class WatchPage {
                 qualitySourceInfo: sourceInfo
             });
         } catch (err) {
+            if (err?.name === 'AbortError') return;
             console.warn('[WatchPage] Quality change failed; restoring the previous stream:', err.message);
             this.playbackQuality = previousQuality;
             this.updateQualityMenu();
             this.resumeTime = resumeAt;
+            const restorePlayId = this._diagnosticPlayId;
             await new Promise(resolve => setTimeout(resolve, 900));
+            this.assertPlaybackRequestCurrent(restorePlayId);
             await this.loadVideo(this.sourceUrl, {
                 skipStop: true,
                 skipProbe: previousWasDirect || previousQuality === 'auto',
@@ -859,13 +888,16 @@ class WatchPage {
         let settings = {};
         try {
             settings = await API.settings.get();
+            this.assertPlaybackRequestCurrent(diagnosticPlayId);
         } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            this.assertPlaybackRequestCurrent(diagnosticPlayId);
             console.warn('Could not load settings');
         }
         this.settings = settings;
 
         if (!forceDirectFallback && this.playbackQuality !== 'auto' && qualitySourceInfo) {
-            await this.startQualityPlayback(url, this.playbackQuality, qualitySourceInfo);
+            await this.startQualityPlayback(url, this.playbackQuality, qualitySourceInfo, diagnosticPlayId);
             return;
         }
 
@@ -881,12 +913,15 @@ class WatchPage {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
                 const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (probeRes.ok && !info.error) {
                     this.currentStreamInfo = info;
                     this.updateQualityBadge();
                     this.applyProbeTracks(info, url);
                 }
             } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 console.warn('[WatchPage] Optional track discovery failed:', error.message);
             }
         }
@@ -898,6 +933,7 @@ class WatchPage {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
                 const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (!probeRes.ok || info.error) {
                     throw new Error(info.error || `Probe request failed (${probeRes.status})`);
                 }
@@ -915,9 +951,10 @@ class WatchPage {
                 }
                 if (this.playbackQuality === 'auto' && globalHeight > 0 && info.height > globalHeight) {
                     try {
-                        await this.startQualityPlayback(url, globalResolution, info);
+                        await this.startQualityPlayback(url, globalResolution, info, diagnosticPlayId);
                         return;
                     } catch (qualityError) {
+                        if (qualityError?.name === 'AbortError') throw qualityError;
                         const label = PlaybackQuality.getLabel(globalResolution);
                         const originalLabel = this.getQualityLabel(info.height) || 'original quality';
                         console.warn(`[WatchPage] ${label} global quality cap unavailable; continuing direct playback:`, qualityError.message);
@@ -926,7 +963,7 @@ class WatchPage {
                 }
 
                 if (this.playbackQuality !== 'auto') {
-                    await this.startQualityPlayback(url, this.playbackQuality, info);
+                    await this.startQualityPlayback(url, this.playbackQuality, info, diagnosticPlayId);
                     return;
                 } else if (info.needsTranscode || settings.upscaleEnabled) {
                     console.log(`[WatchPage] Auto: Using HLS transcode session (${settings.upscaleEnabled ? 'Upscaling' : 'Incompatible audio/video'})`);
@@ -946,8 +983,9 @@ class WatchPage {
                         audioChannels: info.audioChannels,
                         videoHeight: info.height,
                         ...this.getSelectedAudioOptions(info)
-                    });
-                    this.playHls(playlistUrl);
+                    }, diagnosticPlayId);
+                    this.assertPlaybackRequestCurrent(diagnosticPlayId);
+                    this.playHls(playlistUrl, { playId: diagnosticPlayId });
                     this.setVolumeFromStorage();
                     return;
                 } else if (info.needsRemux) {
@@ -962,8 +1000,9 @@ class WatchPage {
                             audioChannels: info.audioChannels,
                             forceAudioTranscode: true,
                             ...this.getSelectedAudioOptions(info)
-                        });
-                        this.playHls(playlistUrl);
+                        }, diagnosticPlayId);
+                        this.assertPlaybackRequestCurrent(diagnosticPlayId);
+                        this.playHls(playlistUrl, { playId: diagnosticPlayId });
                         this.setVolumeFromStorage();
                         return;
                     }
@@ -973,6 +1012,7 @@ class WatchPage {
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
                     const finalUrl = NodeCastUrl.remux(url, info);
+                    this.assertPlaybackRequestCurrent(diagnosticPlayId);
                     this.reportBrowserPlaybackPath('auto_remux', diagnosticPlayId);
                     this.video.src = finalUrl;
                     this.video.play().catch(e => {
@@ -985,6 +1025,8 @@ class WatchPage {
                 // Compatible - fall through to normal playback
                 console.log('[WatchPage] Auto: Using normal playback (compatible)');
             } catch (err) {
+                if (err?.name === 'AbortError') throw err;
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 console.warn('[WatchPage] Probe failed, using normal playback:', err.message);
                 this.qualityCapPending = this.playbackQuality === 'auto';
                 // Continue with normal playback on probe failure
@@ -992,7 +1034,7 @@ class WatchPage {
         }
 
         if (!forceDirectFallback && this.playbackQuality !== 'auto') {
-            await this.startQualityPlayback(url, this.playbackQuality);
+            await this.startQualityPlayback(url, this.playbackQuality, null, diagnosticPlayId);
             return;
         }
 
@@ -1006,8 +1048,9 @@ class WatchPage {
                 videoMode: 'encode',
                 seekOffset: this.resumeTime,
                 ...this.getSelectedAudioOptions()
-            });
-            this.playHls(playlistUrl);
+            }, diagnosticPlayId);
+            this.assertPlaybackRequestCurrent(diagnosticPlayId);
+            this.playHls(playlistUrl, { playId: diagnosticPlayId });
             this.setVolumeFromStorage();
             return;
         }
@@ -1022,18 +1065,24 @@ class WatchPage {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
                 const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
                 const info = await probeRes.json();
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 videoCodec = info.video;
                 this.currentStreamInfo = info;
                 this.applyProbeTracks(info, url);
-            } catch (e) { console.warn('Probe failed for force audio, assuming h264'); }
+            } catch (e) {
+                if (e?.name === 'AbortError') throw e;
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
+                console.warn('Probe failed for force audio, assuming h264');
+            }
 
             const playlistUrl = await this.startTranscodeSession(url, {
                 videoMode: 'copy',
                 videoCodec,
                 seekOffset: this.resumeTime,
                 ...this.getSelectedAudioOptions()
-            });
-            this.playHls(playlistUrl);
+            }, diagnosticPlayId);
+            this.assertPlaybackRequestCurrent(diagnosticPlayId);
+            this.playHls(playlistUrl, { playId: diagnosticPlayId });
             this.setVolumeFromStorage();
             return;
         }
@@ -1052,14 +1101,16 @@ class WatchPage {
                     audioChannels: this.currentStreamInfo?.audioChannels,
                     forceAudioTranscode: true,
                     ...this.getSelectedAudioOptions(this.currentStreamInfo)
-                });
-                this.playHls(playlistUrl);
+                }, diagnosticPlayId);
+                this.assertPlaybackRequestCurrent(diagnosticPlayId);
+                this.playHls(playlistUrl, { playId: diagnosticPlayId });
                 this.setVolumeFromStorage();
                 return;
             }
 
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
             const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
+            this.assertPlaybackRequestCurrent(diagnosticPlayId);
             this.reportBrowserPlaybackPath('forced_remux', diagnosticPlayId);
             this.video.src = finalUrl;
             this.video.play().catch(e => {
@@ -1076,6 +1127,7 @@ class WatchPage {
         const finalUrl = needsProxy ? NodeCastUrl.resolve(`/api/proxy/stream?url=${encodeURIComponent(url)}`) : url;
 
         console.log('[WatchPage] Playing:', { url, needsProxy, looksLikeHls });
+        this.assertPlaybackRequestCurrent(diagnosticPlayId);
 
         // Use HLS.js for HLS streams
         if (looksLikeHls && Hls.isSupported()) {
@@ -1103,6 +1155,7 @@ class WatchPage {
      * Play HLS stream using Hls.js
      */
     playHls(url, { autoPlay = true, playId = this._diagnosticPlayId } = {}) {
+        this.assertPlaybackRequestCurrent(playId);
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
@@ -1407,6 +1460,7 @@ class WatchPage {
     async seekToContentTime(requestedTime) {
         if (!this.video || this.seekChanging) return;
 
+        const operationPlayId = this._diagnosticPlayId;
         const duration = this.getPlaybackDuration();
         const target = Math.max(0, Math.min(Number(requestedTime) || 0, duration || 0));
         const mediaDuration = Number(this.video.duration);
@@ -1439,6 +1493,7 @@ class WatchPage {
 
         try {
             await this.stopTranscodeSession();
+            this.assertPlaybackRequestCurrent(operationPlayId);
             if (this.hls) {
                 this.hls.destroy();
                 this.hls = null;
@@ -1454,8 +1509,9 @@ class WatchPage {
             const playlistUrl = await this.startTranscodeSession(this.sourceUrl, {
                 ...sessionOptions,
                 seekOffset: sessionTarget
-            });
-            this.playHls(playlistUrl, { autoPlay: shouldResume });
+            }, operationPlayId);
+            this.assertPlaybackRequestCurrent(operationPlayId);
+            this.playHls(playlistUrl, { autoPlay: shouldResume, playId: operationPlayId });
             this.setVolumeFromStorage();
             await this.saveProgress({
                 allowPaused: true,
@@ -1463,6 +1519,7 @@ class WatchPage {
             });
         } catch (error) {
             this.pendingSeekProgress = null;
+            if (error?.name === 'AbortError') return;
             console.warn('[WatchPage] Seek session failed:', error.message);
             this.updateTranscodeStatus('warning', 'Seek unavailable · Playback stopped');
         } finally {
@@ -2377,6 +2434,7 @@ class WatchPage {
 
         const previousIndex = this.selectedAudioTrackIndex;
         const previousExplicit = this.audioSelectionExplicit;
+        const operationPlayId = this._diagnosticPlayId;
         const resumeAt = this.getCurrentPlaybackTime();
         const streamInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : {};
         this.audioTrackChanging = true;
@@ -2389,6 +2447,7 @@ class WatchPage {
             this.stopHistoryTracking();
             this.saveProgress();
             await this.stopTranscodeSession();
+            this.assertPlaybackRequestCurrent(operationPlayId);
             if (this.hls) {
                 this.hls.destroy();
                 this.hls = null;
@@ -2398,13 +2457,17 @@ class WatchPage {
             this.video.load();
             this.resumeTime = resumeAt;
             await new Promise(resolve => setTimeout(resolve, 250));
-            await this.startSelectedAudioPlayback(streamInfo);
+            this.assertPlaybackRequestCurrent(operationPlayId);
+            await this.startSelectedAudioPlayback(streamInfo, operationPlayId);
         } catch (error) {
+            if (error?.name === 'AbortError') return;
             console.warn('[WatchPage] Audio track switch failed; restoring previous playback:', error.message);
             this.selectedAudioTrackIndex = previousIndex;
             this.audioSelectionExplicit = previousExplicit;
             this.resumeTime = resumeAt;
+            const restorePlayId = this._diagnosticPlayId;
             await new Promise(resolve => setTimeout(resolve, 500));
+            this.assertPlaybackRequestCurrent(restorePlayId);
             await this.loadVideo(this.sourceUrl, { skipStop: true });
             this.updateTranscodeStatus('warning', 'Audio track unavailable · Restored previous audio');
         } finally {
@@ -2414,7 +2477,8 @@ class WatchPage {
         }
     }
 
-    async startSelectedAudioPlayback(streamInfo) {
+    async startSelectedAudioPlayback(streamInfo, playId = this._diagnosticPlayId) {
+        this.assertPlaybackRequestCurrent(playId);
         const selected = this.getSelectedAudioOptions(streamInfo);
         if (!Number.isInteger(selected.audioStreamIndex)) {
             throw new Error('Selected audio stream is no longer available');
@@ -2441,9 +2505,10 @@ class WatchPage {
                 ? configuredResolution
                 : undefined,
             ...selected
-        });
+        }, playId);
+        this.assertPlaybackRequestCurrent(playId);
         this.currentStreamInfo = streamInfo;
-        this.playHls(playlistUrl);
+        this.playHls(playlistUrl, { playId });
         this.setVolumeFromStorage();
         this.updateTranscodeStatus('transcoding', `Audio · ${trackLabel}`);
     }
