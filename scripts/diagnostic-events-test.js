@@ -8,6 +8,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const vm = require('node:vm');
 const diagnostics = require('../server/services/diagnosticEvents');
 const browserPlaybackTraces = require('../server/services/browserPlaybackTraces');
 const supportSnapshot = require('../server/services/supportSnapshot');
@@ -47,7 +48,291 @@ async function stopServer(child) {
     if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+async function testDiagnosticsPanelInvalidation() {
+    const elements = new Map();
+    const makeElement = () => ({
+        textContent: '', hidden: true, disabled: false,
+        addEventListener() {}, replaceChildren() {}
+    });
+    let summaryDenied = false;
+    const context = {
+        window: {}, Blob,
+        document: {
+            getElementById(id) {
+                if (!elements.has(id)) elements.set(id, makeElement());
+                return elements.get(id);
+            }
+        },
+        API: { diagnostics: {
+            async getSupportPreview() {
+                return { schemaVersion: 1, application: { version: 'test' } };
+            },
+            async getSummary() {
+                if (summaryDenied) throw new Error('Forbidden');
+                return null;
+            }
+        } },
+        setTimeout() { return 1; }, clearTimeout() {}
+    };
+    vm.createContext(context);
+    vm.runInContext(await fs.readFile(path.join(__dirname, '..', 'public/js/components/DiagnosticsPanel.js'), 'utf8'), context);
+    const panel = new context.window.DiagnosticsPanel();
+    panel.visible = true;
+    await panel.loadPreview();
+    assert.ok(panel.snapshotText);
+    assert.equal(panel.preview.hidden, false);
+    assert.equal(panel.downloadButton.disabled, false);
+
+    summaryDenied = true;
+    await panel.load();
+    assert.equal(panel.snapshotText, null, 'access loss must remove a prepared snapshot');
+    assert.equal(panel.preview.hidden, true);
+    assert.equal(panel.downloadButton.disabled, true);
+
+    let resolvePreview;
+    context.API.diagnostics.getSupportPreview = () => new Promise(resolve => { resolvePreview = resolve; });
+    const pendingPreview = panel.loadPreview();
+    await Promise.resolve();
+    await panel.load();
+    resolvePreview({ schemaVersion: 1, application: { version: 'stale' } });
+    await pendingPreview;
+    assert.equal(panel.snapshotText, null, 'an in-flight preview must not repopulate after access loss');
+    assert.equal(panel.preview.hidden, true);
+    assert.equal(panel.downloadButton.disabled, true);
+}
+
+async function testBrowserClientDiagnostics() {
+    const liveRequests = [];
+    let liveRenewal;
+    const liveContext = {
+        window: {},
+        document: {},
+        NodeCastUrl: { resolve: value => value },
+        fetch: async (url, options = {}) => {
+            liveRequests.push({ url, options });
+            return { ok: true, json: async () => ({}) };
+        },
+        setInterval(callback) { liveRenewal = callback; return 1; },
+        clearInterval() {}
+    };
+    vm.createContext(liveContext);
+    vm.runInContext(await fs.readFile(path.join(__dirname, '..', 'public/js/components/VideoPlayer.js'), 'utf8'), liveContext);
+    const player = Object.create(liveContext.window.VideoPlayer.prototype);
+    Object.assign(player, { _playId: 1, browserPlaybackAttempt: null, browserPlaybackRenewalTimer: null });
+    player.linkManagedPlaybackTrace(diagnostics.createTraceId(), 1);
+    player.reportBrowserPlaybackFailure({ name: 'NotAllowedError' }, 1);
+    player.recordBrowserPlaybackStarted(1);
+    player.recordBrowserPlaybackStarted(1);
+    const liveAttempt = player.browserPlaybackAttempt;
+    await liveAttempt.queue;
+    liveRenewal();
+    await liveAttempt.queue;
+    player.finishBrowserPlayback('browser_stopped');
+    await liveAttempt.queue;
+    const liveBodies = liveRequests.filter(item => item.options.body).map(item => JSON.parse(item.options.body));
+    assert.deepEqual(liveBodies.map(item => item.event), [
+        'browser_playback_failed', 'browser_playback_started', 'browser_playback_stopped'
+    ]);
+    assert.equal(liveRequests.filter(item => item.url.endsWith('/renew')).length, 1);
+
+    const watchRequests = [];
+    let watchTrace = diagnostics.createTraceId();
+    const privateMarker = 'private-watch-provider-marker';
+    const watchContext = {
+        window: {},
+        console: { log() {}, warn() {}, error() {} },
+        NodeCastUrl: { resolve: value => value, remux: value => value },
+        VodDuration: { firstValid: () => 0, fromContent: () => 0 },
+        API: { settings: { get: async () => ({}) } },
+        fetch: async (url, options = {}) => {
+            watchRequests.push({ url, options });
+            if (url === '/api/diagnostics/playback-path') {
+                return { ok: true, json: async () => ({ traceId: watchTrace }) };
+            }
+            if (url === '/api/transcode/session') {
+                watchTrace = diagnostics.createTraceId();
+                return { ok: true, json: async () => ({
+                    sessionId: 'test-session', diagnosticTraceId: watchTrace,
+                    playlistUrl: '/test.m3u8', mediaStartTime: 0
+                }) };
+            }
+            return { ok: true, json: async () => ({}) };
+        },
+        setInterval() { return 1; }, clearInterval() {},
+        clearTimeout() {}, setTimeout(callback) { callback(); return 1; }
+    };
+    vm.createContext(watchContext);
+    vm.runInContext(await fs.readFile(path.join(__dirname, '..', 'public/js/pages/WatchPage.js'), 'utf8'), watchContext);
+    const watch = Object.create(watchContext.window.WatchPage.prototype);
+    Object.assign(watch, {
+        _diagnosticPlayId: 0, browserPlaybackAttempt: null, browserPlaybackRenewalTimer: null,
+        playbackQuality: 'auto', content: {}, resumeTime: 0, currentStreamInfo: null,
+        video: { src: '', play: async () => {}, paused: true },
+        stop() {
+            this.finishBrowserPlayback('browser_stopped');
+            this._diagnosticPlayId += 1;
+        },
+        setSourceDuration() {}, showLoading() {}, updateTranscodeStatus() {}, setVolumeFromStorage() {}
+    });
+    await watch.loadVideo(`https://example.invalid/${privateMarker}.mp4`, { skipProbe: true });
+    watch.recordBrowserPlaybackStarted(watch._diagnosticPlayId);
+    const directAttempt = watch.browserPlaybackAttempt;
+    await directAttempt.queue;
+    assert.ok(watchRequests.some(item => item.url === '/api/diagnostics/playback-path'
+        && JSON.parse(item.options.body).reason === 'direct_media'));
+    assert.ok(watchRequests.some(item => item.url.includes('/api/diagnostics/playback/')
+        && JSON.parse(item.options.body).event === 'browser_playback_started'));
+
+    await watch.startTranscodeSession(`https://example.invalid/${privateMarker}.mp4`);
+    watch.recordBrowserPlaybackStarted(watch._diagnosticPlayId);
+    const managedAttempt = watch.browserPlaybackAttempt;
+    await directAttempt.queue;
+    await managedAttempt.queue;
+    assert.ok(watchRequests.some(item => item.url.includes(encodeURIComponent(watchTrace))
+        && item.options.body && JSON.parse(item.options.body).event === 'browser_playback_started'));
+    const diagnosticRequests = watchRequests.filter(item => item.url.includes('/api/diagnostics/'));
+    assert.equal(JSON.stringify(diagnosticRequests).includes(privateMarker), false);
+}
+
+async function testWatchPlaybackReplacement() {
+    const requests = [];
+    let settingsHandler = async () => ({});
+    let fetchHandler = async () => ({ ok: true, json: async () => ({}) });
+    const context = {
+        window: {},
+        console: { log() {}, warn() {}, error() {} },
+        NodeCastUrl: {
+            resolve: value => value,
+            remux: value => value,
+            prefersHlsRemuxFallback: () => false
+        },
+        VodDuration: { firstValid: () => 0, fromContent: () => 0 },
+        PlaybackQuality: { getHeight: () => 0, getLabel: value => value },
+        API: { settings: { get: () => settingsHandler() } },
+        fetch: async (url, options = {}) => {
+            requests.push({ url, options });
+            return fetchHandler(url, options);
+        },
+        setInterval() { return 1; }, clearInterval() {},
+        clearTimeout() {}, setTimeout(callback) { callback(); return 1; }
+    };
+    vm.createContext(context);
+    vm.runInContext(await fs.readFile(path.join(__dirname, '..', 'public/js/pages/WatchPage.js'), 'utf8'), context);
+
+    function makeWatch() {
+        const watch = Object.create(context.window.WatchPage.prototype);
+        const video = {
+            src: '', paused: true, playCalls: 0,
+            play() { this.playCalls += 1; return Promise.resolve(); }
+        };
+        Object.assign(watch, {
+            _diagnosticPlayId: 0, browserPlaybackAttempt: null, browserPlaybackRenewalTimer: null,
+            playbackQuality: 'auto', content: {}, resumeTime: 0, currentStreamInfo: null,
+            currentSessionId: null, currentTranscodeOptions: null, hls: null, video,
+            stop() {
+                this.finishBrowserPlayback('browser_stopped');
+                this._diagnosticPlayId += 1;
+            },
+            setSourceDuration() {}, showLoading() {}, updateTranscodeStatus() {},
+            setVolumeFromStorage() {}, updateQualityBadge() {}, applyProbeTracks() {},
+            getSelectedAudioOptions() { return {}; }, getQualityLabel() { return '720p'; }
+        });
+        return watch;
+    }
+
+    async function expectReplacement(promise) {
+        let error;
+        try {
+            await promise;
+        } catch (caught) {
+            error = caught;
+        }
+        assert.equal(error?.name, 'AbortError', 'a replaced playback request must stop with AbortError');
+    }
+
+    let resolveSettings;
+    settingsHandler = () => new Promise(resolve => { resolveSettings = resolve; });
+    fetchHandler = async () => ({ ok: true, json: async () => ({}) });
+    const settingsWatch = makeWatch();
+    const staleSettings = settingsWatch.loadVideo('https://example.invalid/old-settings.mp4', { skipProbe: true });
+    await Promise.resolve();
+    settingsWatch._diagnosticPlayId += 1;
+    settingsWatch.video.src = 'new-settings.mp4';
+    resolveSettings({});
+    await expectReplacement(staleSettings);
+    assert.equal(settingsWatch.video.src, 'new-settings.mp4');
+    assert.equal(settingsWatch.video.playCalls, 0);
+
+    let resolveProbe;
+    let probeRequested;
+    const probeStarted = new Promise(resolve => { probeRequested = resolve; });
+    let probeJsonRequested;
+    const probeJsonStarted = new Promise(resolve => { probeJsonRequested = resolve; });
+    settingsHandler = async () => ({ autoTranscode: true });
+    fetchHandler = async url => {
+        if (url.startsWith('/api/probe')) {
+            probeRequested();
+            return { ok: true, json: () => new Promise(resolve => {
+                resolveProbe = resolve;
+                probeJsonRequested();
+            }) };
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+    const probeWatch = makeWatch();
+    const staleProbe = probeWatch.loadVideo('https://example.invalid/old-probe.mp4');
+    await probeStarted;
+    await probeJsonStarted;
+    probeWatch._diagnosticPlayId += 1;
+    probeWatch.video.src = 'new-probe.mp4';
+    resolveProbe({ video: 'h264', audio: 'aac', height: 720, needsTranscode: true });
+    await expectReplacement(staleProbe);
+    assert.equal(probeWatch.video.src, 'new-probe.mp4');
+    assert.equal(probeWatch.video.playCalls, 0);
+
+    let resolveSession;
+    let sessionRequested;
+    const sessionStarted = new Promise(resolve => { sessionRequested = resolve; });
+    settingsHandler = async () => ({ autoTranscode: true });
+    fetchHandler = async (url, options) => {
+        if (url.startsWith('/api/probe')) {
+            return { ok: true, json: async () => ({
+                video: 'h264', audio: 'aac', audioChannels: 2, height: 720,
+                compatible: false, needsTranscode: true
+            }) };
+        }
+        if (url === '/api/transcode/session') {
+            sessionRequested();
+            return new Promise(resolve => { resolveSession = resolve; });
+        }
+        return { ok: true, json: async () => ({}) };
+    };
+    const sessionWatch = makeWatch();
+    let hlsStarts = 0;
+    sessionWatch.playHls = () => { hlsStarts += 1; };
+    const staleSession = sessionWatch.loadVideo('https://example.invalid/old-session.mp4');
+    await sessionStarted;
+    sessionWatch._diagnosticPlayId += 1;
+    sessionWatch.video.src = 'new-session.mp4';
+    sessionWatch.currentSessionId = 'new-session';
+    resolveSession({ ok: true, json: async () => ({
+        sessionId: 'stale-session', diagnosticTraceId: diagnostics.createTraceId(),
+        playlistUrl: '/stale.m3u8', mediaStartTime: 0
+    }) });
+    await expectReplacement(staleSession);
+    assert.equal(sessionWatch.video.src, 'new-session.mp4');
+    assert.equal(sessionWatch.currentSessionId, 'new-session');
+    assert.equal(hlsStarts, 0, 'a stale session must not attach an HLS player');
+    assert.ok(requests.some(item => item.url === '/api/transcode/stale-session'
+        && item.options.method === 'DELETE'), 'the stale server session must be cleaned up');
+    assert.equal(requests.some(item => item.url.startsWith('/api/transcode?url=')), false,
+        'replacement cancellation must not enter direct fallback');
+}
+
 async function run() {
+    await testDiagnosticsPanelInvalidation();
+    await testBrowserClientDiagnostics();
+    await testWatchPlaybackReplacement();
     let now = 1000;
     const store = diagnostics.createStore({ now: () => now, maxEvents: 3, maxAgeMs: 1000 });
     const traceId = diagnostics.createTraceId();
@@ -137,8 +422,15 @@ async function run() {
     lifecycle.start(1, 'auto_remux');
     assert.equal(lifecycle.record(1, evictedTrace, 'browser_playback_started', 'media_playing'), false);
     assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), true);
+    now = 3900;
+    assert.equal(lifecycle.renew(2, retainedTrace), false, 'a trace cannot be renewed by another account');
+    assert.equal(lifecycle.renew(1, retainedTrace), true);
     now = 4001;
-    assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), false);
+    assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), true,
+        'recently renewed playback must remain reportable after its original expiry time');
+    now = 5002;
+    assert.equal(lifecycle.record(1, retainedTrace, 'browser_playback_started', 'media_playing'), false,
+        'inactive traces must still expire');
     const managedTraceId = diagnostics.createTraceId();
     assert.equal(lifecycle.registerManaged(1, privateMarker), false);
     assert.equal(lifecycle.registerManaged(1, managedTraceId), true);
@@ -276,6 +568,17 @@ async function run() {
         assert.equal(invalidEvent.status, 404);
         const startedEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_started', 'media_playing');
         assert.equal(startedEvent.status, 204);
+        const differentAccountRenew = await fetch(
+            `${baseUrl}/api/diagnostics/playback/${encodeURIComponent(browserTraceId)}/renew`,
+            { method: 'POST', headers: { Cookie: adminCookie } }
+        );
+        assert.equal(differentAccountRenew.status, 404);
+        const renewedEvent = await fetch(
+            `${baseUrl}/api/diagnostics/playback/${encodeURIComponent(browserTraceId)}/renew`,
+            { method: 'POST', headers: { Cookie: viewerCookie } }
+        );
+        assert.equal(renewedEvent.status, 204);
+        assert.equal(renewedEvent.headers.get('cache-control'), 'no-store');
         const differentAccountEvent = await reportEvent(adminCookie, browserTraceId, 'browser_proxy_retry', 'proxy_retry');
         assert.equal(differentAccountEvent.status, 404);
         const retryEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_proxy_retry', 'proxy_retry');
@@ -286,6 +589,11 @@ async function run() {
         assert.equal(stoppedEvent.status, 204);
         const lateEvent = await reportEvent(viewerCookie, browserTraceId, 'browser_playback_started', 'media_playing');
         assert.equal(lateEvent.status, 404);
+        const lateRenew = await fetch(
+            `${baseUrl}/api/diagnostics/playback/${encodeURIComponent(browserTraceId)}/renew`,
+            { method: 'POST', headers: { Cookie: viewerCookie } }
+        );
+        assert.equal(lateRenew.status, 404);
 
         const sourceUrl = `http://127.0.0.1:${fixturePort}/playlist.m3u?token=${privateMarker}`;
         const createSource = await fetch(`${baseUrl}/api/sources`, {

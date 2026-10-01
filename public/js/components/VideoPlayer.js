@@ -24,6 +24,7 @@ class VideoPlayer {
         this.hls = null;
         this._playId = 0;
         this.browserPlaybackAttempt = null;
+        this.browserPlaybackRenewalTimer = null;
         this._startupPlaybackId = null;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
@@ -333,6 +334,10 @@ class VideoPlayer {
 
         this.video.addEventListener('play', updatePlayUI);
         this.video.addEventListener('pause', updatePlayUI);
+        this.video.addEventListener('playing', () => this.recordBrowserPlaybackStarted(this._playId));
+        this.video.addEventListener('error', () => {
+            this.reportBrowserPlaybackEvent('browser_playback_failed', 'media_error', this._playId);
+        });
 
         // Loading spinner
         this.video.addEventListener('waiting', () => {
@@ -1108,6 +1113,7 @@ class VideoPlayer {
     // provider URLs, channel details, and browser errors are never sent.
     reportBrowserPlaybackPath(reason, playId) {
         if (this._playId !== playId) return;
+        this.stopBrowserPlaybackRenewal();
         const attempt = { playId, tracePromise: null, queue: Promise.resolve(), started: false, closed: false };
         this.browserPlaybackAttempt = attempt;
         try {
@@ -1126,6 +1132,7 @@ class VideoPlayer {
 
     linkManagedPlaybackTrace(traceId, playId) {
         if (this._playId !== playId || typeof traceId !== 'string') return;
+        this.stopBrowserPlaybackRenewal();
         this.browserPlaybackAttempt = {
             playId, tracePromise: Promise.resolve(traceId), queue: Promise.resolve(),
             started: false, closed: false
@@ -1152,6 +1159,30 @@ class VideoPlayer {
         if (!attempt || attempt.started || attempt.playId !== playId || this._playId !== playId) return;
         attempt.started = true;
         this.reportBrowserPlaybackEvent('browser_playback_started', 'media_playing', playId);
+        this.startBrowserPlaybackRenewal(playId);
+    }
+
+    startBrowserPlaybackRenewal(playId) {
+        this.stopBrowserPlaybackRenewal();
+        this.browserPlaybackRenewalTimer = setInterval(() => {
+            const attempt = this.browserPlaybackAttempt;
+            if (!attempt || attempt.closed || !attempt.started || attempt.playId !== playId || this._playId !== playId) {
+                this.stopBrowserPlaybackRenewal();
+                return;
+            }
+            attempt.queue = attempt.queue.then(async () => {
+                const traceId = await attempt.tracePromise;
+                if (!traceId) return;
+                await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/renew`), {
+                    method: 'POST'
+                });
+            }).catch(() => {});
+        }, 10 * 60 * 1000);
+    }
+
+    stopBrowserPlaybackRenewal() {
+        clearInterval(this.browserPlaybackRenewalTimer);
+        this.browserPlaybackRenewalTimer = null;
     }
 
     reportBrowserPlaybackFailure(error, playId = this._playId) {
@@ -1163,6 +1194,7 @@ class VideoPlayer {
     finishBrowserPlayback(reason = 'browser_stopped') {
         const attempt = this.browserPlaybackAttempt;
         if (!attempt || attempt.closed) return;
+        this.stopBrowserPlaybackRenewal();
         this.reportBrowserPlaybackEvent('browser_playback_stopped', reason, attempt.playId);
         attempt.closed = true;
         this.browserPlaybackAttempt = null;
