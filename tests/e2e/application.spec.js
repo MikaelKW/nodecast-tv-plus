@@ -151,6 +151,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe('nodecast-support-snapshot.json');
     expect(await fs.readFile(await download.path(), 'utf8')).toBe(reviewedSnapshot);
+    await page.evaluate(async () => {
+        const panel = window.app.pages.settings.diagnosticsPanel;
+        const original = window.API.diagnostics.getSummary;
+        window.API.diagnostics.getSummary = async () => { throw new Error('Synthetic access change'); };
+        try {
+            await panel.load();
+        } finally {
+            window.API.diagnostics.getSummary = original;
+        }
+    });
+    await expect(page.locator('#diagnostics-content')).toBeEmpty();
+    await expect(page.locator('#diagnostics-preview')).toBeEmpty();
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(page.locator('#diagnostics-content')).toBeEmpty();
@@ -1290,6 +1303,51 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         fallbackCleared: true
     });
 
+    // A successful manual play after an autoplay rejection must repair the
+    // same diagnostic trace. The media element's playing event is authoritative
+    // and duplicate start notifications remain suppressed.
+    const manualRecoveryTrace = await page.evaluate(async () => {
+        const player = window.app.player;
+        const video = player.video;
+        const ownPlay = Object.getOwnPropertyDescriptor(video, 'play');
+        const playId = player._playId;
+        player.reportBrowserPlaybackPath('direct_media', playId);
+        const attempt = player.browserPlaybackAttempt;
+        const traceId = await attempt.tracePromise;
+        let blocked = true;
+        Object.defineProperty(video, 'play', {
+            configurable: true,
+            value: () => {
+                if (blocked) return Promise.reject(new DOMException('Blocked', 'NotAllowedError'));
+                video.dispatchEvent(new Event('playing'));
+                return Promise.resolve();
+            }
+        });
+        try {
+            await player.startVideoPlayback(playId).catch(error => player.reportBrowserPlaybackFailure(error, playId));
+            blocked = false;
+            player.handleKeyboard({ key: ' ', preventDefault() {} });
+            await Promise.resolve();
+            await attempt.queue;
+            return traceId;
+        } finally {
+            player.finishBrowserPlayback('browser_stopped');
+            await attempt.queue;
+            if (ownPlay) Object.defineProperty(video, 'play', ownPlay);
+            else delete video.play;
+        }
+    });
+    expect(manualRecoveryTrace).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        const related = data.events.filter(event => event.traceId === traceId);
+        return {
+            blocked: related.filter(event => event.reason === 'start_blocked').length,
+            started: related.filter(event => event.event === 'browser_playback_started').length
+        };
+    }, manualRecoveryTrace)).toEqual({ blocked: 1, started: 1 });
+
     await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('.tab[data-tab="preferences"]').click();
     await page.locator('#setting-live-tv-autoplay').uncheck();
@@ -2087,6 +2145,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    const watchDirectTrace = await page.evaluate(() => (
+        window.app.pages.watch.browserPlaybackAttempt?.tracePromise || null
+    ));
+    expect(watchDirectTrace).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_path_selected'
+            && event.reason === 'direct_media'
+            && data.events.some(related => related.traceId === traceId
+                && related.event === 'browser_playback_started'));
+    }, watchDirectTrace)).toBe(true);
     await expect(page.locator('#watch-transcode-status')).toContainText(
         '480p limit unavailable · Playing original at 720p'
     );
