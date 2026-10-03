@@ -4,7 +4,7 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
-## [2.7.0] - 2026-10-03
+## [2.7.0] - 2026-10-04
 
 This release adds administrator diagnostics and reviewed support snapshots, improves source-setting reliability, and includes dependency updates.
 
