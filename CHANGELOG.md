@@ -4,6 +4,33 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.7.0] - 2026-10-03
+
+This release adds administrator diagnostics and reviewed support snapshots, improves source-setting reliability, and includes dependency updates.
+
+### Added
+
+- Add an administrator-only Diagnostics page with application version/revision, process resources, managed playback sessions, source synchronization results, and bounded recent events ([#426]).
+- Explain playback paths and lifecycle changes for Live TV, Movies, and Series with readable reasons and account-bound trace IDs. Keep events correlated through long playback, channel changes, and manual playback starts ([#426]).
+- Add a bounded support snapshot with a preview and explicit download of the reviewed text. The fixed field allowlist excludes provider details, credentials, personal information, and raw logs; nothing is uploaded automatically ([#426]).
+- Document event interpretation, retention, and safe snapshot sharing in the [Diagnostics guide](docs/DIAGNOSTICS.md) ([#426]).
+
+### Changed
+
+- Update dependencies while retaining protected application, browser, migration, and container validation.
+
+### Fixed
+
+- Prevent overlapping source-setting changes from silently replacing one another. Preserve successful changes and fail explicitly when a change cannot be applied ([#453]).
+- Keep the latest Movie or Series selection active when earlier asynchronous playback requests finish later ([#426]).
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.6.2. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required. Diagnostics history is held in memory and clears when the application restarts.
+- Diagnostics and support snapshots are administrator-only. Always review a snapshot before sharing it; screenshots and separate logs need their own redaction.
+- To roll back, stop the upgraded container, restore the pre-upgrade data backup, and recreate the container with 2.6.2 and the original deployment secrets.
+
 ## [2.6.2] - 2026-09-20
 
 This release improves TV Guide refresh safety, proxied HLS compatibility, and current dependency maintenance.
@@ -567,3 +594,5 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#412]: https://github.com/MikaelKW/nodecast-tv-plus/pull/412
 [#413]: https://github.com/MikaelKW/nodecast-tv-plus/pull/413
 [#425]: https://github.com/MikaelKW/nodecast-tv-plus/issues/425
+[#426]: https://github.com/MikaelKW/nodecast-tv-plus/issues/426
+[#453]: https://github.com/MikaelKW/nodecast-tv-plus/issues/453
