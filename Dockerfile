@@ -17,7 +17,7 @@ RUN apt-get update \
     curl \
     ca-certificates \
     gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     python3 \
@@ -33,6 +33,32 @@ COPY package*.json ./
 # Build native production dependencies without retaining the toolchain later.
 RUN npm ci --omit=dev
 
+FROM ubuntu:24.04 AS media-builder
+
+ARG TARGETARCH
+ARG RUNTIME_REFRESH=manual
+ENV DEBIAN_FRONTEND=noninteractive
+RUN echo "Refreshing media build packages for ${RUNTIME_REFRESH}" \
+    && apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg build-essential pkg-config nasm \
+    libgnutls28-dev libx264-dev libx265-dev libaom-dev libdav1d-dev \
+    libvpx-dev libopus-dev libvorbis-dev libtheora-dev libmp3lame-dev \
+    libspeex-dev libopenjp2-7-dev libwebp-dev libass-dev \
+    libfontconfig1-dev libfreetype-dev libfribidi-dev libharfbuzz-dev \
+    libsoxr-dev libxml2-dev zlib1g-dev libbz2-dev \
+    libcodec2-dev libgme-dev libgsm1-dev libopenmpt-dev libjxl-dev \
+    libsnappy-dev libzvbi-dev libbluray-dev \
+    libva-dev libdrm-dev libffmpeg-nvenc-dev clang \
+    && if [ "$TARGETARCH" = "amd64" ]; then \
+        apt-get install -y --no-install-recommends libvpl-dev; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/build-media.sh /usr/local/bin/build-media
+RUN sh /usr/local/bin/build-media
+COPY docker/collect-media-packages.sh /usr/local/bin/collect-media-packages
+RUN sh /usr/local/bin/collect-media-packages
+
 FROM ubuntu:24.04 AS runtime
 
 # RUNTIME_REFRESH is set uniquely by CI and release workflows so the final
@@ -40,6 +66,7 @@ FROM ubuntu:24.04 AS runtime
 ARG TARGETARCH
 ARG RUNTIME_REFRESH=manual
 ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=media-builder /opt/media/share/nodecast-runtime/runtime-packages.txt /tmp/media-runtime-packages.txt
 RUN echo "Refreshing runtime packages for ${RUNTIME_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
@@ -47,7 +74,7 @@ RUN echo "Refreshing runtime packages for ${RUNTIME_REFRESH}" \
     curl \
     ca-certificates \
     gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && if [ "$TARGETARCH" = "amd64" ]; then \
         DRIVERS="mesa-va-drivers intel-media-va-driver vainfo"; \
     else \
@@ -55,8 +82,8 @@ RUN echo "Refreshing runtime packages for ${RUNTIME_REFRESH}" \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
-    ffmpeg \
     python3 \
+    $(cat /tmp/media-runtime-packages.txt) \
     $DRIVERS \
     && apt-get purge -y --auto-remove gnupg \
     && rm -rf \
@@ -65,22 +92,36 @@ RUN echo "Refreshing runtime packages for ${RUNTIME_REFRESH}" \
         /usr/bin/npm \
         /usr/bin/npx \
         /usr/bin/corepack \
+        /tmp/media-runtime-packages.txt \
         /var/lib/apt/lists/* \
     && apt-get clean
 
-# Verify FFmpeg installed
-RUN ffmpeg -version && ffmpeg -encoders 2>/dev/null | grep -E "vaapi|nvenc|qsv|libx264" | head -10
+# Install the paired tools and corresponding source/build records, not the
+# distribution's older libav libraries or the media builder's toolchain.
+COPY --from=media-builder /opt/media/bin/ffmpeg /opt/media/bin/ffprobe /usr/local/bin/
+COPY --from=media-builder /opt/media/share/nodecast-runtime /usr/share/nodecast-runtime
+RUN ffmpeg -version && ffprobe -version \
+    && ffmpeg -encoders 2>/dev/null | grep -E "vaapi|nvenc|qsv|libx264" | head -10
 
 WORKDIR /app
 
 # Copy only the compiled production dependency tree from the builder stage.
 COPY --from=dependency-builder /app/node_modules ./node_modules
 
+# Keep package fallback paths on the same verified tools instead of retaining
+# older downloaded executables beside the system pair.
+RUN node -e 'const fs=require("fs"); for(const [path,target] of [[require("ffmpeg-static"),"/usr/local/bin/ffmpeg"],[require("@ffprobe-installer/ffprobe").path,"/usr/local/bin/ffprobe"]]) { if(!path) throw new Error("Media fallback path unavailable"); fs.unlinkSync(path); fs.symlinkSync(target,path); }'
+
 # Copy application files
 COPY . .
 
+# Expose the immutable build revision to the local diagnostics view.
+ARG NODECAST_REVISION=unknown
+ENV NODECAST_REVISION=${NODECAST_REVISION}
+
 # Create data and cache directories
-RUN mkdir -p /app/data /app/transcode-cache && chmod 777 /app/transcode-cache
+RUN mkdir -p /app/data /app/transcode-cache && chmod 777 /app/transcode-cache \
+    && node scripts/container-runtime-test.js
 
 # Expose port
 EXPOSE 3000

@@ -42,7 +42,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Verify release metadata
         run: node scripts/release-check.js
@@ -123,6 +123,7 @@ jobs:
           pull: true
           build-args: |
             RUNTIME_REFRESH=publish-${{ github.run_id }}-${{ github.run_attempt }}
+            NODECAST_REVISION=${{ github.sha }}
           tags: |
             ${{ steps.ghcr_meta.outputs.tags }}
             ${{ steps.dockerhub_meta.outputs.tags }}

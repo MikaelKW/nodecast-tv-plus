@@ -42,36 +42,13 @@ router.post('/', auth.requireAuth, auth.requireAdmin, async (req, res) => {
             return res.status(400).json({ error: 'Role must be admin or viewer' });
         }
         
-        const data = await db.loadDb();
-        
-        // Check if username exists
-        if (data.users?.some(u => u.username === username)) {
+        const passwordHash = await auth.hashPassword(password);
+        const newUser = await db.users.create({ username, passwordHash, role });
+        res.json(newUser);
+    } catch (err) {
+        if (err.code === 'USERNAME_EXISTS') {
             return res.status(400).json({ error: 'Username already exists' });
         }
-        
-        // Create user
-        const passwordHash = await auth.hashPassword(password);
-        const newUser = {
-            id: data.nextUserId || (data.users?.length || 0) + 1,
-            username,
-            passwordHash,
-            role,
-            createdAt: new Date().toISOString()
-        };
-        
-        data.users = data.users || [];
-        data.users.push(newUser);
-        data.nextUserId = newUser.id + 1;
-        
-        await db.saveDb(data);
-        
-        res.json({
-            id: newUser.id,
-            username: newUser.username,
-            role: newUser.role,
-            createdAt: newUser.createdAt
-        });
-    } catch (err) {
         console.error('Create user error:', err);
         res.status(500).json({ error: 'Server error' });
     }
@@ -86,57 +63,29 @@ router.put('/:id', auth.requireAuth, auth.requireAdmin, async (req, res) => {
         const userId = parseInt(req.params.id);
         const { username, password, role } = req.body;
         
-        const data = await db.loadDb();
-        const userIndex = data.users?.findIndex(u => u.id === userId);
-        
-        if (userIndex === -1 || userIndex === undefined) {
-            return res.status(404).json({ error: 'User not found' });
+        if (password && password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
-        
-        const user = data.users[userIndex];
-        
-        // Update username if provided
-        if (username && username !== user.username) {
-            // Check if new username exists
-            if (data.users.some(u => u.username === username && u.id !== userId)) {
-                return res.status(400).json({ error: 'Username already exists' });
-            }
-            user.username = username;
+        if (role && !['admin', 'viewer'].includes(role)) {
+            return res.status(400).json({ error: 'Role must be admin or viewer' });
         }
-        
-        // Update password if provided
-        if (password) {
-            if (password.length < 6) {
-                return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        const passwordHash = password ? await auth.hashPassword(password) : null;
+        const outcome = await db.mutateDb(data => {
+            const user = data.users.find(u => u.id === userId);
+            if (!user) return { changed: false, result: { status: 404, error: 'User not found' } };
+            if (username && username !== user.username && data.users.some(u => u.username === username && u.id !== userId)) {
+                return { changed: false, result: { status: 400, error: 'Username already exists' } };
             }
-            user.passwordHash = await auth.hashPassword(password);
-        }
-        
-        // Update role if provided
-        if (role) {
-            if (!['admin', 'viewer'].includes(role)) {
-                return res.status(400).json({ error: 'Role must be admin or viewer' });
+            if (role && user.role === 'admin' && role !== 'admin' && data.users.filter(u => u.role === 'admin').length <= 1) {
+                return { changed: false, result: { status: 400, error: 'Cannot remove last admin user' } };
             }
-            
-            // Prevent removing last admin
-            if (user.role === 'admin' && role !== 'admin') {
-                const adminCount = data.users.filter(u => u.role === 'admin').length;
-                if (adminCount <= 1) {
-                    return res.status(400).json({ error: 'Cannot remove last admin user' });
-                }
-            }
-            
-            user.role = role;
-        }
-        
-        await db.saveDb(data);
-        
-        res.json({
-            id: user.id,
-            username: user.username,
-            role: user.role,
-            createdAt: user.createdAt
+            if (username) user.username = username;
+            if (passwordHash) user.passwordHash = passwordHash;
+            if (role) user.role = role;
+            return { result: { id: user.id, username: user.username, role: user.role, createdAt: user.createdAt } };
         });
+        if (outcome.status) return res.status(outcome.status).json({ error: outcome.error });
+        res.json(outcome);
     } catch (err) {
         console.error('Update user error:', err);
         res.status(500).json({ error: 'Server error' });
@@ -151,31 +100,20 @@ router.delete('/:id', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
         const userId = parseInt(req.params.id);
         
-        const data = await db.loadDb();
-        const userIndex = data.users?.findIndex(u => u.id === userId);
-        
-        if (userIndex === -1 || userIndex === undefined) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        const user = data.users[userIndex];
-        
-        // Prevent deleting yourself
-        if (user.id === req.session.userId) {
-            return res.status(400).json({ error: 'Cannot delete your own account' });
-        }
-        
-        // Prevent deleting last admin
-        if (user.role === 'admin') {
-            const adminCount = data.users.filter(u => u.role === 'admin').length;
-            if (adminCount <= 1) {
-                return res.status(400).json({ error: 'Cannot delete last admin user' });
+        const outcome = await db.mutateDb(data => {
+            const userIndex = data.users.findIndex(u => u.id === userId);
+            if (userIndex === -1) return { changed: false, result: { status: 404, error: 'User not found' } };
+            const user = data.users[userIndex];
+            if (user.id === req.session.userId) {
+                return { changed: false, result: { status: 400, error: 'Cannot delete your own account' } };
             }
-        }
-        
-        data.users.splice(userIndex, 1);
-        await db.saveDb(data);
-        
+            if (user.role === 'admin' && data.users.filter(u => u.role === 'admin').length <= 1) {
+                return { changed: false, result: { status: 400, error: 'Cannot delete last admin user' } };
+            }
+            data.users.splice(userIndex, 1);
+            return { result: { success: true } };
+        });
+        if (outcome.status) return res.status(outcome.status).json({ error: outcome.error });
         res.json({ success: true });
     } catch (err) {
         console.error('Delete user error:', err);

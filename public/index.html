@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=17">
+  <link rel="stylesheet" href="css/main.css?v=23">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -430,6 +430,7 @@
             <button class="tab" data-tab="transcode">Transcoding</button>
             <button class="tab" data-tab="content">Manage Content</button>
             <button class="tab" data-tab="users" id="users-tab" style="display:none;">Users</button>
+            <button class="tab" data-tab="diagnostics" id="diagnostics-tab">Diagnostics</button>
             <button class="tab" data-tab="about" id="about-tab">About</button>
           </div>
 
@@ -1119,6 +1120,29 @@
             </div>
           </div>
 
+          <!-- Diagnostics Tab -->
+          <div id="tab-diagnostics" class="tab-content">
+            <div class="settings-section">
+              <h3>Diagnostics</h3>
+              <p class="hint">Administrator-only, recent in-memory information. Provider details and raw errors are not shown. Nothing is uploaded.</p>
+              <div class="diagnostics-toolbar">
+                <p id="diagnostics-status" role="status" aria-live="polite"></p>
+                <button type="button" class="btn btn-secondary" id="diagnostics-refresh">Refresh</button>
+              </div>
+              <div id="diagnostics-content" class="diagnostics-content"></div>
+              <section class="diagnostics-card diagnostics-support">
+                <h4>Support snapshot</h4>
+                <p>Prepare a preview, review it, then download the exact text shown here if you choose to share it. It contains no provider URLs, credentials, personal details, or raw logs. Nothing is uploaded.</p>
+                <div class="diagnostics-support-actions">
+                  <button type="button" class="btn btn-secondary" id="diagnostics-preview-button">Prepare preview</button>
+                  <button type="button" class="btn btn-secondary" id="diagnostics-download-button" disabled>Download reviewed snapshot</button>
+                </div>
+                <p id="diagnostics-preview-status" role="status" aria-live="polite"></p>
+                <pre id="diagnostics-preview" hidden></pre>
+              </section>
+            </div>
+          </div>
+
           <!-- About Tab -->
           <div id="tab-about" class="tab-content">
             <div class="settings-section">
@@ -1559,11 +1583,11 @@
   <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=6"></script>
+  <script src="js/api.js?v=7"></script>
   <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/VodDuration.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
-  <script src="js/components/VideoPlayer.js?v=11"></script>
+  <script src="js/components/VideoPlayer.js?v=14"></script>
   <script src="js/components/ChannelList.js?v=7"></script>
   <script src="js/components/SourceManager.js?v=7"></script>
   <script src="js/components/EpgGuide.js?v=2"></script>
@@ -1572,10 +1596,11 @@
   <script src="js/pages/Guide.js?v=2"></script>
   <script src="js/pages/MoviesPage.js?v=6"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
-  <script src="js/pages/Settings.js?v=11"></script>
+  <script src="js/components/DiagnosticsPanel.js?v=4"></script>
+  <script src="js/pages/Settings.js?v=12"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
-  <script src="js/pages/WatchPage.js?v=10"></script>
+  <script src="js/pages/WatchPage.js?v=12"></script>
   <script src="js/app.js?v=10"></script>
 </body>
 

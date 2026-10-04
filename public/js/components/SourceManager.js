@@ -388,7 +388,7 @@ class SourceManager {
 
             modal.querySelector('.modal-close').onclick = () => modal.classList.remove('active');
             document.getElementById('modal-cancel').onclick = () => modal.classList.remove('active');
-            document.getElementById('modal-save').onclick = () => this.updateSource(id, type);
+            document.getElementById('modal-save').onclick = () => this.updateSource(id, type, source);
         } catch (err) {
             console.error('Error loading source:', err);
         }
@@ -537,7 +537,7 @@ class SourceManager {
     /**
      * Update existing source
      */
-    async updateSource(id, type) {
+    async updateSource(id, type, original) {
         const name = document.getElementById('source-name').value.trim();
         const url = document.getElementById('source-url').value.trim();
         const username = document.getElementById('source-username')?.value.trim();
@@ -550,13 +550,24 @@ class SourceManager {
         }
 
         try {
-            const data = { name, url, contentVisibility };
+            const data = {};
+            if (name !== original.name) data.name = name;
+            if (url !== original.url) data.url = url;
             if (type === 'xtream') {
-                data.username = username;
+                if (username !== (original.username || '')) data.username = username;
                 if (password) data.password = password;
             }
+            if (contentVisibility) {
+                const changedVisibility = {};
+                for (const key of ['live', 'movies', 'series']) {
+                    if (contentVisibility[key] !== (original.contentVisibility?.[key] !== false)) {
+                        changedVisibility[key] = contentVisibility[key];
+                    }
+                }
+                if (Object.keys(changedVisibility).length) data.contentVisibility = changedVisibility;
+            }
 
-            await API.sources.update(id, data);
+            if (Object.keys(data).length) await API.sources.update(id, data);
             document.getElementById('modal').classList.remove('active');
             await this.loadSources();
             await this.refreshVisibleContentViews();

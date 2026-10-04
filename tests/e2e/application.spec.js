@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
 const { test, expect } = require('@playwright/test');
 const OTPAuth = require('otpauth');
 
@@ -131,8 +132,43 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // historical behavior of starting with subtitles off.
     await page.locator('.nav-link[data-page="settings"]').click();
     await expect(page.locator('#page-settings')).toHaveClass(/active/);
+    await page.locator('#diagnostics-tab').click();
+    await expect(page.locator('#tab-diagnostics')).toHaveClass(/active/);
+    await expect(page.locator('#diagnostics-content')).toContainText('Application and resources');
+    await expect(page.locator('#diagnostics-content')).toContainText('Managed playback sessions');
+    await expect(page.locator('#diagnostics-status')).toContainText('Updated');
+    await page.locator('#diagnostics-refresh').click();
+    await expect(page.locator('#diagnostics-status')).toContainText('Updated');
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
+    await page.locator('#diagnostics-preview-button').click();
+    await expect(page.locator('#diagnostics-preview')).toBeVisible();
+    await expect(page.locator('#diagnostics-preview-status')).toContainText('Review this snapshot');
+    await expect(page.locator('#diagnostics-download-button')).toBeEnabled();
+    const reviewedSnapshot = await page.locator('#diagnostics-preview').textContent();
+    expect(JSON.parse(reviewedSnapshot).schemaVersion).toBe(1);
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#diagnostics-download-button').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('nodecast-support-snapshot.json');
+    expect(await fs.readFile(await download.path(), 'utf8')).toBe(reviewedSnapshot);
+    await page.evaluate(async () => {
+        const panel = window.app.pages.settings.diagnosticsPanel;
+        const original = window.API.diagnostics.getSummary;
+        window.API.diagnostics.getSummary = async () => { throw new Error('Synthetic access change'); };
+        try {
+            await panel.load();
+        } finally {
+            window.API.diagnostics.getSummary = original;
+        }
+    });
+    await expect(page.locator('#diagnostics-content')).toBeEmpty();
+    await expect(page.locator('#diagnostics-preview')).toBeEmpty();
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
     await expect(page.locator('#tab-preferences')).toHaveClass(/active/);
+    await expect(page.locator('#diagnostics-content')).toBeEmpty();
+    await expect(page.locator('#diagnostics-preview')).toBeEmpty();
+    await expect(page.locator('#diagnostics-download-button')).toBeDisabled();
     await expect(page.locator('.preference-scope-note')).toContainText('currently signed-in account');
     await expect(page.locator('.preference-scope-note')).toContainText('not change the global settings');
     await expect(page.locator('#setting-live-tv-layout')).toHaveValue('grouped');
@@ -340,7 +376,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(viewerPage.locator('#page-settings')).toHaveClass(/active/);
     await expect(viewerPage.locator('#tab-preferences')).toHaveClass(/active/);
     await expect(viewerPage.locator('.tab[data-tab="preferences"]')).toBeVisible();
-    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'about']) {
+    for (const tabName of ['sources', 'interface', 'player', 'transcode', 'content', 'users', 'diagnostics', 'about']) {
         await expect(viewerPage.locator(`.tab[data-tab="${tabName}"]`)).toBeHidden();
     }
     await expect(viewerPage.locator('#setting-live-tv-layout')).toHaveValue('grouped');
@@ -1267,6 +1303,51 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         fallbackCleared: true
     });
 
+    // A successful manual play after an autoplay rejection must repair the
+    // same diagnostic trace. The media element's playing event is authoritative
+    // and duplicate start notifications remain suppressed.
+    const manualRecoveryTrace = await page.evaluate(async () => {
+        const player = window.app.player;
+        const video = player.video;
+        const ownPlay = Object.getOwnPropertyDescriptor(video, 'play');
+        const playId = player._playId;
+        player.reportBrowserPlaybackPath('direct_media', playId);
+        const attempt = player.browserPlaybackAttempt;
+        const traceId = await attempt.tracePromise;
+        let blocked = true;
+        Object.defineProperty(video, 'play', {
+            configurable: true,
+            value: () => {
+                if (blocked) return Promise.reject(new DOMException('Blocked', 'NotAllowedError'));
+                video.dispatchEvent(new Event('playing'));
+                return Promise.resolve();
+            }
+        });
+        try {
+            await player.startVideoPlayback(playId).catch(error => player.reportBrowserPlaybackFailure(error, playId));
+            blocked = false;
+            player.handleKeyboard({ key: ' ', preventDefault() {} });
+            await Promise.resolve();
+            await attempt.queue;
+            return traceId;
+        } finally {
+            player.finishBrowserPlayback('browser_stopped');
+            await attempt.queue;
+            if (ownPlay) Object.defineProperty(video, 'play', ownPlay);
+            else delete video.play;
+        }
+    });
+    expect(manualRecoveryTrace).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        const related = data.events.filter(event => event.traceId === traceId);
+        return {
+            blocked: related.filter(event => event.reason === 'start_blocked').length,
+            started: related.filter(event => event.event === 'browser_playback_started').length
+        };
+    }, manualRecoveryTrace)).toEqual({ blocked: 1, started: 1 });
+
     await page.locator('.nav-link[data-page="settings"]').click();
     await page.locator('.tab[data-tab="preferences"]').click();
     await page.locator('#setting-live-tv-autoplay').uncheck();
@@ -1502,6 +1583,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBe(480);
     await expect(page.locator('#player-quality-badge')).toHaveText('480p');
+    const managedTraceId = await page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/summary');
+        const summary = await response.json();
+        return summary.playback.managedSessions[0]?.traceId || null;
+    });
+    expect(managedTraceId).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        const related = data.events.filter(event => event.traceId === traceId);
+        return related.some(event => event.event === 'path_selected')
+            && related.some(event => event.event === 'browser_playback_started');
+    }, managedTraceId)).toBe(true);
 
     // Returning to Auto stops the temporary session and restores the provider's
     // original stream without changing the saved global transcoding setting.
@@ -1512,9 +1606,31 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
         timeout: 30_000
     }).toBeNull();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_playback_stopped'
+            && event.reason === 'browser_replaced');
+    }, managedTraceId)).toBe(true);
     await expect.poll(async () => video.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.event === 'browser_path_selected'
+            && event.reason === 'direct_media'
+            && data.events.some(related => related.traceId === event.traceId
+                && related.event === 'browser_playback_started'));
+    })).toBe(true);
+    const directPlaybackTrace = await page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.find(event => event.event === 'browser_path_selected'
+            && event.reason === 'direct_media')?.traceId;
+    });
+    expect(directPlaybackTrace).toBeTruthy();
 
     // A cap matching the original fixed-resolution stream must preserve its
     // remux path. After a lower cap encodes video, raising the cap back to the
@@ -1522,7 +1638,22 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.evaluate(async url => {
         await window.app.player.play({ name: 'Remux quality restoration' }, url);
     }, `${fixtureBaseUrl}/sample.ts`);
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_playback_stopped'
+            && event.reason === 'browser_replaced');
+    }, directPlaybackTrace)).toBe(true);
     await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
+    await expect.poll(() => page.evaluate(async () => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.event === 'browser_path_selected'
+            && event.reason === 'auto_remux'
+            && data.events.some(related => related.traceId === event.traceId
+                && related.event === 'browser_playback_started'));
+    })).toBe(true);
     await expect.poll(async () => video.evaluate(element => element.videoHeight), {
         timeout: 30_000
     }).toBe(720);
@@ -2014,6 +2145,19 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect.poll(async () => watchVideo.evaluate(element => element.readyState), {
         timeout: 30_000
     }).toBeGreaterThanOrEqual(2);
+    const watchDirectTrace = await page.evaluate(() => (
+        window.app.pages.watch.browserPlaybackAttempt?.tracePromise || null
+    ));
+    expect(watchDirectTrace).toBeTruthy();
+    await expect.poll(() => page.evaluate(async traceId => {
+        const response = await fetch('/api/diagnostics/events');
+        const data = await response.json();
+        return data.events.some(event => event.traceId === traceId
+            && event.event === 'browser_path_selected'
+            && event.reason === 'direct_media'
+            && data.events.some(related => related.traceId === traceId
+                && related.event === 'browser_playback_started'));
+    }, watchDirectTrace)).toBe(true);
     await expect(page.locator('#watch-transcode-status')).toContainText(
         '480p limit unavailable · Playing original at 720p'
     );
