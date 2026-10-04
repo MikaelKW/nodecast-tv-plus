@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const db = require('../db');
 const transcodeSession = require('../services/transcodeSession');
+const browserPlaybackTraces = require('../services/browserPlaybackTraces');
 const { parseMaxResolutionOverride } = require('../services/playbackQuality');
 const auth = require('../auth');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../services/urlSecurity');
@@ -140,19 +141,24 @@ router.post('/session', async (req, res) => {
         }
 
         if (!ready) {
+            session.recordDiagnosticFailure('playlist_not_ready');
             await transcodeSession.removeSession(session.id, req.user.id, 'startup failed');
             return res.status(500).json({ error: 'Transcoding failed to start', reason: 'Playlist not generated in time' });
         }
 
+        const diagnosticTraceId = browserPlaybackTraces.registerManaged(req.user.id, session.diagnosticTraceId)
+            ? session.diagnosticTraceId : null;
         res.json({
             sessionId: session.id,
             playlistUrl: `/api/transcode/${session.id}/stream.m3u8`,
             mediaStartTime: session.mediaStartTime,
-            status: session.status
+            status: session.status,
+            diagnosticTraceId
         });
 
     } catch (err) {
         if (clientDisconnected) return;
+        session?.recordDiagnosticFailure('startup_error');
         console.error('[Transcode] Session creation failed:', redactText(err?.stack || err));
         res.status(err.statusCode || 500).json({
             error: err.statusCode ? err.message : 'Failed to create session',
@@ -337,7 +343,6 @@ router.get('/', mediaProcessLimit, async (req, res) => {
         '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
         // Timestamp handling
         '-fps_mode', 'passthrough',
-        '-async', '1',
         '-max_muxing_queue_size', '2048',
         // Fragmented MP4 for streaming (browser-compatible)
         '-f', 'mp4',

@@ -23,6 +23,8 @@ class VideoPlayer {
         this.nowPlaying = document.getElementById('now-playing');
         this.hls = null;
         this._playId = 0;
+        this.browserPlaybackAttempt = null;
+        this.browserPlaybackRenewalTimer = null;
         this._startupPlaybackId = null;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
@@ -46,6 +48,7 @@ class VideoPlayer {
         this.settingsLoaded = false;
 
         window.addEventListener('pagehide', () => {
+            this.finishBrowserPlayback('page_closed');
             this.releasePlaybackLease();
         });
 
@@ -331,6 +334,10 @@ class VideoPlayer {
 
         this.video.addEventListener('play', updatePlayUI);
         this.video.addEventListener('pause', updatePlayUI);
+        this.video.addEventListener('playing', () => this.recordBrowserPlaybackStarted(this._playId));
+        this.video.addEventListener('error', () => {
+            this.reportBrowserPlaybackEvent('browser_playback_failed', 'media_error', this._playId);
+        });
 
         // Loading spinner
         this.video.addEventListener('waiting', () => {
@@ -930,6 +937,7 @@ class VideoPlayer {
 
     async startTranscodeSession(url, options = {}, signal = null) {
         console.log('[Player] Starting HLS transcode session...', options);
+        const playId = this._playId;
         const res = await this.requestPlaybackResource('/api/transcode/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -946,13 +954,14 @@ class VideoPlayer {
             throw new Error(detail.reason || detail.error || 'Failed to start session');
         }
         const session = await res.json();
-        if (signal?.aborted) {
+        if (signal?.aborted || this._playId !== playId) {
             await fetch(NodeCastUrl.resolve(`/api/transcode/${session.sessionId}`), {
                 method: 'DELETE'
             }).catch(() => {});
             throw new DOMException('Playback request was replaced', 'AbortError');
         }
         this.currentSessionId = session.sessionId;
+        this.linkManagedPlaybackTrace(session.diagnosticTraceId, playId);
         this.startPlaybackLeaseHeartbeat();
         return NodeCastUrl.resolve(session.playlistUrl);
     }
@@ -1070,8 +1079,10 @@ class VideoPlayer {
      * the existing audible behavior.
      */
     async startVideoPlayback(playId = this._playId) {
+        if (this._playId !== playId) return;
         try {
             await this.video.play();
+            this.recordBrowserPlaybackStarted(playId);
             if (this._startupPlaybackId === playId) this._startupPlaybackId = null;
         } catch (err) {
             const canRetryMuted = err.name === 'NotAllowedError'
@@ -1083,6 +1094,7 @@ class VideoPlayer {
             this.video.muted = true;
             try {
                 await this.video.play();
+                this.recordBrowserPlaybackStarted(playId);
                 this._startupPlaybackId = null;
                 const muteButton = document.getElementById('btn-mute');
                 if (muteButton) {
@@ -1095,6 +1107,97 @@ class VideoPlayer {
                 throw mutedError;
             }
         }
+    }
+
+    // Best-effort diagnostics only. Playback never waits for this request and
+    // provider URLs, channel details, and browser errors are never sent.
+    reportBrowserPlaybackPath(reason, playId) {
+        if (this._playId !== playId) return;
+        this.stopBrowserPlaybackRenewal();
+        const attempt = { playId, tracePromise: null, queue: Promise.resolve(), started: false, closed: false };
+        this.browserPlaybackAttempt = attempt;
+        try {
+            attempt.tracePromise = fetch(NodeCastUrl.resolve('/api/diagnostics/playback-path'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            }).then(response => response.ok ? response.json() : null)
+                .then(data => typeof data?.traceId === 'string' ? data.traceId : null)
+                .catch(() => null);
+        } catch {
+            // Even an unavailable diagnostics endpoint must not affect playback.
+            attempt.tracePromise = Promise.resolve(null);
+        }
+    }
+
+    linkManagedPlaybackTrace(traceId, playId) {
+        if (this._playId !== playId || typeof traceId !== 'string') return;
+        this.stopBrowserPlaybackRenewal();
+        this.browserPlaybackAttempt = {
+            playId, tracePromise: Promise.resolve(traceId), queue: Promise.resolve(),
+            started: false, closed: false
+        };
+    }
+
+    reportBrowserPlaybackEvent(event, reason, playId = this._playId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed || attempt.playId !== playId || this._playId !== playId) return;
+        attempt.queue = attempt.queue.then(async () => {
+            const traceId = await attempt.tracePromise;
+            if (!traceId) return;
+            await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/events`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event, reason }),
+                keepalive: reason === 'page_closed'
+            });
+        }).catch(() => {});
+    }
+
+    recordBrowserPlaybackStarted(playId) {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.started || attempt.playId !== playId || this._playId !== playId) return;
+        attempt.started = true;
+        this.reportBrowserPlaybackEvent('browser_playback_started', 'media_playing', playId);
+        this.startBrowserPlaybackRenewal(playId);
+    }
+
+    startBrowserPlaybackRenewal(playId) {
+        this.stopBrowserPlaybackRenewal();
+        this.browserPlaybackRenewalTimer = setInterval(() => {
+            const attempt = this.browserPlaybackAttempt;
+            if (!attempt || attempt.closed || !attempt.started || attempt.playId !== playId || this._playId !== playId) {
+                this.stopBrowserPlaybackRenewal();
+                return;
+            }
+            attempt.queue = attempt.queue.then(async () => {
+                const traceId = await attempt.tracePromise;
+                if (!traceId) return;
+                await fetch(NodeCastUrl.resolve(`/api/diagnostics/playback/${encodeURIComponent(traceId)}/renew`), {
+                    method: 'POST'
+                });
+            }).catch(() => {});
+        }, 10 * 60 * 1000);
+    }
+
+    stopBrowserPlaybackRenewal() {
+        clearInterval(this.browserPlaybackRenewalTimer);
+        this.browserPlaybackRenewalTimer = null;
+    }
+
+    reportBrowserPlaybackFailure(error, playId = this._playId) {
+        if (error?.name === 'AbortError') return;
+        this.reportBrowserPlaybackEvent('browser_playback_failed',
+            error?.name === 'NotAllowedError' ? 'start_blocked' : 'start_failed', playId);
+    }
+
+    finishBrowserPlayback(reason = 'browser_stopped') {
+        const attempt = this.browserPlaybackAttempt;
+        if (!attempt || attempt.closed) return;
+        this.stopBrowserPlaybackRenewal();
+        this.reportBrowserPlaybackEvent('browser_playback_stopped', reason, attempt.playId);
+        attempt.closed = true;
+        this.browserPlaybackAttempt = null;
     }
 
     /**
@@ -1110,6 +1213,7 @@ class VideoPlayer {
         xtreamFallbackFormat = null,
         startupPlayback = false
     } = {}) {
+        this.finishBrowserPlayback('browser_replaced');
         const playId = ++this._playId;
         this._startupPlaybackId = startupPlayback ? playId : null;
         const previousPendingRequest = this._pendingConnectionRequest;
@@ -1313,10 +1417,12 @@ class VideoPlayer {
                         // Other browsers retain the lower-overhead direct remux.
                         console.log('[Player] Auto: Using remux (.ts container)');
                         this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
+                        this.reportBrowserPlaybackPath('auto_remux', playId);
                         const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
                         this.video.src = remuxUrl;
                         this.startVideoPlayback(playId).catch(e => {
+                            this.reportBrowserPlaybackFailure(e, playId);
                             if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                         });
                         this.updateNowPlaying(channel);
@@ -1405,12 +1511,16 @@ class VideoPlayer {
                     this.hls.loadSource(playlistUrl);
                     this.hls.attachMedia(this.video);
                     this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                        this.startVideoPlayback(playId).catch(console.error);
+                        this.startVideoPlayback(playId).catch(error => {
+                            this.reportBrowserPlaybackFailure(error, playId);
+                            if (error.name !== 'AbortError') console.error(error);
+                        });
                     });
                     // Handle errors
                     this.hls.on(Hls.Events.ERROR, (event, data) => {
                         if (data.fatal) {
                             console.log('[Player] HLS fatal error');
+                            this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                             this.hls.destroy();
                         }
                     });
@@ -1510,9 +1620,11 @@ class VideoPlayer {
                 }
 
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
+                this.reportBrowserPlaybackPath('forced_remux', playId);
                 const remuxUrl = this.getRemuxUrl(streamUrl);
                 this.video.src = remuxUrl;
                 this.startVideoPlayback(playId).catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
                     if (e.name !== 'AbortError') console.log('[Player] Autoplay prevented:', e);
                 });
 
@@ -1539,6 +1651,7 @@ class VideoPlayer {
             // Priority 1: Use HLS.js for HLS streams on browsers that support it
             if (looksLikeHls && Hls.isSupported()) {
                 this.updateTranscodeStatus('direct', 'Direct HLS');
+                this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'direct_hls', playId);
 
                 // Use playHls helper logic here (or extract it)
                 // For now, let's just use existing logic but wrapped/modularized if possible?
@@ -1550,7 +1663,9 @@ class VideoPlayer {
                 this.hls.attachMedia(this.video);
 
                 this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    if (this._playId !== playId) return;
                     this.startVideoPlayback(playId).catch(e => {
+                        this.reportBrowserPlaybackFailure(e, playId);
                         if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                     });
                 });
@@ -1566,6 +1681,7 @@ class VideoPlayer {
 
                 // Re-attach error handler for the new Hls instance
                 this.hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (this._playId !== playId) return;
                     if (data.fatal) {
                         const isCorsLikely = data.type === Hls.ErrorTypes.NETWORK_ERROR ||
                             (data.type === Hls.ErrorTypes.MEDIA_ERROR && data.details === 'fragParsingError');
@@ -1576,6 +1692,8 @@ class VideoPlayer {
                         if (isCorsLikely && !this.isUsingProxy && !isLocalApi) {
                             console.log('CORS/Network error detected, retrying via proxy...', data.details);
                             this.isUsingProxy = true;
+                            this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                            this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
                             this.hls.loadSource(this.getProxiedUrl(this.currentUrl));
                             this.hls.startLoad();
                         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -1587,6 +1705,7 @@ class VideoPlayer {
                                 this.hls.recoverMediaError();
                             }
                         } else {
+                            this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                             console.error('Fatal HLS error:', data);
                         }
                     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -1613,23 +1732,32 @@ class VideoPlayer {
                 this.video.canPlayType('application/vnd.apple.mpegurl') === 'maybe')) {
                 // Priority 2: Native HLS support (Safari on iOS/macOS where HLS.js may not work)
                 this.updateTranscodeStatus('direct', 'Direct Native');
+                this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'native_hls', playId);
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     if (e.name === 'AbortError') return; // Ignore interruption by new load
+                    if (this._playId !== playId) return;
                     console.log('Autoplay prevented, trying proxy if CORS error:', e);
                     if (!this.isUsingProxy) {
                         this.isUsingProxy = true;
+                        this.reportBrowserPlaybackEvent('browser_proxy_retry', 'proxy_retry', playId);
+                        this.reportBrowserPlaybackEvent('browser_path_selected', 'proxied_hls', playId);
                         this.video.src = this.getProxiedUrl(streamUrl);
                         this.startVideoPlayback(playId).catch(err => {
+                            this.reportBrowserPlaybackFailure(err, playId);
                             if (err.name !== 'AbortError') console.error('Proxy play failed:', err);
                         });
+                    } else {
+                        this.reportBrowserPlaybackFailure(e, playId);
                     }
                 });
             } else {
                 // Priority 3: Try direct playback for non-HLS streams
                 this.updateTranscodeStatus('direct', 'Direct Play');
+                this.reportBrowserPlaybackPath('direct_media', playId);
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
                     if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
                 });
             }
@@ -1670,10 +1798,12 @@ class VideoPlayer {
         this.hls.attachMedia(this.video);
 
         this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (this._playId !== playId) return;
             if (!this.currentSessionId && this.playbackQuality !== 'auto') {
                 this.applyAdaptiveQuality(this.playbackQuality);
             }
             this.startVideoPlayback(playId).catch(e => {
+                this.reportBrowserPlaybackFailure(e, playId);
                 if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
             });
         });
@@ -1689,6 +1819,7 @@ class VideoPlayer {
         this.hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
                 // Simple error handling for forced HLS/transcode modes
+                this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                 console.error('Fatal HLS error in transcode mode:', data);
                 this.hls.destroy();
             }
@@ -2004,6 +2135,7 @@ class VideoPlayer {
      * Stop playback
      */
     stop({ keepPlaybackRequest = false, skipSessionCleanup = false } = {}) {
+        this.finishBrowserPlayback(keepPlaybackRequest ? 'browser_replaced' : 'browser_stopped');
         if (!keepPlaybackRequest) {
             this._playId += 1;
             this._playAbortController?.abort();

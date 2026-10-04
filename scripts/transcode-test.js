@@ -34,6 +34,7 @@ const {
     parseTranscodeStartTimeoutSeconds
 } = require('../server/config/transcode');
 const PlaybackQuality = require('../public/js/components/PlaybackQuality');
+const diagnosticEvents = require('../server/services/diagnosticEvents');
 
 function probe(url) {
     return new Promise((resolve, reject) => {
@@ -431,6 +432,14 @@ async function main() {
             if (session) await session.cleanup();
             await rejectedServer.close();
         }
+        const retryTrace = diagnosticEvents.list(128).filter(event => event.traceId === session.diagnosticTraceId);
+        assert.ok(retryTrace.some(event => event.event === 'session_start'));
+        assert.ok(retryTrace.some(event => event.event === 'path_selected' && event.reason === 'video_audio_copy'));
+        assert.ok(retryTrace.some(event => event.event === 'playback_failed' && event.reason === 'process_exit'));
+        assert.ok(retryTrace.some(event => event.event === 'connection_retry'));
+        assert.ok(retryTrace.some(event => event.event === 'playback_ready'));
+        assert.ok(retryTrace.some(event => event.event === 'session_cleanup'));
+        assert.equal(JSON.stringify(retryTrace).includes(rejectedServer.url), false);
 
         const seekMediaPath = path.join(testRoot, 'seek-sample.mp4');
         const generatedSeekMedia = spawnSync(ffmpegPath, [

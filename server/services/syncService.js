@@ -5,6 +5,7 @@ const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
 const epgParser = require('./epgParser');
 const { redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
+const diagnosticEvents = require('./diagnosticEvents');
 
 // Sync tracking
 const activeSyncs = new Set(); // sourceId
@@ -131,18 +132,24 @@ class SyncService {
      * Start sync for a source
      */
     async syncSource(sourceId) {
+        const traceId = diagnosticEvents.createTraceId();
+        const record = (event, reason) => diagnosticEvents.record({ traceId, event, reason, sourceId });
         if (activeSyncs.has(sourceId)) {
             console.log(`[Sync] Source ${sourceId} is already syncing`);
+            record('sync_skipped', 'already_syncing');
             return;
         }
 
         activeSyncs.add(sourceId);
+        record('sync_start', 'sync_requested');
+        let sourceMissing = false;
 
         try {
             const db = getDb();
             const source = await sources.getById(sourceId);
 
             if (!source) {
+                sourceMissing = true;
                 throw new Error(`Source ${sourceId} not found`);
             }
 
@@ -152,6 +159,7 @@ class SyncService {
 
             if (!source.enabled) {
                 console.log(`[Sync] Skipping disabled source ${source.name}`);
+                record('sync_skipped', 'source_disabled');
                 activeSyncs.delete(sourceId);
                 return;
             }
@@ -169,9 +177,11 @@ class SyncService {
 
             this.updateSyncStatus(sourceId, 'all', 'success');
             console.log(`[Sync] Completed sync for source ${source.name}`);
+            record('sync_completed', 'sync_completed');
 
         } catch (err) {
             console.error(`[Sync] Failed sync for source ${sourceId}:`, redactText(err?.stack || err));
+            record('sync_failed', sourceMissing ? 'source_not_found' : 'sync_error');
             this.updateSyncStatus(sourceId, 'all', 'error', redactText(err.message));
         } finally {
             activeSyncs.delete(sourceId);
