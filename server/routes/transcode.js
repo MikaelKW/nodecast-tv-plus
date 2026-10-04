@@ -343,7 +343,6 @@ router.get('/', mediaProcessLimit, async (req, res) => {
         '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
         // Timestamp handling
         '-fps_mode', 'passthrough',
-        '-async', '1',
         '-max_muxing_queue_size', '2048',
         // Fragmented MP4 for streaming (browser-compatible)
         '-f', 'mp4',
