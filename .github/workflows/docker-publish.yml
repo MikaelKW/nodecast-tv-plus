@@ -6,15 +6,28 @@ on:
   pull_request:
     branches: [ develop, testing, main ]
     paths:
+      - Dockerfile
+      - docker/**
       - .github/workflows/docker-publish.yml
       - scripts/verify-container-candidate.sh
       - scripts/assemble-container-index.sh
+      - scripts/verify-media-build-cache.js
   release:
     types: [ published ]
   workflow_dispatch:
     inputs:
       validate_only:
         description: Run native builds and checks without publishing images or tags
+        required: false
+        default: false
+        type: boolean
+      verify_media_cache:
+        description: Also verify cold/warm compilation and changed-input invalidation on native runners
+        required: false
+        default: false
+        type: boolean
+      require_imported_media_cache:
+        description: Require the initial native build to reuse compilation imported from a previous run
         required: false
         default: false
         type: boolean
@@ -68,6 +81,9 @@ jobs:
 
       - name: Verify release metadata
         run: node scripts/release-check.js
+
+      - name: Check build-cache validation parser
+        run: node scripts/verify-media-build-cache.js --self-test
 
       - name: Verify native runner architecture
         shell: bash
@@ -142,6 +158,25 @@ jobs:
           cache-from: type=gha,scope=publish-${{ matrix.arch }}
           cache-to: type=gha,scope=publish-${{ matrix.arch }},mode=max
 
+      - name: Record package freshness and compilation cache result
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          MEDIA_CACHE_REPORT: ${{ runner.temp }}/media-build-cache.json
+          REQUIRE_IMPORTED_CACHE: ${{ github.event_name == 'workflow_dispatch' && inputs.require_imported_media_cache }}
+        run: |
+          args=(--inspect)
+          if [ "$REQUIRE_IMPORTED_CACHE" = "true" ]; then args+=(--require-cached); fi
+          node scripts/verify-media-build-cache.js "${args[@]}"
+
+      - name: Upload concise native cache result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: media-build-cache-${{ matrix.arch }}
+          path: ${{ runner.temp }}/media-build-cache.json
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Verify native runtime and container health
         shell: bash
         env:
@@ -149,6 +184,23 @@ jobs:
           EXPECTED_ARCH: ${{ matrix.arch }}
           EXPECTED_REVISION: ${{ github.sha }}
         run: scripts/verify-container-candidate.sh
+
+      - name: Verify native media build-cache reuse and invalidation
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_media_cache
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          MEDIA_CACHE_REPORT: ${{ runner.temp }}/media-cache-probes.json
+        run: node scripts/verify-media-build-cache.js
+
+      - name: Upload native cache invalidation result
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_media_cache
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: media-cache-probes-${{ matrix.arch }}
+          path: ${{ runner.temp }}/media-cache-probes.json
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Block fixable high and critical runtime vulnerabilities
         shell: bash
