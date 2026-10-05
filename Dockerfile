@@ -33,7 +33,7 @@ COPY package*.json ./
 # Build native production dependencies without retaining the toolchain later.
 RUN npm ci --omit=dev
 
-FROM ubuntu:24.04 AS media-builder
+FROM ubuntu:24.04 AS media-build-packages
 
 ARG TARGETARCH
 ARG RUNTIME_REFRESH=manual
@@ -54,10 +54,23 @@ RUN echo "Refreshing media build packages for ${RUNTIME_REFRESH}" \
         apt-get install -y --no-install-recommends libvpl-dev; \
     fi \
     && rm -rf /var/lib/apt/lists/*
-COPY docker/build-media.sh /usr/local/bin/build-media
-RUN sh /usr/local/bin/build-media
-COPY docker/collect-media-packages.sh /usr/local/bin/collect-media-packages
-RUN sh /usr/local/bin/collect-media-packages
+
+# Always refresh build packages, but key compilation on their actual contents.
+# Ubuntu is usr-merged: /usr contains the compiler, headers and linked libraries;
+# /etc and dpkg's database retain configuration and exact package provenance.
+# Read-only build mounts key this step on those contents without duplicating
+# the toolchain into exported layers. Copy configuration rather than mounting
+# /etc so Docker can still supply its build-time resolver. Apt logs/indexes
+# are not compiler inputs.
+FROM ubuntu:24.04 AS media-builder
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+COPY --from=media-build-packages /etc/ /etc/
+COPY docker/build-media.sh /tmp/build-media
+COPY docker/collect-media-packages.sh /tmp/collect-media-packages
+RUN --mount=type=bind,from=media-build-packages,source=/usr,target=/usr \
+    --mount=type=bind,from=media-build-packages,source=/var/lib/dpkg,target=/var/lib/dpkg \
+    sh /tmp/build-media && sh /tmp/collect-media-packages
 
 FROM ubuntu:24.04 AS runtime
 
