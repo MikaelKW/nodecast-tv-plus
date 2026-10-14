@@ -64,10 +64,15 @@ async function run() {
         const auth = require('../server/auth');
         const app = express();
         app.use(express.json());
-        app.use(require('express-session')({ secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: false }));
         app.use(auth.passport.initialize());
         app.use('/api/auth', require('../server/routes/auth'));
-        app.use('/api/users', require('../server/routes/users'));
+        // This suite sends real bearer-authenticated requests, not sessions.
+        // Supply the legacy router's current-user context only after verifying
+        // the token; no cookie-session middleware is needed in this fixture.
+        app.use('/api/users', auth.requireAuth, (req, res, next) => {
+            req.session = { userId: req.user.id };
+            next();
+        }, require('../server/routes/users'));
         server = app.listen(0, '127.0.0.1');
         await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
         const base = `http://127.0.0.1:${server.address().port}`;
@@ -78,6 +83,7 @@ async function run() {
                     'Content-Type': 'application/json'
                 }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000)
             });
+            assert.equal(response.headers.get('set-cookie'), null, 'Bearer-only test routes must not issue cookies');
             const text = await response.text();
             return { status: response.status, body: response.headers.get('content-type')?.includes('application/json')
                 ? JSON.parse(text) : { error: text } };
@@ -136,6 +142,7 @@ async function run() {
         assert.equal((await request(`/api/auth/users/${admins[0].id}`, 'DELETE', admins[0])).status, 400);
         const ordinary = await db.users.create({ username: 'OrdinaryViewer', role: 'viewer' });
         for (const prefix of ['/api/auth/users', '/api/users']) {
+            assert.equal((await request(`${prefix}/${admins[0].id}`, 'DELETE', admins[0])).status, 400);
             assert.equal((await request(`${prefix}/${admins[0].id}`, 'PUT', null, { role: 'viewer' })).status, 401);
             assert.equal((await request(`${prefix}/${admins[0].id}`, 'PUT', ordinary, { role: 'viewer' })).status, 403);
             assert.equal((await request(`${prefix}/${admins[0].id}`, 'DELETE', ordinary)).status, 403);
