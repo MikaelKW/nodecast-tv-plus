@@ -776,7 +776,8 @@ class ChannelList {
     /**
      * Load sources into dropdown
      */
-    async loadSources() {
+    async loadSources({ preserveSelection = false } = {}) {
+        const selectedSource = preserveSelection ? this.sourceSelect.value : '';
         try {
             this.sources = await API.sources.getAll();
             console.log('[ChannelList] loadSources: Got', this.sources?.length || 0, 'sources');
@@ -807,6 +808,11 @@ class ChannelList {
                     optgroup.appendChild(option);
                 });
                 this.sourceSelect.appendChild(optgroup);
+            }
+            if ([...xtreamSources, ...m3uSources].some(source =>
+                `${source.type}:${source.id}` === selectedSource
+            )) {
+                this.sourceSelect.value = selectedSource;
             }
         } catch (err) {
             console.error('Error loading sources:', err);
