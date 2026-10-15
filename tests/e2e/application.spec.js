@@ -27,6 +27,20 @@ async function waitForSync(page, sourceId) {
     }, sourceId), { timeout: 30_000 }).toBe('success');
 }
 
+async function openQualityMenu(page) {
+    const button = page.locator('#player-quality-btn');
+    await page.locator('#video-player').hover();
+    // Dismiss the transient information panel using the supported shortcut,
+    // then keep the real pointer click and normal actionability checks. Without
+    // this preparation the panel can intercept the click until controls hide.
+    if (!(await page.locator('#now-playing').getAttribute('class')).split(/\s+/).includes('hidden')) {
+        await button.focus();
+        await page.keyboard.press('i');
+        await expect(page.locator('#now-playing')).toHaveClass(/hidden/);
+    }
+    await button.click();
+}
+
 test('setup, source import, EPG, navigation, and playback work together', async ({ page }) => {
     // This scenario intentionally covers setup, source synchronization, media
     // processing, responsive layouts, and the bounded catalogue contract in a
@@ -975,7 +989,22 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, seriesSource.id);
     expect(restrictedVisibility).toEqual({ live: false, movies: false, series: true });
 
+    // Start a fresh browser lifecycle on Settings, then synchronize before the
+    // first Live visit. A successful refresh must not cache an empty catalogue
+    // merely because the sidebar has not initialized its source list yet.
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.currentUser))).toBe(true);
+    expect(await page.evaluate(() => window.app.channelList.sources.length)).toBe(0);
+    const sourceRefreshDialog = page.waitForEvent('dialog');
+    const sourceRefresh = page.evaluate(id => window.app.sourceManager.refreshSource(id, 'm3u'), m3uSource.id);
+    const refreshedSourceNotice = await sourceRefreshDialog;
+    expect(refreshedSourceNotice.message()).toBe('M3U playlist synced & refreshed!');
+    await refreshedSourceNotice.accept();
+    await sourceRefresh;
+    expect(await page.evaluate(() => window.app.channelList.boundedGroups.length)).toBeGreaterThan(0);
+
     await page.evaluate(() => window.app.navigateTo('live'));
+    await expect(page.locator('#channel-list .group-header').first()).toBeVisible();
     await expect(page.locator('#source-select')).not.toContainText('Controlled Safari Series');
     await expect(page.locator('.channel-name', { hasText: 'Controlled Visibility Channel' })).toHaveCount(0);
 
@@ -1570,7 +1599,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     ))).toBe(true);
     await video.hover();
     await expect(page.locator('#player-quality-btn')).toBeVisible();
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await expect(page.locator('#player-quality-btn')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('#player-quality-menu')).toBeVisible();
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
@@ -1600,7 +1629,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // Returning to Auto stops the temporary session and restores the provider's
     // original stream without changing the saved global transcoding setting.
     await video.hover();
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="auto"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('Auto');
     await expect.poll(() => page.evaluate(() => window.app?.player?.currentSessionId || null), {
@@ -1658,13 +1687,13 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         timeout: 30_000
     }).toBe(720);
     await page.locator('#video-container').dispatchEvent('mousemove');
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="720p"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('720p');
     await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
     expect(await page.evaluate(() => window.app?.player?.currentSessionId || null)).toBeNull();
 
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
     await expect(page.locator('#player-transcode-status')).toHaveText('Transcoding (Video)');
     await expect.poll(() => page.evaluate(() => Boolean(window.app?.player?.currentSessionId)), {
@@ -1676,7 +1705,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
 
     await page.evaluate(() => window.app.player.hideNowPlayingOverlay());
     await page.locator('#video-container').dispatchEvent('mousemove');
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="720p"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('720p');
     await expect(page.locator('#player-transcode-status')).toHaveText('Remux (Auto)');
@@ -1701,7 +1730,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }).toBeGreaterThanOrEqual(2);
     await page.evaluate(() => { window.app.player.settings.forceVideoTranscode = true; });
     await video.hover();
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
     await expect.poll(() => page.locator('#player-quality-btn').textContent(), {
         timeout: 30_000
@@ -1717,11 +1746,11 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     // A cap above the source is a direct-play no-op. If a later lower cap is
     // rejected, recovery must restore that direct stream rather than attempt
     // to transcode to the previous cap.
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="4k"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('4K');
     await expect(page.locator('#player-transcode-status')).toHaveText('Direct Play');
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="480p"]').click();
     await expect.poll(() => page.locator('#player-quality-btn').textContent(), {
         timeout: 30_000
@@ -1732,7 +1761,7 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#player-transcode-status')).toContainText('Restored Up to 4K');
     await expect(page.locator('#player-overlay')).toHaveClass(/hidden/);
     await page.locator('#video-container').dispatchEvent('mousemove');
-    await page.locator('#player-quality-btn').click();
+    await openQualityMenu(page);
     await page.locator('#player-quality-menu [data-quality="auto"]').click();
     await expect(page.locator('#player-quality-btn')).toHaveText('Auto');
     await expect(page.locator('#player-transcode-status')).toHaveText('Direct Play');
