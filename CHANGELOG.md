@@ -4,6 +4,27 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.7.1] - 2026-10-15
+
+This maintenance release improves administrator-account safety and Live TV catalogue refresh reliability, and includes dependency updates.
+
+### Fixed
+
+- Preserve at least one administrator when account role changes and deletions overlap. Reject a conflicting change clearly without discarding other successful account updates ([#498]).
+- Initialize Live TV sources before rebuilding the channel catalogue after a successful M3U or Xtream synchronization. Opening Live TV after synchronization no longer retains an empty catalogue merely because Live TV had not yet been visited. Preserve an available selected source filter during refresh ([#361]).
+
+### Changed
+
+- Update dependencies while retaining the existing protected validation paths.
+- Extend migration coverage to the published Plus v2.7.0 baseline while retaining v2.6.2 and supported upstream baselines.
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.7.0. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required.
+- The Live TV correction covers the reproduced source-synchronization path. Other intermittent empty-catalogue reports are not established as having the same cause ([#361]).
+- To roll back, stop the upgraded container, restore the pre-upgrade data backup, and recreate the container with 2.7.0 and the original deployment secrets.
+
 ## [2.7.0] - 2026-10-04
 
 This release adds administrator diagnostics and reviewed support snapshots, improves source-setting reliability, and includes dependency updates.
@@ -596,3 +617,5 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#425]: https://github.com/MikaelKW/nodecast-tv-plus/issues/425
 [#426]: https://github.com/MikaelKW/nodecast-tv-plus/issues/426
 [#453]: https://github.com/MikaelKW/nodecast-tv-plus/issues/453
+[#361]: https://github.com/MikaelKW/nodecast-tv-plus/issues/361
+[#498]: https://github.com/MikaelKW/nodecast-tv-plus/pull/498
