@@ -185,6 +185,30 @@ jobs:
           EXPECTED_REVISION: ${{ github.sha }}
         run: scripts/verify-container-candidate.sh
 
+      - name: Run full application suite in native candidate
+        if: github.event_name == 'workflow_dispatch' && inputs.validate_only
+        shell: bash
+        run: |
+          set -euo pipefail
+          tooling="$(mktemp -d "$RUNNER_TEMP/native-application.XXXXXX")"
+          trap 'rm -rf "$tooling"' EXIT
+          mkdir "$tooling/source"
+          git -c core.autocrlf=false archive --format=tar HEAD | tar -xf - -C "$tooling/source"
+
+          docker build --builder default --target dependency-builder \
+            -t nodecast-tv-plus:native-dependencies .
+          cat > "$tooling/Dockerfile" <<'DOCKERFILE'
+          FROM nodecast-tv-plus:native
+          COPY --from=nodecast-tv-plus:native-dependencies /usr/lib/node_modules/npm /opt/npm
+          RUN ln -s /opt/npm/bin/npm-cli.js /usr/local/bin/npm
+          COPY source/ /app/
+          WORKDIR /app
+          HEALTHCHECK NONE
+          CMD ["npm", "test"]
+          DOCKERFILE
+          docker build --builder default -t nodecast-tv-plus:native-checks "$tooling"
+          docker run --rm --network none nodecast-tv-plus:native-checks npm test
+
       - name: Verify native media build-cache reuse and invalidation
         if: github.event_name == 'workflow_dispatch' && inputs.verify_media_cache
         shell: bash
