@@ -17,7 +17,7 @@
         "test:xtream": "node scripts/xtream-epg-collision-test.js",
         "test:xtream-api": "node scripts/xtream-api-compatibility-test.js",
         "test:variants": "node scripts/channel-variant-test.js",
-        "test:catalogue-resilience": "node scripts/channel-catalogue-resilience-test.js",
+        "test:catalogue-resilience": "node scripts/channel-catalogue-resilience-test.js && node scripts/live-catalogue-lifecycle-test.js",
         "test:catalogue-search": "node scripts/catalogue-search-test.js",
         "test:transcode": "node scripts/transcode-test.js",
         "test:subtitle": "node scripts/subtitle-test.js",
