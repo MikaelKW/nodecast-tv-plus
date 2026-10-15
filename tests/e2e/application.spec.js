@@ -975,7 +975,22 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     }, seriesSource.id);
     expect(restrictedVisibility).toEqual({ live: false, movies: false, series: true });
 
+    // Start a fresh browser lifecycle on Settings, then synchronize before the
+    // first Live visit. A successful refresh must not cache an empty catalogue
+    // merely because the sidebar has not initialized its source list yet.
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => Boolean(window.app?.currentUser))).toBe(true);
+    expect(await page.evaluate(() => window.app.channelList.sources.length)).toBe(0);
+    const sourceRefreshDialog = page.waitForEvent('dialog');
+    const sourceRefresh = page.evaluate(id => window.app.sourceManager.refreshSource(id, 'm3u'), m3uSource.id);
+    const refreshedSourceNotice = await sourceRefreshDialog;
+    expect(refreshedSourceNotice.message()).toBe('M3U playlist synced & refreshed!');
+    await refreshedSourceNotice.accept();
+    await sourceRefresh;
+    expect(await page.evaluate(() => window.app.channelList.boundedGroups.length)).toBeGreaterThan(0);
+
     await page.evaluate(() => window.app.navigateTo('live'));
+    await expect(page.locator('#channel-list .group-header').first()).toBeVisible();
     await expect(page.locator('#source-select')).not.toContainText('Controlled Safari Series');
     await expect(page.locator('.channel-name', { hasText: 'Controlled Visibility Channel' })).toHaveCount(0);
 
