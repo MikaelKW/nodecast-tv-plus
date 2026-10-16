@@ -22,7 +22,9 @@ const limitOidcAuthorization = rateLimit({
 });
 
 function userMutationErrorStatus(error) {
-    return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
+    if (error?.code === 'USERNAME_EXISTS') return 409;
+    if (error?.code === 'LAST_ADMIN') return 400;
+    return 500;
 }
 
 function loginIpKey(req) {
@@ -433,16 +435,6 @@ router.put('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res) =
                 return res.status(400).json({ error: 'Role must be either "admin" or "viewer"' });
             }
 
-            // Prevent removing admin role from the last admin
-            const user = await db.users.getById(id);
-            if (user && user.role === 'admin' && role !== 'admin') {
-                const allUsers = await db.users.getAll();
-                const adminCount = allUsers.filter(u => u.role === 'admin').length;
-                if (adminCount <= 1) {
-                    return res.status(400).json({ error: 'Cannot remove admin role from the last admin user' });
-                }
-            }
-
             updates.role = role;
         }
 
@@ -471,7 +463,7 @@ router.delete('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res
         res.json({ success: true, message: 'User deleted successfully' });
     } catch (err) {
         console.error('Error deleting user:', err);
-        res.status(500).json({ error: err.message || 'Server error' });
+        res.status(userMutationErrorStatus(err)).json({ error: err.message || 'Server error' });
     }
 });
 

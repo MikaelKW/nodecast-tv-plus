@@ -766,12 +766,16 @@ class SourceManager {
             } else if (type === 'xtream') {
                 // Re-fetch xtream data by reloading channels
                 if (window.app?.channelList) {
+                    // Live TV may not have been opened in this browser yet.
+                    await window.app.channelList.loadSources({ preserveSelection: true });
                     await window.app.channelList.loadChannels();
                 }
                 alert('Xtream data synced & refreshed!');
             } else if (type === 'm3u') {
                 // Re-fetch M3U data by reloading channels
                 if (window.app?.channelList) {
+                    // Resolve sources before marking the catalogue ready.
+                    await window.app.channelList.loadSources({ preserveSelection: true });
                     await window.app.channelList.loadChannels();
                 }
                 alert('M3U playlist synced & refreshed!');

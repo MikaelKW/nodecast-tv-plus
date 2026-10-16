@@ -470,6 +470,12 @@ function createUsernameConflictError() {
   return error;
 }
 
+function createLastAdminError(message) {
+  const error = new Error(message);
+  error.code = 'LAST_ADMIN';
+  return error;
+}
+
 function normalizeLiveTvPreferences(value = {}) {
   return {
     layout: value?.layout === 'flat' ? 'flat' : 'grouped',
@@ -590,6 +596,15 @@ const users = {
       const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
       if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
+      // Check the current queued snapshot so overlapping role changes and
+      // deletions cannot each remove what they believe is an extra admin.
+      if (db.users[userIndex].role === 'admin' && Object.hasOwn(updates, 'role') && updates.role !== 'admin') {
+        const adminCount = db.users.filter(u => u.role === 'admin').length;
+        if (adminCount <= 1) {
+          throw createLastAdminError('Cannot remove admin role from the last admin user');
+        }
+      }
+
       if (updates.username && updates.username !== db.users[userIndex].username) {
         const usernameKey = getUsernameKey(updates.username);
         if (db.users.some((u, index) => index !== userIndex && getUsernameKey(u.username) === usernameKey)) {
@@ -614,7 +629,7 @@ const users = {
       const user = db.users[userIndex];
       if (user.role === 'admin') {
         const adminCount = db.users.filter(u => u.role === 'admin').length;
-        if (adminCount <= 1) throw new Error('Cannot delete the last admin user');
+        if (adminCount <= 1) throw createLastAdminError('Cannot delete the last admin user');
       }
 
       db.users.splice(userIndex, 1);
