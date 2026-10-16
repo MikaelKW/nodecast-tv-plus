@@ -8,6 +8,10 @@ The project follows [Semantic Versioning](https://semver.org/). Historical notes
 
 This maintenance release improves administrator-account safety and Live TV catalogue refresh reliability, and includes dependency updates.
 
+### Security
+
+- Update the transitive `proxy-addr` dependency from `2.0.7` to `2.0.8`, fixing [CVE-2026-90711](https://github.com/advisories/GHSA-jqcg-44mw-7w3h). Under certain IPv4-mapped IPv6 trust-subnet configurations, the dependency could treat untrusted clients as trusted proxies and accept spoofed client-IP information.
+
 ### Fixed
 
 - Preserve at least one administrator when account role changes and deletions overlap. Reject a conflicting change clearly without discarding other successful account updates ([#498]).
@@ -15,7 +19,6 @@ This maintenance release improves administrator-account safety and Live TV catal
 
 ### Changed
 
-- Update dependencies while retaining the existing protected validation paths.
 - Extend migration coverage to the published Plus v2.7.0 baseline while retaining v2.6.2 and supported upstream baselines.
 
 ### Upgrade notes
