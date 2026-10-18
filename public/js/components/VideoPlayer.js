@@ -298,6 +298,10 @@ class VideoPlayer {
             e.stopPropagation();
             togglePlay();
         });
+        document.getElementById('btn-stop')?.addEventListener('click', event => {
+            event.stopPropagation();
+            this.stop();
+        });
 
         // Center play button (large button shown when paused)
         const centerPlayBtn = document.getElementById('player-center-play');
@@ -944,6 +948,7 @@ class VideoPlayer {
             body: JSON.stringify({
                 url,
                 ...options,
+                program: options.program ?? this.currentChannel?.program ?? null,
                 livePlayback: true,
                 playbackLeaseId: this.playbackLeaseId
             }),
@@ -1215,6 +1220,7 @@ class VideoPlayer {
     } = {}) {
         this.finishBrowserPlayback('browser_replaced');
         const playId = ++this._playId;
+        const programQuery = channel?.program == null ? '' : `&program=${encodeURIComponent(channel.program)}`;
         this._startupPlaybackId = startupPlayback ? playId : null;
         const previousPendingRequest = this._pendingConnectionRequest;
         this._playAbortController?.abort();
@@ -1259,6 +1265,13 @@ class VideoPlayer {
             this.controlsOverlay?.classList.remove('hidden');
             this.loadingSpinner?.classList.add('show');
 
+            if (!preserveQuality && channel?.zapBeforeStreaming) {
+                this._zapPendingPlayId = playId;
+                try { await this.zapBeforeStreaming(channel, playAbortController.signal); }
+                finally { if (this._zapPendingPlayId === playId) this._zapPendingPlayId = null; }
+                if (this._playId !== playId) return;
+            }
+
             // Determine if HLS or direct stream
             this.currentUrl = streamUrl;
 
@@ -1280,7 +1293,7 @@ class VideoPlayer {
                         console.log('[Player] Reusing original stream information for quality change');
                     } else {
                         const probeRes = await this.requestPlaybackResource(
-                            `/api/probe?url=${encodeURIComponent(streamUrl)}`,
+                            `/api/probe?url=${encodeURIComponent(streamUrl)}${programQuery}`,
                             { signal: playAbortController.signal }
                         );
                         info = await probeRes.json();
@@ -1538,7 +1551,7 @@ class VideoPlayer {
                 let videoCodec = 'unknown';
                 try {
                     const probeRes = await this.requestPlaybackResource(
-                        `/api/probe?url=${encodeURIComponent(streamUrl)}`,
+                        `/api/probe?url=${encodeURIComponent(streamUrl)}${programQuery}`,
                         { signal: playAbortController.signal }
                     );
                     const info = await probeRes.json();
@@ -1592,7 +1605,8 @@ class VideoPlayer {
 
             // Force Remux: Route through FFmpeg for container conversion
             // Applies to: 1) .ts streams when detected, or 2) ALL non-HLS streams when enabled
-            if (!forceDirectFallback && this.settings.forceRemux && (isRawTs || isExtensionless)) {
+            if (!forceDirectFallback && ((this.settings.forceRemux && (isRawTs || isExtensionless)) ||
+                (channel?.program != null && !looksLikeHls))) {
                 console.log('[Player] Force Remux enabled. Routing through FFmpeg remux...');
                 console.log('[Player] Stream type:', isRawTs ? 'Raw TS' : 'Extension-less (assumed TS)');
 
@@ -2116,7 +2130,30 @@ class VideoPlayer {
      * Used for raw .ts streams that browsers can't play directly
      */
     getRemuxUrl(url, streamInfo = this.currentStreamInfo) {
-        return NodeCastUrl.remux(url, streamInfo);
+        return NodeCastUrl.remux(url, streamInfo, this.currentChannel?.program);
+    }
+
+    async zapBeforeStreaming(channel, signal) {
+        signal.throwIfAborted();
+        const response = await this.requestPlaybackResource('/api/openwebif/zap', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourceId: channel.sourceId, streamId: String(channel.streamId) }),
+            signal
+        });
+        if (!response.ok || !(await response.json()).success) throw new Error('Receiver could not be tuned');
+        signal.throwIfAborted();
+        const value = Number(channel.zapDelay ?? 1500);
+        const delay = Number.isFinite(value) ? Math.max(0, Math.min(10000, value)) : 1500;
+        await new Promise((resolve, reject) => {
+            const cleanup = () => signal.removeEventListener('abort', abort);
+            const abort = () => {
+                clearTimeout(timer); cleanup();
+                reject(new DOMException('Playback request was replaced', 'AbortError'));
+            };
+            const timer = setTimeout(() => { cleanup(); resolve(); }, delay);
+            signal.addEventListener('abort', abort, { once: true });
+            if (signal.aborted) abort();
+        });
     }
 
     /**

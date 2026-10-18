@@ -499,6 +499,8 @@ See the [changelog](https://github.com/MikaelKW/nodecast-tv-plus/blob/main/CHANG
 
 ## Troubleshooting
 
+For receiver-specific M3U program selection and optional tuning, see the [Enigma2 / OpenWebif guide](docs/ENIGMA2.md).
+
 ### Diagnostics and support snapshots
 
 Administrators can open **Settings > Diagnostics** to review recent playback and synchronization events, correlate related events by trace ID, and prepare a bounded support snapshot. Nothing is uploaded automatically; review the preview before downloading or sharing it.

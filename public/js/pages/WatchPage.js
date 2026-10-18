@@ -602,6 +602,7 @@ class WatchPage {
                 body: JSON.stringify({
                     url,
                     ...options,
+                    program: options.program ?? this.content?.program ?? this.content?.data?.program ?? null,
                     seekOffset
                 })
             });
@@ -873,6 +874,8 @@ class WatchPage {
             this.progressScrubbing = false;
         }
         const diagnosticPlayId = this._diagnosticPlayId;
+        const program = this.content?.program ?? this.content?.data?.program ?? null;
+        const programQuery = program == null ? '' : `&program=${encodeURIComponent(program)}`;
         const knownDuration = Number(qualitySourceInfo?.duration);
         this.setSourceDuration(VodDuration.firstValid(
             knownDuration,
@@ -911,7 +914,7 @@ class WatchPage {
         if (!forceDirectFallback && !settings.autoTranscode && !skipProbe) {
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}${programQuery}`));
                 const info = await probeRes.json();
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (probeRes.ok && !info.error) {
@@ -931,7 +934,7 @@ class WatchPage {
             console.log('[WatchPage] Auto Transcode enabled. Probing stream...');
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}${programQuery}`));
                 const info = await probeRes.json();
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (!probeRes.ok || info.error) {
@@ -1011,7 +1014,7 @@ class WatchPage {
                     // TODO: Move remux to session logic if seeking is needed for TS files
                     console.log('[WatchPage] Auto: Using remux (.ts container)');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                    const finalUrl = NodeCastUrl.remux(url, info);
+                    const finalUrl = NodeCastUrl.remux(url, info, program);
                     this.assertPlaybackRequestCurrent(diagnosticPlayId);
                     this.reportBrowserPlaybackPath('auto_remux', diagnosticPlayId);
                     this.video.src = finalUrl;
@@ -1063,7 +1066,7 @@ class WatchPage {
             let videoCodec = 'unknown';
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
+                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}${programQuery}`));
                 const info = await probeRes.json();
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 videoCodec = info.video;
@@ -1088,7 +1091,8 @@ class WatchPage {
         }
 
         // Priority 2: Force Remux for raw TS streams
-        if (!forceDirectFallback && settings.forceRemux && isRawTs) {
+        if (!forceDirectFallback && ((settings.forceRemux && isRawTs) ||
+            (program != null && !looksLikeHls))) {
             console.log('[WatchPage] Force Remux enabled');
 
             if (NodeCastUrl.prefersHlsRemuxFallback()) {
@@ -1109,7 +1113,7 @@ class WatchPage {
             }
 
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
-            const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
+            const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo, program);
             this.assertPlaybackRequestCurrent(diagnosticPlayId);
             this.reportBrowserPlaybackPath('forced_remux', diagnosticPlayId);
             this.video.src = finalUrl;

@@ -7,6 +7,7 @@ const readline = require('readline');
 const { Readable } = require('stream');
 const crypto = require('crypto');
 const { fetchWithPolicy } = require('./outboundSecurity');
+const { parseProgram } = require('./mpegTsProgram');
 
 /**
  * Generate a simple stable ID from name and group
@@ -157,6 +158,9 @@ async function parse(input) {
             if (currentInfo) {
                 currentInfo.groupTitle = currentGroup;
             }
+        } else if (trimmed.startsWith('#EXTVLCOPT:program=') && currentInfo) {
+            try { currentInfo.program = parseProgram(trimmed.slice('#EXTVLCOPT:program='.length).trim()); }
+            catch { currentInfo.program = null; }
         } else if (!trimmed.startsWith('#')) {
             // This is a stream URL
             if (currentInfo) {
@@ -252,6 +256,9 @@ async function* parseStreaming(input, batchSize = 500) {
             if (currentInfo) {
                 currentInfo.groupTitle = currentGroup;
             }
+        } else if (trimmed.startsWith('#EXTVLCOPT:program=') && currentInfo) {
+            try { currentInfo.program = parseProgram(trimmed.slice('#EXTVLCOPT:program='.length).trim()); }
+            catch { currentInfo.program = null; }
         } else if (!trimmed.startsWith('#')) {
             if (currentInfo) {
                 const groupTitle = currentInfo.groupTitle || currentGroup || 'Uncategorized';

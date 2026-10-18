@@ -9,6 +9,7 @@ const m3uParser = require('../services/m3uParser');
 const auth = require('../auth');
 const { redactText, validateHttpUrl } = require('../services/urlSecurity');
 const { fetchWithPolicy } = require('../services/outboundSecurity');
+const { parseZapOptions } = require('../services/enigma2');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 
@@ -74,8 +75,9 @@ router.get('/', async (req, res) => {
         // Don't expose passwords in list view
         const sanitized = req.user.role === 'admin'
             ? allSources.map(maskSource)
-            : allSources.map(({ id, type, name, enabled, contentVisibility, created_at, updated_at }) => ({
-                id, type, name, enabled, contentVisibility, created_at, updated_at
+            : allSources.map(({ id, type, name, enabled, contentVisibility, created_at, updated_at, zapBeforeStreaming, zapDelay }) => ({
+                id, type, name, enabled, contentVisibility, created_at, updated_at,
+                ...(type === 'm3u' ? { zapBeforeStreaming: zapBeforeStreaming === true, zapDelay: zapDelay ?? 1500 } : {})
             }));
         res.json(sanitized);
     } catch (err) {
@@ -137,7 +139,8 @@ router.post('/', auth.requireAdmin, async (req, res) => {
 
         const validatedUrl = validateHttpUrl(url, 'Source URL');
         const contentVisibility = parseContentVisibility(req.body.contentVisibility);
-        const source = await sources.create({ type, name, url: validatedUrl, username, password, contentVisibility });
+        const source = await sources.create({ type, name, url: validatedUrl, username, password, contentVisibility,
+            ...parseZapOptions(req.body, type, true) });
         // Trigger Sync
         const syncRequestedAt = Date.now();
         syncService.syncSource(source.id).catch(console.error);
@@ -165,6 +168,7 @@ router.put('/:id', auth.requireAdmin, async (req, res) => {
         // Only submit fields present in this request. Filling absent fields from
         // the earlier read can undo a concurrent edit to the same source.
         const updates = {};
+        Object.assign(updates, parseZapOptions(req.body, existing.type));
         if (name) updates.name = name;
         if (validatedUrl !== undefined) updates.url = validatedUrl;
         if (username !== undefined) updates.username = username;

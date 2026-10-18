@@ -689,6 +689,7 @@ class SyncService {
                 stream_icon: ch.tvgLogo,
                 stream_url: ch.url,
                 tvgId: ch.tvgId || null,
+                ...(ch.program != null ? { program: ch.program } : {}),
                 channel_number: normalizeChannelNumber(ch.tvgChno),
                 tvgChno: normalizeChannelNumber(ch.tvgChno),
             }));
