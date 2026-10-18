@@ -4179,7 +4179,7 @@ kbd {
   /* fallback */
   height: calc(100dvh - var(--navbar-height));
   /* dynamic viewport for modern browsers */
-  min-height: 400px;
+  min-height: 0;
   background: #000;
 }
 
