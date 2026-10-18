@@ -35,7 +35,7 @@
         }
     }
 
-    function remux(value, streamInfo = null) {
+    function remux(value, streamInfo = null, program = null) {
         const params = new URLSearchParams({ url: value });
         const trackCodecs = Array.isArray(streamInfo?.audioTracks)
             ? streamInfo.audioTracks.map(track => track?.codec).filter(Boolean)
@@ -47,6 +47,7 @@
         if (audioCodecs.length > 0) {
             params.set('audioCodecs', audioCodecs.join(','));
         }
+        if (program !== null && program !== undefined) params.set('program', String(program));
 
         return resolve(`/api/remux?${params.toString()}`);
     }

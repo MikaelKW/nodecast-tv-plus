@@ -12,6 +12,7 @@ const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../service
 const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 const { parseOptionalStreamIndex } = require('../services/mediaSelection');
+const { parseProgram } = require('../services/mpegTsProgram');
 const { TRANSCODE_START_TIMEOUT_MS } = require('../config/transcode');
 const { mediaProcessLimit } = require('../services/concurrencyLimiter');
 
@@ -52,7 +53,8 @@ router.post('/session', async (req, res) => {
         videoHeight,
         maxResolution,
         livePlayback,
-        playbackLeaseId
+        playbackLeaseId,
+        program
     } = req.body;
 
     if (!url) {
@@ -69,7 +71,9 @@ router.post('/session', async (req, res) => {
     let validatedUrl;
     let resolutionOverride;
     let selectedAudioStreamIndex;
+    let selectedProgram;
     try {
+        selectedProgram = parseProgram(program);
         validatedUrl = await authorizeMediaUrl(url);
         resolutionOverride = parseMaxResolutionOverride(maxResolution);
         selectedAudioStreamIndex = parseOptionalStreamIndex(audioStreamIndex, 'audioStreamIndex');
@@ -125,7 +129,8 @@ router.post('/session', async (req, res) => {
                 : 0,
             livePlayback: livePlayback === true,
             ownerId: req.user.id,
-            playbackLeaseId
+            playbackLeaseId,
+            program: selectedProgram
         });
 
         // Wait for the first segment, retrying one immediate provider rejection.

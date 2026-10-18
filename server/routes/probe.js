@@ -6,6 +6,7 @@ const { appendHttpReconnectArgs } = require('../services/ffmpegNetwork');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl } = require('../services/urlSecurity');
 const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { mediaProcessLimit } = require('../services/concurrencyLimiter');
+const { parseProgram, selectProgramStreams } = require('../services/mpegTsProgram');
 
 router.use(auth.requireAuth);
 
@@ -47,6 +48,7 @@ function probeStream(url, ffprobePath, userAgent = null, timeout = 15000, signal
         args.push(
             '-print_format', 'json',
             '-show_streams',
+            '-show_programs',
             '-show_format',
             '-probesize', '5000000',
             '-analyzeduration', '5000000',
@@ -106,8 +108,8 @@ function probeStream(url, ffprobePath, userAgent = null, timeout = 15000, signal
 /**
  * Analyze probe result and determine compatibility
  */
-function analyzeProbeResult(probeResult, url) {
-    const streams = probeResult.streams || [];
+function analyzeProbeResult(probeResult, url, program = null) {
+    const streams = selectProgramStreams(probeResult, program);
     const format = probeResult.format || {};
 
     const videoStream = streams.find(s => s.codec_type === 'video');
@@ -196,14 +198,16 @@ router.get('/', mediaProcessLimit, async (req, res) => {
     }
 
     let validatedUrl;
+    let program;
     try {
+        program = parseProgram(req.query.program);
         validatedUrl = await authorizeMediaUrl(url);
     } catch (err) {
         return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
     const ffprobePath = req.app.locals.ffprobePath;
-    const cacheKey = `${validatedUrl}${ua ? `|${ua}` : ''}`;
+    const cacheKey = JSON.stringify([validatedUrl, ua || '', program]);
 
     if (!ffprobePath) {
         // No ffprobe available - assume needs transcoding to be safe
@@ -238,7 +242,7 @@ router.get('/', mediaProcessLimit, async (req, res) => {
 
     try {
         const probeResult = await probeStream(validatedUrl, ffprobePath, ua, 15000, probeAbortController.signal);
-        const analysis = analyzeProbeResult(probeResult, validatedUrl);
+        const analysis = analyzeProbeResult(probeResult, validatedUrl, program);
 
         // Cache result
         probeCache.set(cacheKey, { result: analysis, expiresAt: Date.now() + CACHE_TTL });

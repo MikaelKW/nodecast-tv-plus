@@ -7,6 +7,7 @@ const { redactText, redactUrl } = require('../services/urlSecurity');
 const { authorizeMediaUrl } = require('../services/mediaAccess');
 const { mediaProcessLimit } = require('../services/concurrencyLimiter');
 const { buildRemuxArgs, parseAudioCodecs } = require('../services/remux');
+const { parseProgram } = require('../services/mpegTsProgram');
 
 router.use(auth.requireAuth);
 
@@ -28,7 +29,9 @@ router.get('/', mediaProcessLimit, async (req, res) => {
 
     let validatedUrl;
     let audioCodecs;
+    let program;
     try {
+        program = parseProgram(req.query.program);
         validatedUrl = await authorizeMediaUrl(url);
         audioCodecs = parseAudioCodecs(audioCodecsValue);
     } catch (err) {
@@ -47,7 +50,8 @@ router.get('/', mediaProcessLimit, async (req, res) => {
     const args = buildRemuxArgs({
         url: validatedUrl,
         userAgent,
-        audioCodecs
+        audioCodecs,
+        program
     });
 
     let ffmpeg;

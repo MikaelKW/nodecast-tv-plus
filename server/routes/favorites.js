@@ -44,7 +44,12 @@ router.get('/channels', async (req, res) => {
                 tvgId: data.epg_channel_id || data.tvgId || null,
                 tvgLogo: row.stream_icon,
                 ...(sourceType === 'm3u'
-                    ? { url: row.stream_url || data.stream_url || data.url || null }
+                    ? { url: row.stream_url || data.stream_url || data.url || null,
+                        ...(data.program != null || source.zapBeforeStreaming === true ? {
+                            program: data.program ?? null,
+                            zapBeforeStreaming: source.zapBeforeStreaming === true,
+                            zapDelay: source.zapDelay ?? 1500
+                        } : {}) }
                     : {}),
                 groupId: `${sourceType}_${row.source_id}_${row.category_id || ''}`,
                 groupTitle: row.category_name || 'Uncategorized',

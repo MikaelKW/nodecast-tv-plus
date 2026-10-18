@@ -228,6 +228,7 @@ async function fetchWithPolicy(value, options = {}, policy = {}) {
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
         const target = await resolveSafeOutboundTarget(currentUrl, policy);
         const response = await performPinnedRequest(target, currentOptions);
+        if (policy.followRedirects === false) return response;
         if (!REDIRECT_STATUSES.has(response.status)) return response;
 
         const location = response.headers.get('location');
