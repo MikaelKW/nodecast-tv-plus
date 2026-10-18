@@ -1007,18 +1007,18 @@ class WatchPage {
                         return;
                     }
 
-                    // Remux (container swap) currently doesn't use session logic, uses direct stream
-                    // TODO: Move remux to session logic if seeking is needed for TS files
-                    console.log('[WatchPage] Auto: Using remux (.ts container)');
+                    console.log('[WatchPage] Auto: Using seekable remux session');
                     this.updateTranscodeStatus('remuxing', 'Remux (Auto)');
-                    const finalUrl = NodeCastUrl.remux(url, info);
+                    const playlistUrl = await this.startTranscodeSession(url, {
+                        videoMode: 'copy',
+                        seekOffset: this.resumeTime,
+                        videoCodec: info.video,
+                        audioCodec: info.audio,
+                        audioChannels: info.audioChannels,
+                        ...this.getSelectedAudioOptions(info)
+                    }, diagnosticPlayId);
                     this.assertPlaybackRequestCurrent(diagnosticPlayId);
-                    this.reportBrowserPlaybackPath('auto_remux', diagnosticPlayId);
-                    this.video.src = finalUrl;
-                    this.video.play().catch(e => {
-                        this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
-                        if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
-                    });
+                    this.playHls(playlistUrl, { playId: diagnosticPlayId });
                     this.setVolumeFromStorage();
                     return;
                 }
@@ -1109,14 +1109,16 @@ class WatchPage {
             }
 
             this.updateTranscodeStatus('remuxing', 'Remux (Force)');
-            const finalUrl = NodeCastUrl.remux(url, this.currentStreamInfo);
+            const playlistUrl = await this.startTranscodeSession(url, {
+                videoMode: 'copy',
+                seekOffset: this.resumeTime,
+                videoCodec: this.currentStreamInfo?.video || 'h264',
+                audioCodec: this.currentStreamInfo?.audio,
+                audioChannels: this.currentStreamInfo?.audioChannels,
+                ...this.getSelectedAudioOptions(this.currentStreamInfo)
+            }, diagnosticPlayId);
             this.assertPlaybackRequestCurrent(diagnosticPlayId);
-            this.reportBrowserPlaybackPath('forced_remux', diagnosticPlayId);
-            this.video.src = finalUrl;
-            this.video.play().catch(e => {
-                this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
-                if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
-            });
+            this.playHls(playlistUrl, { playId: diagnosticPlayId });
             this.setVolumeFromStorage();
             return;
         }
