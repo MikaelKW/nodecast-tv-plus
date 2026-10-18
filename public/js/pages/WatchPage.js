@@ -588,6 +588,24 @@ class WatchPage {
         }
     }
 
+    async probePlayback(url, userAgent, playId) {
+        this.assertPlaybackRequestCurrent(playId);
+        this.playbackProbeController?.abort();
+        const controller = new AbortController();
+        this.playbackProbeController = controller;
+        try {
+            const response = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(userAgent || '')}`), {
+                signal: controller.signal
+            });
+            if (!response.ok) throw new Error('Playback probe failed');
+            const info = await response.json();
+            this.assertPlaybackRequestCurrent(playId);
+            return info;
+        } finally {
+            if (this.playbackProbeController === controller) this.playbackProbeController = null;
+        }
+    }
+
     /**
      * Start a HLS transcode session
      */
@@ -858,6 +876,7 @@ class WatchPage {
     } = {}) {
         // Store the URL for copy functionality
         this.currentUrl = url;
+        this.playbackProbeController?.abort();
         // Direct playback uses the media element's native content timeline.
         // A successful transcode session will replace this with its seek offset.
         this.playbackTimeOffset = 0;
@@ -911,8 +930,7 @@ class WatchPage {
         if (!forceDirectFallback && !settings.autoTranscode && !skipProbe) {
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (probeRes.ok && !info.error) {
                     this.currentStreamInfo = info;
@@ -931,8 +949,7 @@ class WatchPage {
             console.log('[WatchPage] Auto Transcode enabled. Probing stream...');
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 if (!probeRes.ok || info.error) {
                     throw new Error(info.error || `Probe request failed (${probeRes.status})`);
@@ -1063,8 +1080,7 @@ class WatchPage {
             let videoCodec = 'unknown';
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 videoCodec = info.video;
                 this.currentStreamInfo = info;
@@ -1332,6 +1348,8 @@ class WatchPage {
     }
 
     stop({ saveHistory = true } = {}) {
+        this.playbackProbeController?.abort();
+        this.playbackProbeController = null;
         this.finishBrowserPlayback('browser_stopped');
         this._diagnosticPlayId += 1;
         clearTimeout(this.hlsRecoveryTimer);
