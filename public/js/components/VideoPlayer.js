@@ -1659,6 +1659,10 @@ class VideoPlayer {
                 // I'll inline the Hls init here as per original but mindful of proxy vs local
 
                 this.hls = new Hls(this.getHlsConfig());
+                const activeHls = this.hls;
+                this.audioRecovery?.dispose();
+                this.audioRecovery = new HlsAudioRecovery(activeHls, this.video, Hls.Events,
+                    () => this.hls === activeHls && this._playId === playId);
                 this.hls.loadSource(finalUrl);
                 this.hls.attachMedia(this.video);
 
@@ -1681,7 +1685,9 @@ class VideoPlayer {
 
                 // Re-attach error handler for the new Hls instance
                 this.hls.on(Hls.Events.ERROR, (event, data) => {
-                    if (this._playId !== playId) return;
+                    if (this._playId !== playId || this.hls !== activeHls) return;
+                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+                        this.audioRecovery?.requestRecovery('media error')) return;
                     if (data.fatal) {
                         const isCorsLikely = data.type === Hls.ErrorTypes.NETWORK_ERROR ||
                             (data.type === Hls.ErrorTypes.MEDIA_ERROR && data.details === 'fragParsingError');
@@ -1794,6 +1800,10 @@ class VideoPlayer {
         }
 
         this.hls = new Hls(this.getHlsConfig());
+        const activeHls = this.hls;
+        this.audioRecovery?.dispose();
+        this.audioRecovery = new HlsAudioRecovery(activeHls, this.video, Hls.Events,
+            () => this.hls === activeHls && this._playId === playId);
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
 
@@ -1818,6 +1828,9 @@ class VideoPlayer {
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
+                if (this.hls !== activeHls || this._playId !== playId) return;
+                if (data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+                    this.audioRecovery?.requestRecovery('media error')) return;
                 // Simple error handling for forced HLS/transcode modes
                 this.reportBrowserPlaybackEvent('browser_playback_failed', 'hls_failed', playId);
                 console.error('Fatal HLS error in transcode mode:', data);
