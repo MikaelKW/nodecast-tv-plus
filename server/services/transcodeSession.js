@@ -497,13 +497,19 @@ class TranscodeSession extends EventEmitter {
                     '-hwaccel_output_format', 'vaapi'
                 );
                 break;
-            case 'qsv':
+            case 'qsv': {
+                const device = hwDetect.getCapabilities()?.qsv?.device;
+                if (typeof device === 'string' && /^\/dev\/dri\/renderD\d+$/.test(device)) {
+                    args.push('-init_hw_device', `qsv=nodecast:hw,child_device=${device},child_device_type=vaapi`,
+                        '-filter_hw_device', 'nodecast', '-hwaccel_device', 'nodecast');
+                }
                 // Intel QuickSync hardware decoding
                 args.push(
                     '-hwaccel', 'qsv',
                     '-hwaccel_output_format', 'qsv'
                 );
                 break;
+            }
             case 'amf':
                 // AMD AMF (no hwaccel input, AMF is encode-only)
                 // Decode on CPU, encode on GPU
