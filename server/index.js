@@ -311,7 +311,7 @@ server = app.listen(PORT, async () => {
         // Detect hardware acceleration capabilities
         try {
             const hwDetect = require('./services/hwDetect');
-            await hwDetect.detect();
+            await hwDetect.detect(app.locals.ffmpegPath);
         } catch (err) {
             console.warn('Hardware detection failed:', err.message);
         }
