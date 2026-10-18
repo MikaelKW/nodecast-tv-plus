@@ -1183,6 +1183,20 @@ class WatchPage {
         });
 
         const activeHls = this.hls;
+        this.audioRecovery?.dispose();
+        this.audioRecovery = new HlsAudioRecovery(activeHls, this.video, Hls.Events,
+            () => this.hls === activeHls && this._diagnosticPlayId === playId, {
+                beforeRecovery: () => {
+                    const selected = this.activeSubtitleTrack;
+                    const cues = Array.from(selected?.cues || []);
+                    return () => {
+                        if (this.activeSubtitleTrack !== selected) return;
+                        const present = new Set(Array.from(selected?.cues || []));
+                        for (const cue of cues) if (!present.has(cue)) selected.addCue(cue);
+                        this.scheduleSelectedSubtitleRestore();
+                    };
+                }
+            });
 
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
@@ -1260,6 +1274,8 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
+            if (activeHls === this.hls && data.type === Hls.ErrorTypes.MEDIA_ERROR &&
+                this.audioRecovery?.requestRecovery('media error')) return;
             if (!data.fatal || activeHls !== this.hls) return;
 
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
