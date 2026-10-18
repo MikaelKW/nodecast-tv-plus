@@ -223,7 +223,7 @@ class VideoPlayer {
             // Caption/Subtitle settings
             enableCEA708Captions: true,    // Enable CEA-708 closed captions
             enableWebVTT: true,            // Enable WebVTT subtitles
-            renderTextTracksNatively: true // Use native browser rendering for text tracks
+            renderTextTracksNatively: false // CaptionTracks owns removable browser tracks
         };
     }
 
@@ -641,69 +641,21 @@ class VideoPlayer {
     /**
      * Update available caption tracks in the menu
      */
-    updateCaptionsTracks() {
-        if (!this.captionsList) return;
-
-        // Clear existing list (keep only Off option)
-        this.captionsList.innerHTML = '<button class="captions-option" data-index="-1">Off</button>';
-
-        // Add tracks
-        if (this.video.textTracks && this.video.textTracks.length > 0) {
-            let hasActiveTrack = false;
-
-            for (let i = 0; i < this.video.textTracks.length; i++) {
-                const track = this.video.textTracks[i];
-                const btn = document.createElement('button');
-                btn.className = 'captions-option';
-                btn.textContent = track.label || `Track ${i + 1} (${track.language || 'unknown'})`;
-                btn.dataset.index = i;
-
-                if (track.mode === 'showing') {
-                    btn.classList.add('active');
-                    // Add checkmark
-                    btn.innerHTML += ' <span style="float: right;">✓</span>';
-                    hasActiveTrack = true;
-                }
-
-                btn.onclick = (e) => {
-                    e.stopPropagation();
-                    this.selectCaptionTrack(i);
-                };
-
-                this.captionsList.appendChild(btn);
-            }
-
-            // Handle "Off" button state
-            const offBtn = this.captionsList.querySelector('[data-index="-1"]');
-            if (offBtn) {
-                if (!hasActiveTrack) {
-                    offBtn.classList.add('active');
-                    offBtn.innerHTML += ' <span style="float: right;">✓</span>';
-                }
-                offBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    this.selectCaptionTrack(-1);
-                };
-            }
-        }
+    getCaptionTracks() {
+        if (!this.captionTracks) this.captionTracks = new CaptionTracks(this.video, () => this.updateCaptionsTracks());
+        return this.captionTracks;
     }
 
-    /**
-     * Select a caption track
-     */
+    updateCaptionsTracks() {
+        if (!this.captionsList) return;
+        this.getCaptionTracks().render(this.captionsList, () => this.closeCaptionsMenu());
+    }
+
     selectCaptionTrack(index) {
-        if (!this.video.textTracks) return;
-
-        // Turn off all tracks
-        for (let i = 0; i < this.video.textTracks.length; i++) {
-            this.video.textTracks[i].mode = 'hidden'; // or 'disabled'
-        }
-
-        // Turn on selected track
-        if (index >= 0 && index < this.video.textTracks.length) {
-            this.video.textTracks[index].mode = 'showing';
-        }
-
+        const tracks = this.getCaptionTracks();
+        if (index < 0) tracks.off();
+        else tracks.choices()[index]?.select();
+        this.updateCaptionsTracks();
         this.closeCaptionsMenu();
     }
 
@@ -738,6 +690,7 @@ class VideoPlayer {
         // Initialize HLS.js if supported
         if (Hls.isSupported()) {
             this.hls = new Hls(this.getHlsConfig());
+            this.getCaptionTracks().bindHls(this.hls, Hls.Events);
             this.lastDiscontinuity = -1; // Track discontinuity changes
 
             this.hls.on(Hls.Events.ERROR, (event, data) => {
@@ -1329,27 +1282,7 @@ class VideoPlayer {
                         }
                     }
 
-                    // Handle subtitles from probe result
-                    // Clear existing remote tracks (from previous streams)
-                    const oldTracks = this.video.querySelectorAll('track');
-                    oldTracks.forEach(t => t.remove());
-
-                    if (info.subtitles && info.subtitles.length > 0) {
-                        console.log(`[Player] Found ${info.subtitles.length} subtitle tracks`);
-                        info.subtitles.forEach(sub => {
-                            const track = document.createElement('track');
-                            track.kind = 'subtitles';
-                            track.label = sub.title;
-                            track.srclang = sub.language;
-                            track.src = NodeCastUrl.resolve(`/api/subtitle?url=${encodeURIComponent(streamUrl)}&index=${sub.index}`);
-                            this.video.appendChild(track);
-                        });
-
-                        // Force update of captions menu if it's open
-                        if (this.captionsMenuOpen) {
-                            this.updateCaptionsTracks();
-                        }
-                    }
+                    this.getCaptionTracks().setProbe(info, streamUrl);
 
                     const shouldUpscale = this.settings.upscaleEnabled && this.playbackQuality === 'auto';
                     if (this.isQualityCapRestrictive(this.playbackQuality, info)) {
@@ -1420,6 +1353,7 @@ class VideoPlayer {
                         this.reportBrowserPlaybackPath('auto_remux', playId);
                         const remuxUrl = this.getRemuxUrl(streamUrl, info);
                         this.currentUrl = remuxUrl;
+                        this.getCaptionTracks().useNative();
                         this.video.src = remuxUrl;
                         this.startVideoPlayback(playId).catch(e => {
                             this.reportBrowserPlaybackFailure(e, playId);
@@ -1507,7 +1441,8 @@ class VideoPlayer {
                     if (this.hls) {
                         this.hls.destroy();
                     }
-                    this.hls = new Hls();
+                    this.hls = new Hls(this.getHlsConfig());
+                    this.getCaptionTracks().bindHls(this.hls, Hls.Events);
                     this.hls.loadSource(playlistUrl);
                     this.hls.attachMedia(this.video);
                     this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1622,6 +1557,7 @@ class VideoPlayer {
                 this.updateTranscodeStatus('remuxing', 'Remux (Force)');
                 this.reportBrowserPlaybackPath('forced_remux', playId);
                 const remuxUrl = this.getRemuxUrl(streamUrl);
+                this.getCaptionTracks().useNative();
                 this.video.src = remuxUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     this.reportBrowserPlaybackFailure(e, playId);
@@ -1659,6 +1595,7 @@ class VideoPlayer {
                 // I'll inline the Hls init here as per original but mindful of proxy vs local
 
                 this.hls = new Hls(this.getHlsConfig());
+                this.getCaptionTracks().bindHls(this.hls, Hls.Events);
                 this.hls.loadSource(finalUrl);
                 this.hls.attachMedia(this.video);
 
@@ -1733,6 +1670,7 @@ class VideoPlayer {
                 // Priority 2: Native HLS support (Safari on iOS/macOS where HLS.js may not work)
                 this.updateTranscodeStatus('direct', 'Direct Native');
                 this.reportBrowserPlaybackPath(needsProxy ? 'proxied_hls' : 'native_hls', playId);
+                this.getCaptionTracks().useNative();
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     if (e.name === 'AbortError') return; // Ignore interruption by new load
@@ -1755,6 +1693,7 @@ class VideoPlayer {
                 // Priority 3: Try direct playback for non-HLS streams
                 this.updateTranscodeStatus('direct', 'Direct Play');
                 this.reportBrowserPlaybackPath('direct_media', playId);
+                this.getCaptionTracks().useNative();
                 this.video.src = finalUrl;
                 this.startVideoPlayback(playId).catch(e => {
                     this.reportBrowserPlaybackFailure(e, playId);
@@ -1794,6 +1733,7 @@ class VideoPlayer {
         }
 
         this.hls = new Hls(this.getHlsConfig());
+        this.getCaptionTracks().bindHls(this.hls, Hls.Events);
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
 
@@ -2135,6 +2075,7 @@ class VideoPlayer {
      * Stop playback
      */
     stop({ keepPlaybackRequest = false, skipSessionCleanup = false } = {}) {
+        this.captionTracks?.reset();
         this.finishBrowserPlayback(keepPlaybackRequest ? 'browser_replaced' : 'browser_stopped');
         if (!keepPlaybackRequest) {
             this._playId += 1;

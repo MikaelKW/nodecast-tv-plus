@@ -1202,9 +1202,11 @@ class WatchPage {
 
         // Listen for subtitle track updates
         this.hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
+            if (this.hls !== activeHls) return;
             console.log('[WatchPage] Subtitle tracks updated:', data.subtitleTracks);
             // Wait a moment for native text tracks to populate
             setTimeout(() => {
+                if (this.hls !== activeHls) return;
                 this.applyAutomaticSubtitlePreference();
                 this.updateCaptionsTracks();
             }, 100);
@@ -2034,7 +2036,7 @@ class WatchPage {
             this.setActiveSubtitleTrack(null);
         }
         existingProbeTracks.forEach(track => track.remove());
-        if (!this.subtitleStreamUrl) {
+        if (!this.subtitleStreamUrl || this.hls?.subtitleTracks?.length) {
             this.updateCaptionsTracks();
             return;
         }
@@ -2585,7 +2587,9 @@ class WatchPage {
 
         // Disable all tracks
         for (let i = 0; i < tracks.length; i++) {
-            tracks[i].mode = 'hidden';
+            if (tracks[i].kind === 'subtitles' || tracks[i].kind === 'captions') {
+                tracks[i].mode = index < 0 ? 'disabled' : 'hidden';
+            }
         }
 
         // Enable selected track. Embedded subtitles are populated after the
