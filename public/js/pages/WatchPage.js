@@ -990,7 +990,7 @@ class WatchPage {
                     return;
                 } else if (info.needsRemux) {
                     if (NodeCastUrl.prefersHlsRemuxFallback()) {
-                        console.log('[WatchPage] Auto: Using Firefox-compatible HLS remux');
+                        console.log('[WatchPage] Auto: Using compatible HLS remux');
                         this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
                         const playlistUrl = await this.startTranscodeSession(url, {
                             videoMode: 'copy',

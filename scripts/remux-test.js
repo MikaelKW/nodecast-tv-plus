@@ -137,6 +137,21 @@ function testClientRemuxUrl() {
         ),
         false
     );
+
+    const iPhoneSafari = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1';
+    const iPhoneChrome = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0.0.0 Mobile/15E148 Safari/604.1';
+    const iPadSafari = 'Mozilla/5.0 (iPad; CPU OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1';
+    const macSafari = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+    const prefersHls = sandbox.window.NodeCastUrl.prefersHlsRemuxFallback;
+
+    // iOS and iPadOS WebKit cannot play the progressive fMP4 remux pipe.
+    assert.equal(prefersHls(iPhoneSafari, 'iPhone', 5), true);
+    assert.equal(prefersHls(iPhoneChrome, 'iPhone', 5), true);
+    assert.equal(prefersHls(iPadSafari, 'iPad', 5), true);
+    // iPadOS in desktop mode reports a Mac user agent with touch support.
+    assert.equal(prefersHls(macSafari, 'MacIntel', 5), true);
+    // macOS Safari keeps the direct remux pipe.
+    assert.equal(prefersHls(macSafari, 'MacIntel', 0), false);
 }
 
 async function main() {

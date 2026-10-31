@@ -1395,7 +1395,7 @@ class VideoPlayer {
                         // silently dropping its remuxed AAC audio. Use the HLS
                         // session path there, copying video and normalizing audio.
                         if (NodeCastUrl.prefersHlsRemuxFallback()) {
-                            console.log('[Player] Auto: Using Firefox-compatible HLS remux');
+                            console.log('[Player] Auto: Using compatible HLS remux');
                             this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
                             const playlistUrl = await this.startTranscodeSession(streamUrl, {
                                 videoMode: 'copy',
