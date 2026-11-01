@@ -1785,12 +1785,29 @@ class VideoPlayer {
         }
     }
 
+    canPlayNativeHls() {
+        const support = this.video?.canPlayType?.('application/vnd.apple.mpegurl');
+        return support === 'probably' || support === 'maybe';
+    }
+
     /**
      * Helper to play HLS stream (reduces duplication)
      */
     playHls(url, { playId = this._playId } = {}) {
         if (this.hls) {
             this.hls.destroy();
+            this.hls = null;
+        }
+
+        // iOS before 17.1 has no Media Source Extensions, so HLS.js cannot run,
+        // but WebKit plays HLS playlists natively.
+        if (!Hls.isSupported() && this.canPlayNativeHls()) {
+            this.video.src = url;
+            this.startVideoPlayback(playId).catch(e => {
+                this.reportBrowserPlaybackFailure(e, playId);
+                if (e.name !== 'AbortError') console.log('Autoplay prevented:', e);
+            });
+            return;
         }
 
         this.hls = new Hls(this.getHlsConfig());

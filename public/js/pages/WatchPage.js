@@ -1151,8 +1151,13 @@ class WatchPage {
         }
     }
 
+    canPlayNativeHls() {
+        const support = this.video?.canPlayType?.('application/vnd.apple.mpegurl');
+        return support === 'probably' || support === 'maybe';
+    }
+
     /**
-     * Play HLS stream using Hls.js
+     * Play HLS stream using Hls.js, or natively where HLS.js is unsupported
      */
     playHls(url, { autoPlay = true, playId = this._diagnosticPlayId } = {}) {
         this.assertPlaybackRequestCurrent(playId);
@@ -1165,6 +1170,25 @@ class WatchPage {
 
         if (this.hls) {
             this.hls.destroy();
+            this.hls = null;
+        }
+
+        // iOS before 17.1 has no Media Source Extensions, so HLS.js cannot run,
+        // but WebKit plays HLS playlists natively.
+        if (!Hls.isSupported() && this.canPlayNativeHls()) {
+            this.video.src = url;
+            if (autoPlay) {
+                this.video.play().catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
+                    if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
+                });
+            } else {
+                this.hideLoading();
+                this.showOverlay();
+            }
+            this.renderProbeSubtitleTracks();
+            this.scheduleSelectedSubtitleRestore();
+            return;
         }
 
         this.hls = new Hls({
