@@ -270,6 +270,14 @@ function testContextFromRequest() {
         get: name => ({ host: 'TV.example.test:3001' })[name]
     });
     assert.equal(direct.host, 'TV.example.test:3001', 'A direct request keeps the Host header and port.');
+    // Express reports a bracketed IPv6 host name; a direct request keeps the
+    // complete Host header, port included.
+    const ipv6 = authAudit.contextFromRequest({
+        hostname: '[2001:db8::1]',
+        get: name => ({ host: '[2001:db8::1]:3000' })[name]
+    });
+    assert.equal(ipv6.host, '[2001:db8::1]:3000');
+    assert.equal(authAudit.hostWithoutPort('[2001:db8::1]'), '2001:db8::1');
     assert.equal(authAudit.hostWithoutPort('[::1]:3000'), '::1');
     assert.equal(authAudit.hostWithoutPort('2001:db8::1'), '2001:db8::1');
     assert.equal(authAudit.hostWithoutPort('Example.test:443'), 'example.test');

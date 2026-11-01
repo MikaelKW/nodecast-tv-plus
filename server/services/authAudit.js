@@ -129,7 +129,7 @@ function contextFromRequest(req) {
         // trusted proxy supplied a different host name.
         const rawHost = typeof req.get === 'function' ? req.get('host') : req.headers?.host;
         const hostname = req.hostname;
-        host = hostname && rawHost && hostWithoutPort(rawHost) !== String(hostname).toLowerCase()
+        host = hostname && rawHost && hostWithoutPort(rawHost) !== hostWithoutPort(hostname)
             ? hostname
             : rawHost || hostname || null;
     } catch {
