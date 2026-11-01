@@ -1381,11 +1381,18 @@ video::cue {
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  /* Tabs that do not fit remain reachable by swiping or scrolling, and the
+     active tab is scrolled into view, so the scrollbar itself is hidden. */
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
   flex-shrink: 0;
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-sm) 12px;
   background: none;
   border: none;
   color: var(--color-text-secondary);

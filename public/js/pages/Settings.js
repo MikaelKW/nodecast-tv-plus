@@ -1132,6 +1132,9 @@ class SettingsPage {
         this.authLogPanel.hide();
         this.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         this.tabContents.forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
+        // Keep the active tab visible when the tab row is wider than the screen.
+        [...this.tabs].find(t => t.dataset.tab === tabName)
+            ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 
         if (tabName === 'diagnostics' && this.isVisible) {
             this.diagnosticsPanel.show();
