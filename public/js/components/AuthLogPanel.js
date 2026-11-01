@@ -176,6 +176,26 @@ class AuthLogPanel {
         });
     }
 
+    /** Compact two-line label: date (year only when not this year) and time. */
+    static formatTimeParts(iso, now = new Date()) {
+        const date = new Date(iso);
+        if (!Number.isFinite(date.getTime())) return { day: String(iso || ''), time: '' };
+        const sameYear = date.getFullYear() === now.getFullYear();
+        return {
+            day: date.toLocaleDateString(undefined, {
+                day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' })
+            }),
+            time: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        };
+    }
+
+    secondary(text) {
+        const span = document.createElement('span');
+        span.className = 'auth-log-secondary';
+        span.textContent = text;
+        return span;
+    }
+
     cell(content, className) {
         const td = document.createElement('td');
         if (className) td.className = className;
@@ -200,49 +220,52 @@ class AuthLogPanel {
         const row = document.createElement('tr');
         row.className = `auth-log-row auth-log-${entry.outcome}`;
 
-        const time = document.createElement('time');
-        time.dateTime = entry.at;
-        time.textContent = AuthLogPanel.formatTime(entry.at);
-        row.append(this.cell(time));
-
-        row.append(this.cell(this.filterButton('account', entry.username)));
-        row.append(this.cell(AuthLogPanel.label('event', entry.event)));
-
-        const outcome = document.createElement('span');
-        outcome.className = `auth-log-outcome auth-log-outcome-${entry.outcome}`;
-        outcome.textContent = AuthLogPanel.label('outcome', entry.outcome);
-        if (entry.reasonText) outcome.title = entry.reasonText;
-        const outcomeCell = this.cell(outcome);
-        if (entry.reasonText) {
-            const reason = document.createElement('span');
-            reason.className = 'auth-log-reason';
-            reason.textContent = entry.reasonText;
-            outcomeCell.append(reason);
-        }
-        row.append(outcomeCell);
-
-        row.append(this.cell(AuthLogPanel.label('method', entry.method)));
-        row.append(this.cell(this.filterButton('ip', entry.ip)));
-        row.append(this.cell(entry.client));
-
         const details = document.createElement('tr');
         details.className = 'auth-log-details';
         details.hidden = true;
         const detailsCell = document.createElement('td');
-        detailsCell.colSpan = 8;
+        detailsCell.colSpan = 6;
         detailsCell.append(this.renderDetails(entry));
         details.append(detailsCell);
 
+        // The time doubles as the details toggle, so no extra column is needed.
+        const parts = AuthLogPanel.formatTimeParts(entry.at);
         const toggle = document.createElement('button');
         toggle.type = 'button';
-        toggle.className = 'btn btn-sm btn-ghost auth-log-toggle';
-        toggle.textContent = 'Details';
+        toggle.className = 'auth-log-toggle';
         toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', `Show details for ${AuthLogPanel.formatTime(entry.at)}`);
+        const chevron = document.createElement('span');
+        chevron.className = 'auth-log-chevron';
+        chevron.setAttribute('aria-hidden', 'true');
+        chevron.textContent = '▸';
+        const time = document.createElement('time');
+        time.dateTime = entry.at;
+        time.title = AuthLogPanel.formatTime(entry.at);
+        time.append(document.createTextNode(parts.day), this.secondary(parts.time));
+        toggle.append(chevron, time);
         toggle.addEventListener('click', () => {
             details.hidden = !details.hidden;
             toggle.setAttribute('aria-expanded', String(!details.hidden));
+            row.classList.toggle('expanded', !details.hidden);
         });
         row.append(this.cell(toggle));
+
+        row.append(this.cell(this.filterButton('account', entry.username)));
+
+        const eventCell = this.cell(AuthLogPanel.label('event', entry.event));
+        if (entry.method) eventCell.append(this.secondary(AuthLogPanel.label('method', entry.method)));
+        row.append(eventCell);
+
+        const outcome = document.createElement('span');
+        outcome.className = `auth-log-outcome auth-log-outcome-${entry.outcome}`;
+        outcome.textContent = AuthLogPanel.label('outcome', entry.outcome);
+        const outcomeCell = this.cell(outcome);
+        if (entry.reasonText) outcomeCell.append(this.secondary(entry.reasonText));
+        row.append(outcomeCell);
+
+        row.append(this.cell(this.filterButton('ip', entry.ip)));
+        row.append(this.cell(entry.client));
 
         return [row, details];
     }
@@ -250,26 +273,33 @@ class AuthLogPanel {
     renderDetails(entry) {
         const list = document.createElement('dl');
         list.className = 'auth-log-detail-list';
-        const add = (term, value) => {
+        const add = (term, value, { wide = false, hint = '' } = {}) => {
+            const group = document.createElement('div');
+            group.className = wide ? 'auth-log-detail wide' : 'auth-log-detail';
             const dt = document.createElement('dt');
             dt.textContent = term;
+            if (hint) dt.title = hint;
             const dd = document.createElement('dd');
             dd.textContent = value === null || value === undefined || value === '' ? '—' : String(value);
-            list.append(dt, dd);
+            group.append(dt, dd);
+            list.append(group);
         };
         add('Time (UTC)', entry.at);
-        add('Account ID', entry.userId);
-        add('Username', entry.username);
+        add('Event', [AuthLogPanel.label('event', entry.event), entry.method && AuthLogPanel.label('method', entry.method)]
+            .filter(Boolean).join(' · '));
+        add('Account', entry.userId !== null && entry.userId !== undefined
+            ? `${entry.username || '—'} (ID ${entry.userId})`
+            : entry.username);
         add('Reason', entry.reasonText || entry.reason);
-        add('Client IP address', entry.ip);
-        add('Connected from (proxy or client)', entry.peerIp);
-        add('Trusted forwarding chain', Array.isArray(entry.forwardedFor) && entry.forwardedFor.length
+        add('Client IP', entry.ip, { hint: 'Resolved through the trusted proxy settings' });
+        add('Received from', entry.peerIp, { hint: 'The address that connected to the server: a proxy or the client itself' });
+        add('Forwarded chain', Array.isArray(entry.forwardedFor) && entry.forwardedFor.length
             ? entry.forwardedFor.join(' → ')
-            : '');
-        add('Host name used', entry.host);
-        add('Browser and system', entry.client);
-        add('User agent', entry.userAgent);
-        add('Sign-in flow ID', entry.flowId);
+            : '', { hint: 'Trusted X-Forwarded-For addresses, client first' });
+        add('Host', entry.host, { hint: 'The host name the client used to reach the server' });
+        add('Browser', entry.client);
+        add('Flow ID', entry.flowId, { hint: 'Shared by the steps of one two-factor sign-in' });
+        add('User agent', entry.userAgent, { wide: true });
         return list;
     }
 

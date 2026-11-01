@@ -108,11 +108,20 @@ test('the sign-in log renders untrusted text safely with details and pagination'
 
     const details = page.locator('#auth-log-rows .auth-log-details').first();
     await expect(details).toBeHidden();
-    await rows.first().getByRole('button', { name: 'Details' }).click();
+    const toggle = rows.first().getByRole('button', { name: /^Show details for / });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(details).toBeVisible();
     await expect(details).toContainText('192.168.2.222');
     await expect(details).toContainText('203.0.113.7 → 192.168.2.222');
     await expect(details).toContainText('tv.example.test');
+    await expect(details).toContainText('Sign-in · Password');
+
+    // The table fits its container without horizontal scrolling.
+    const overflow = await page.locator('.auth-log-table').evaluate(table =>
+        table.scrollWidth - table.parentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
 
     await page.locator('#auth-log-next').click();
     await expect(rows.first()).toContainText('admin');

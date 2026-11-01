@@ -1126,7 +1126,7 @@
             <div class="settings-section">
               <h3>Sign-in activity</h3>
               <p class="hint">Successful and failed sign-ins, sign-outs and two-factor steps. Passwords, codes, cookies
-                and tokens are never recorded. Times are shown in your local time zone.</p>
+                and tokens are never recorded. Times are shown in your local time zone; select a time for details.</p>
 
               <form id="auth-log-filters" class="auth-log-filters">
                 <div class="form-group">
@@ -1175,16 +1175,22 @@
               <p id="auth-log-status" class="hint" role="status" aria-live="polite"></p>
               <div class="user-list-container">
                 <table class="user-table auth-log-table">
+                  <colgroup>
+                    <col class="auth-log-col-time">
+                    <col class="auth-log-col-account">
+                    <col class="auth-log-col-event">
+                    <col class="auth-log-col-outcome">
+                    <col class="auth-log-col-ip">
+                    <col class="auth-log-col-client">
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th>Time</th>
-                      <th>Account</th>
-                      <th>Event</th>
-                      <th>Outcome</th>
-                      <th>Method</th>
-                      <th>IP address</th>
-                      <th>Client</th>
-                      <th><span class="sr-only">Details</span></th>
+                      <th scope="col">Time</th>
+                      <th scope="col">Account</th>
+                      <th scope="col">Event</th>
+                      <th scope="col">Outcome</th>
+                      <th scope="col">IP address</th>
+                      <th scope="col">Client</th>
                     </tr>
                   </thead>
                   <tbody id="auth-log-rows"></tbody>
