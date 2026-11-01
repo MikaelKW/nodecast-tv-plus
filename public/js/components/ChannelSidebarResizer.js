@@ -142,6 +142,9 @@
                 default: return;
             }
             event.preventDefault();
+            // The player handles arrow keys on the document (volume and
+            // channel changes); keep handled resize keys away from it.
+            event.stopPropagation();
         });
 
         // A stored width can exceed a smaller window; clamp it without

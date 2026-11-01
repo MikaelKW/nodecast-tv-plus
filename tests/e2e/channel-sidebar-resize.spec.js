@@ -71,11 +71,21 @@ test.describe('desktop channel sidebar', () => {
 
     test('the keyboard resizes the focused handle', async ({ page }) => {
         await openHarness(page);
+        // The player listens for arrow keys on the document (volume/channel).
+        await page.evaluate(() => {
+            window.documentKeys = [];
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'Shift') window.documentKeys.push(event.key);
+            });
+        });
         await page.locator('#channel-sidebar-resizer').focus();
         await page.keyboard.press('Shift+ArrowRight');
         await expect.poll(() => sidebarWidth(page)).toBe(384);
         await page.keyboard.press('Home');
         await expect.poll(() => sidebarWidth(page)).toBe(220);
+        expect(await page.evaluate(() => window.documentKeys)).toEqual([]);
+        await page.keyboard.press('a');
+        expect(await page.evaluate(() => window.documentKeys)).toEqual(['a']);
     });
 
     test('a collapsed sidebar hides the handle and stays collapsed', async ({ page }) => {
@@ -84,6 +94,19 @@ test.describe('desktop channel sidebar', () => {
         await page.locator('#channel-sidebar').evaluate(element => element.classList.add('collapsed'));
         await expect(page.locator('#channel-sidebar-resizer')).toBeHidden();
         await expect.poll(() => sidebarWidth(page)).toBe(0);
+    });
+});
+
+test.describe('landscape desktop width', () => {
+    // The 896px landscape rule fixes the sidebar at 280px; desktop layouts in
+    // that range must still follow the resized width.
+    test.use({ viewport: { width: 850, height: 600 } });
+
+    test('dragging resizes the sidebar in a narrow landscape window', async ({ page }) => {
+        await openHarness(page);
+        expect(await sidebarWidth(page)).toBe(280);
+        await dragHandleBy(page, 60);
+        await expect.poll(() => sidebarWidth(page)).toBe(340);
     });
 });
 

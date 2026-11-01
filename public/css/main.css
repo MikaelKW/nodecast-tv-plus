@@ -3545,6 +3545,14 @@ kbd {
   }
 }
 
+/* The landscape rule above fixes the drawer width; on desktop layouts keep
+   the width chosen with the channel sidebar resizer. */
+@media (min-width: 769px) and (max-width: 896px) and (orientation: landscape) {
+  .channel-sidebar {
+    width: var(--channel-sidebar-width, 280px);
+  }
+}
+
 /* Touch-friendly improvements */
 @media (hover: none) and (pointer: coarse) {
 

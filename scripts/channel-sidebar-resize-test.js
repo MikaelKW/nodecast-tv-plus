@@ -27,7 +27,11 @@ function createElement(initialWidth = 320) {
             listeners.get(type).push(listener);
         },
         dispatch(type, event = {}) {
-            const payload = { preventDefault() { this.defaultPrevented = true; }, ...event };
+            const payload = {
+                preventDefault() { this.defaultPrevented = true; },
+                stopPropagation() { this.propagationStopped = true; },
+                ...event
+            };
             for (const listener of listeners.get(type) || []) listener(payload);
             return payload;
         },
@@ -179,7 +183,9 @@ function testKeyboard() {
     const { handle, storage, width } = setup();
     const press = (key, extra = {}) => handle.dispatch('keydown', { key, ...extra });
 
-    assert.ok(press('ArrowRight').defaultPrevented);
+    const handled = press('ArrowRight');
+    assert.ok(handled.defaultPrevented);
+    assert.ok(handled.propagationStopped, 'Handled keys must not reach the player keyboard shortcuts.');
     assert.equal(width(), '336px');
     press('ArrowRight', { shiftKey: true });
     assert.equal(width(), '400px');
@@ -192,7 +198,9 @@ function testKeyboard() {
     assert.equal(width(), `${Resizer.MAX_WIDTH}px`);
     press('Escape');
     assert.equal(width(), '');
-    assert.equal(press('a').defaultPrevented, undefined, 'Other keys must keep their default behavior.');
+    const other = press('a');
+    assert.equal(other.defaultPrevented, undefined, 'Other keys must keep their default behavior.');
+    assert.equal(other.propagationStopped, undefined, 'Other keys must still reach the player.');
 }
 
 function testWindowResize() {
