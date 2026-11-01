@@ -156,6 +156,19 @@
             apply(customWidth);
         });
 
+        // The Live TV page can be hidden when this runs (width 0), so refresh
+        // the current value once the sidebar is laid out and on focus.
+        const refreshAria = () => updateAria(customWidth ?? currentWidth());
+        handle.addEventListener('focus', refreshAria);
+        const ResizeObserverClass = view?.ResizeObserver || globalThis.ResizeObserver;
+        if (typeof ResizeObserverClass === 'function') {
+            try {
+                new ResizeObserverClass(refreshAria).observe(sidebar);
+            } catch {
+                // Focus still refreshes the value.
+            }
+        }
+
         const stored = readStoredWidth(storage);
         if (stored !== null) setWidth(stored, { persist: false });
         else updateAria(currentWidth());

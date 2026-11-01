@@ -88,6 +88,29 @@ test.describe('desktop channel sidebar', () => {
         expect(await page.evaluate(() => window.documentKeys)).toEqual(['a']);
     });
 
+    test('the handle reports its width after a hidden Live TV page is shown', async ({ page }) => {
+        await page.route('**/channel-sidebar-harness', route => route.fulfill({
+            contentType: 'text/html',
+            body: harness.replace('class="page active"', 'class="page"')
+        }));
+        await page.goto('/channel-sidebar-harness');
+        await page.addStyleTag({ path: path.join(__dirname, '../../public/css/main.css') });
+        await page.addScriptTag({
+            path: path.join(__dirname, '../../public/js/components/ChannelSidebarResizer.js')
+        });
+        await page.evaluate(() => window.ChannelSidebarResizer.attach({
+            sidebar: document.getElementById('channel-sidebar'),
+            handle: document.getElementById('channel-sidebar-resizer')
+        }));
+        const handle = page.locator('#channel-sidebar-resizer');
+        await expect(page.locator('#channel-sidebar')).toBeHidden();
+        expect(await handle.getAttribute('aria-valuenow')).toBeNull();
+        // Show Live TV the way the app does.
+        await page.locator('#page-live').evaluate(element => element.classList.add('active'));
+        await expect(page.locator('#channel-sidebar')).toBeVisible();
+        await expect(handle).toHaveAttribute('aria-valuenow', '320');
+    });
+
     test('a collapsed sidebar hides the handle and stays collapsed', async ({ page }) => {
         await openHarness(page);
         await dragHandleBy(page, 100);

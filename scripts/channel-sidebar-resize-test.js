@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const Resizer = require('../public/js/components/ChannelSidebarResizer');
 
 function createElement(initialWidth = 320) {
+    let renderedWidth = initialWidth;
     const listeners = new Map();
     const classes = new Set();
     const attributes = new Map();
@@ -37,9 +38,11 @@ function createElement(initialWidth = 320) {
         },
         setPointerCapture(id) { this.captured = id; },
         releasePointerCapture(id) { if (this.captured === id) this.captured = null; },
+        setRenderedWidth(width) { renderedWidth = width; },
         getBoundingClientRect() {
+            if (renderedWidth === 0) return { width: 0 }; // display: none
             const custom = parseFloat(properties.get(Resizer.WIDTH_PROPERTY));
-            return { width: Number.isFinite(custom) ? custom : initialWidth };
+            return { width: Number.isFinite(custom) ? custom : renderedWidth };
         }
     };
     return element;
@@ -203,6 +206,34 @@ function testKeyboard() {
     assert.equal(other.propagationStopped, undefined, 'Other keys must still reach the player.');
 }
 
+function testHiddenAtStartup() {
+    // App.init() runs while Home is active and Live TV is display: none.
+    const sidebar = createElement(0);
+    const handle = createElement();
+    let observerCallback = null;
+    const view = createView();
+    view.ResizeObserver = class {
+        constructor(callback) { observerCallback = callback; }
+        observe(target) { assert.equal(target, sidebar); }
+    };
+    Resizer.attach({ sidebar, handle, storage: createStorage(), view });
+    assert.equal(handle.getAttribute('aria-valuenow'), null, 'A hidden sidebar has no measurable width yet.');
+
+    // Live TV becomes visible: the observer reports the laid-out width.
+    sidebar.setRenderedWidth(320);
+    observerCallback();
+    assert.equal(handle.getAttribute('aria-valuenow'), '320');
+
+    // Without ResizeObserver, focusing the handle refreshes the value.
+    const plainSidebar = createElement(0);
+    const plainHandle = createElement();
+    Resizer.attach({ sidebar: plainSidebar, handle: plainHandle, storage: createStorage(), view: createView() });
+    assert.equal(plainHandle.getAttribute('aria-valuenow'), null);
+    plainSidebar.setRenderedWidth(320);
+    plainHandle.dispatch('focus');
+    assert.equal(plainHandle.getAttribute('aria-valuenow'), '320');
+}
+
 function testWindowResize() {
     const { view, storage, width } = setup({ stored: '600' });
     assert.equal(width(), '600px');
@@ -221,5 +252,6 @@ testStoredWidth();
 testPointerDrag();
 testDragIgnoredWhenUnavailable();
 testKeyboard();
+testHiddenAtStartup();
 testWindowResize();
 console.log('Channel sidebar resize tests passed.');
