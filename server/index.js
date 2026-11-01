@@ -257,6 +257,7 @@ app.get('/api/health', async (req, res) => {
 // API Routes
 app.use('/api', auth.requireSameOrigin);
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth-log', require('./routes/authLog'));
 app.use('/api/sources', require('./routes/sources'));
 app.use('/api/proxy', require('./routes/proxy'));
 app.use('/api/channels', require('./routes/channels'));
@@ -293,6 +294,9 @@ server = app.listen(PORT, async () => {
         console.error('Plugin initialization failed:', err);
     });
     applicationReady = true;
+
+    // Apply the sign-in log retention at startup and hourly afterwards.
+    require('./services/authAudit').startMaintenance();
 
     // Test environments run explicit syncs and should not start persistent background work.
     if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {

@@ -197,6 +197,18 @@ const API = {
         getSupportPreview: () => API.request('GET', '/diagnostics/support-preview')
     },
 
+    // Authentication audit log (admin only)
+    authLog: {
+        list: (filters = {}) => {
+            const params = new URLSearchParams();
+            for (const [key, value] of Object.entries(filters)) {
+                if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+            }
+            const query = params.toString();
+            return API.request('GET', `/auth-log${query ? `?${query}` : ''}`);
+        }
+    },
+
     // Users (admin only)
     users: {
         getAll: () => API.request('GET', '/auth/users'),

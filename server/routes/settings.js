@@ -52,6 +52,11 @@ router.put('/', authService.requireAdmin, async (req, res) => {
             syncService.restartSyncTimer().catch(console.error);
         }
 
+        // Apply a shorter sign-in log retention immediately.
+        if (updates.authLogRetentionDays !== undefined || updates.authLogMaxEntries !== undefined) {
+            require('../services/authAudit').prune();
+        }
+
         res.json(updatedSettings);
     } catch (err) {
         console.error('Error updating settings:', err);

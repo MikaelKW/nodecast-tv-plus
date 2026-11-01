@@ -4,6 +4,7 @@ const db = require('../db');
 const auth = require('../auth');
 const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
+const authAudit = require('../services/authAudit');
 const {
     passwordIdentityLimiter,
     twoFactorLimiter
@@ -67,15 +68,39 @@ router.get('/challenge', (req, res) => {
 });
 
 router.post('/verify', async (req, res) => {
+    let challenge = null;
+    let user = null;
+    const isRecovery = req.body?.credentialType === 'recovery';
+    // Capture the context now: clearing the challenge regenerates the session.
+    const context = authAudit.contextFromRequest(req);
+    const audit = (entry) => {
+        const firstFactor = challenge?.firstFactor === 'sso' ? 'sso' : 'password';
+        authAudit.record({
+            event: 'sign_in',
+            method: challenge ? `${firstFactor}+${isRecovery ? 'recovery_code' : 'totp'}` : null,
+            flowId: challenge?.flowId || null,
+            context,
+            ...entry
+        });
+    };
+
     try {
-        const challenge = twoFactorAuth.getChallenge(req);
-        if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
+        challenge = twoFactorAuth.getChallenge(req);
+        if (!challenge) {
+            audit({ outcome: 'failure', reason: 'mfa_challenge_expired' });
+            return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
+        }
 
         const key = limiterKey(`login:${challenge.userId}:${challenge.challengeId}`);
-        if (!enforceLimiter(res, twoFactorLimiter, key)) return;
+        if (!enforceLimiter(res, twoFactorLimiter, key)) {
+            const blockedUser = await db.users.getById(challenge.userId).catch(() => null);
+            audit({ outcome: 'failure', reason: 'mfa_rate_limited', user: blockedUser || { id: challenge.userId } });
+            return;
+        }
 
-        const user = await db.users.getById(challenge.userId);
+        user = await db.users.getById(challenge.userId);
         if (!user || !twoFactorAuth.hasEnabledTotp(user)) {
+            audit({ outcome: 'failure', reason: 'mfa_challenge_invalid', user: user || { id: challenge.userId } });
             await twoFactorAuth.clearChallenge(req);
             return res.status(401).json({ error: 'The two-factor challenge is no longer valid.' });
         }
@@ -85,6 +110,7 @@ router.post('/verify', async (req, res) => {
             credential: req.body.credential
         });
         if (!valid) {
+            audit({ outcome: 'failure', reason: isRecovery ? 'invalid_recovery_code' : 'invalid_mfa_code', user });
             const state = twoFactorLimiter.recordFailure(key);
             if (!state.allowed) await twoFactorAuth.clearChallenge(req);
             return res.status(401).json({ error: 'Invalid authentication code.' });
@@ -94,8 +120,10 @@ router.post('/verify', async (req, res) => {
         await twoFactorAuth.clearChallenge(req);
         const token = auth.generateToken(user);
         auth.setAuthCookie(req, res, token);
+        audit({ outcome: 'success', user });
         res.json({ user: db.users.toPublic(user) });
     } catch (error) {
+        audit({ outcome: 'failure', reason: 'server_error', user });
         respondError(res, error, 'Two-factor verification failed.');
     }
 });
