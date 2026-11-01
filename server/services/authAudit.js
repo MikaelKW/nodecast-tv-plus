@@ -482,7 +482,10 @@ function getDefault() {
     if (!defaultInstance) {
         const { getDb } = require('../db/sqlite');
         const { settings } = require('../db');
-        defaultInstance = createAuthAudit({ getDb, getSettings: () => settings.get() });
+        // Pruning deletes data, so it must not run with fallback defaults when
+        // the saved policy cannot be read; getStrict() rejects and prune()
+        // then skips this run.
+        defaultInstance = createAuthAudit({ getDb, getSettings: () => settings.getStrict() });
     }
     return defaultInstance;
 }

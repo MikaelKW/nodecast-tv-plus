@@ -433,6 +433,16 @@ const settings = {
     return currentSettings;
   },
 
+  /**
+   * Like get(), but rejects when db.json exists and cannot be read or parsed
+   * instead of falling back to defaults. Use it before destructive actions
+   * that depend on a saved setting, such as pruning by retention.
+   */
+  async getStrict() {
+    const db = await readDbForMutation();
+    return { ...getDefaultSettings(), ...db.settings };
+  },
+
   async update(newSettings) {
     return mutateDb(db => {
       const updates = { ...newSettings };

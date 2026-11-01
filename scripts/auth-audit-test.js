@@ -188,6 +188,61 @@ async function testRetention() {
     const remaining = audit.query({ pageSize: 1 });
     assert.equal(remaining.total, 1000);
     assert.equal(remaining.entries[0].username, 'user1004');
+
+    // When the saved policy cannot be read, pruning is skipped rather than
+    // falling back to the default retention.
+    const database = new Database(':memory:');
+    let time = Date.parse('2026-11-01T12:00:00Z');
+    const unreadable = authAudit.createAuthAudit({
+        getDb: () => database,
+        getSettings: async () => { throw new Error('db.json is not valid JSON'); },
+        now: () => time,
+        logger: null
+    });
+    unreadable.record({ event: 'sign_in', outcome: 'success', username: 'kept' });
+    time += 400 * day;
+    assert.deepEqual(await unreadable.prune(), { expired: 0, overflow: 0 });
+    assert.equal(unreadable.query().total, 1, 'Entries must survive when the policy cannot be read.');
+}
+
+/** settings.getStrict() rejects a damaged db.json instead of returning defaults. */
+async function testStrictSettingsReader() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-strict-settings-'));
+    const script = `
+        const { settings } = require(${JSON.stringify(path.join(projectRoot, 'server', 'db'))});
+        (async () => {
+            const lenient = await settings.get();
+            let strictError = null;
+            try { await settings.getStrict(); } catch (error) { strictError = error.message; }
+            console.log(JSON.stringify({ lenientDays: lenient.authLogRetentionDays, strictError }));
+        })();
+    `;
+    const run = () => new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ['-e', script], {
+            env: { ...process.env, NODECAST_DATA_DIR: directory },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let output = '';
+        child.stdout.on('data', chunk => { output += chunk; });
+        child.on('error', reject);
+        child.on('close', () => {
+            const line = output.trim().split('\n').pop();
+            try { resolve(JSON.parse(line)); } catch { reject(new Error(`Unexpected output: ${output}`)); }
+        });
+    });
+    try {
+        await fs.writeFile(path.join(directory, 'db.json'), '{"settings": {"authLogRetentionDays": 365');
+        const damaged = await run();
+        assert.equal(damaged.lenientDays, 90, 'The lenient reader falls back to defaults.');
+        assert.ok(damaged.strictError, 'The strict reader must reject a damaged db.json.');
+
+        await fs.writeFile(path.join(directory, 'db.json'), JSON.stringify({ settings: { authLogRetentionDays: 365 } }));
+        const valid = await run();
+        assert.equal(valid.strictError, null);
+        assert.equal(valid.lenientDays, 365);
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
 }
 
 function testContextFromRequest() {
@@ -666,6 +721,7 @@ async function run() {
     testRecordValidationAndSanitizing();
     testQueryFilters();
     await testRetention();
+    await testStrictSettingsReader();
     testContextFromRequest();
     await testExpiredChallengeAudit();
     await testServerFlow();
