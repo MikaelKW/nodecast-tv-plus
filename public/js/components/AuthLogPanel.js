@@ -251,6 +251,15 @@ class AuthLogPanel {
         });
         row.append(this.cell(toggle));
 
+        // The whole row toggles the details. The time button keeps keyboard
+        // access; other controls (account and IP filters) keep their own
+        // action, and selecting text to copy it does not toggle the row.
+        row.addEventListener('click', event => {
+            if (event.target.closest('button, a, input, select, textarea')) return;
+            if (String(window.getSelection?.() || '').trim()) return;
+            toggle.click();
+        });
+
         row.append(this.cell(this.filterButton('account', entry.username)));
 
         const eventCell = this.cell(AuthLogPanel.label('event', entry.event));

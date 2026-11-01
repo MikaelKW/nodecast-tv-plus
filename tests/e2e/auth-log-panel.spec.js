@@ -118,6 +118,15 @@ test('the sign-in log renders untrusted text safely with details and pagination'
     await expect(details).toContainText('tv.example.test');
     await expect(details).toContainText('Sign-in · Password');
 
+    // Clicking anywhere else in the row toggles the details too.
+    await rows.first().locator('td').nth(2).click();
+    await expect(details).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await rows.first().locator('td').nth(5).click();
+    await expect(details).toBeVisible();
+    await rows.first().locator('td').nth(5).click();
+    await expect(details).toBeHidden();
+
     // The table fits its container without horizontal scrolling.
     const overflow = await page.locator('.auth-log-table').evaluate(table =>
         table.scrollWidth - table.parentElement.clientWidth);
@@ -134,6 +143,8 @@ test('filters are sent to the API and an IP can be applied from a row', async ({
     await openPanel(page);
     await page.locator('#auth-log-rows').getByRole('button', { name: '203.0.113.7' }).click();
     await expect(page.locator('#auth-log-ip')).toHaveValue('203.0.113.7');
+    // Applying a filter from a row does not open that row's details.
+    await expect(page.locator('#auth-log-rows .auth-log-details').first()).toBeHidden();
     await expect(page.locator('#auth-log-page')).toHaveText('1–1 of 1');
 
     await page.locator('#auth-log-account').fill('adm');

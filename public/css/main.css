@@ -1517,6 +1517,10 @@ video::cue {
   line-height: 1.35;
 }
 
+.auth-log-row {
+  cursor: pointer;
+}
+
 .auth-log-row.expanded td {
   background: var(--color-bg-hover);
   border-bottom-color: transparent;
