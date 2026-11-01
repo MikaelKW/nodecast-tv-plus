@@ -1472,6 +1472,11 @@ video::cue {
   margin-bottom: 0;
 }
 
+/* Keep the filter buttons on their own row below the fields. */
+.auth-log-filters .auth-log-filter-actions {
+  grid-column: 1 / -1;
+}
+
 .auth-log-filter-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1566,8 +1571,10 @@ video::cue {
   gap: var(--space-md);
 }
 
-.auth-log-number {
+.auth-log-retention .form-input.auth-log-number {
+  flex: 0 0 10rem;
   width: 10rem;
+  max-width: 100%;
 }
 
 @media (max-width: 640px) {
