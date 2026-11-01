@@ -84,10 +84,23 @@ router.post('/verify', async (req, res) => {
         });
     };
 
+    // getChallenge() deletes an expired challenge, so keep its non-secret
+    // metadata to attribute the failure to the account and sign-in flow.
+    const stored = req.session?.twoFactorChallenge;
+    const storedMetadata = stored && typeof stored === 'object'
+        ? { userId: stored.userId, firstFactor: stored.firstFactor, flowId: stored.flowId }
+        : null;
+
     try {
         challenge = twoFactorAuth.getChallenge(req);
         if (!challenge) {
-            audit({ outcome: 'failure', reason: 'mfa_challenge_expired' });
+            let expiredUser = null;
+            if (storedMetadata) {
+                challenge = storedMetadata;
+                expiredUser = await db.users.getById(storedMetadata.userId).catch(() => null)
+                    || (Number.isSafeInteger(Number(storedMetadata.userId)) ? { id: storedMetadata.userId } : null);
+            }
+            audit({ outcome: 'failure', reason: 'mfa_challenge_expired', user: expiredUser });
             return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
         }
 

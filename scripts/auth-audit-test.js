@@ -162,6 +162,11 @@ function testQueryFilters() {
     assert.equal(page.pages, 2);
     assert.equal(audit.query({ pageSize: 5000 }).pageSize, authAudit.MAX_PAGE_SIZE);
     assert.equal(audit.query({ page: -3 }).page, 1);
+    // A page beyond the end (for example after pruning) returns the last page.
+    const beyond = audit.query({ pageSize: 4, page: 9 });
+    assert.equal(beyond.page, 2);
+    assert.equal(beyond.entries.length, 2);
+    assert.equal(audit.query({ account: 'nobody', page: 3 }).page, 1);
 }
 
 async function testRetention() {
@@ -198,6 +203,22 @@ function testContextFromRequest() {
     assert.equal(context.host, 'tv.example.test');
     assert.equal(context.userAgent, IPHONE_UA);
 
+    // A trusted proxy's public host is kept even when the upstream Host
+    // header starts with the same text.
+    const proxied = authAudit.contextFromRequest({
+        hostname: 'tv.example.test',
+        get: name => ({ host: 'tv.example.test.internal:3000' })[name]
+    });
+    assert.equal(proxied.host, 'tv.example.test');
+    const direct = authAudit.contextFromRequest({
+        hostname: 'tv.example.test',
+        get: name => ({ host: 'TV.example.test:3001' })[name]
+    });
+    assert.equal(direct.host, 'TV.example.test:3001', 'A direct request keeps the Host header and port.');
+    assert.equal(authAudit.hostWithoutPort('[::1]:3000'), '::1');
+    assert.equal(authAudit.hostWithoutPort('2001:db8::1'), '2001:db8::1');
+    assert.equal(authAudit.hostWithoutPort('Example.test:443'), 'example.test');
+
     const throwing = authAudit.contextFromRequest({
         get ips() { throw new Error('boom'); },
         get() { throw new Error('boom'); }
@@ -205,6 +226,77 @@ function testContextFromRequest() {
     assert.deepEqual(throwing.forwardedFor, []);
     assert.equal(throwing.host, null);
     assert.deepEqual(authAudit.contextFromRequest(null), {});
+}
+
+/**
+ * An expired two-factor challenge is still attributed to its account and
+ * sign-in flow. The real server cannot expire a five-minute challenge within
+ * a test, so the route runs here with stubbed storage and audit modules.
+ */
+async function testExpiredChallengeAudit() {
+    const express = require('express');
+    const stubbed = [];
+    const stub = (request, exports) => {
+        const resolved = require.resolve(request);
+        stubbed.push([resolved, require.cache[resolved]]);
+        require.cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports };
+    };
+    const fresh = request => {
+        const resolved = require.resolve(request);
+        stubbed.push([resolved, require.cache[resolved]]);
+        delete require.cache[resolved];
+    };
+
+    const recorded = [];
+    const flowId = '6f1c2c1e-6c1d-4c6e-9d6a-2b1f3c4d5e6f';
+    stub('../server/db', { users: { getById: async id => (id === 7 ? { id: 7, username: 'steven' } : null) } });
+    stub('../server/auth', { requireAuth: (req, res, next) => next(), requireAdmin: (req, res, next) => next() });
+    stub('../server/services/totpService', { isAvailable: () => true });
+    stub('../server/services/authAudit', {
+        contextFromRequest: () => ({ ip: '203.0.113.20' }),
+        record: entry => recorded.push(entry)
+    });
+    fresh('../server/services/twoFactorAuth');
+    fresh('../server/routes/totp');
+
+    let server;
+    try {
+        const app = express();
+        app.use(express.json());
+        app.use((req, res, next) => {
+            req.session = {
+                twoFactorChallenge: {
+                    challengeId: 'expired', userId: 7, expiresAt: Date.now() - 1000,
+                    firstFactor: 'sso', flowId
+                },
+                regenerate(callback) { callback(); },
+                save(callback) { callback(); }
+            };
+            next();
+        });
+        app.use('/2fa', require('../server/routes/totp'));
+        server = await new Promise(resolve => {
+            const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+        });
+        const response = await fetch(`http://127.0.0.1:${server.address().port}/2fa/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credentialType: 'totp', credential: '123456' })
+        });
+        assert.equal(response.status, 401);
+        assert.equal(recorded.length, 1);
+        assert.equal(recorded[0].reason, 'mfa_challenge_expired');
+        assert.equal(recorded[0].user.username, 'steven');
+        assert.equal(recorded[0].flowId, flowId);
+        assert.equal(recorded[0].method, 'sso+totp');
+        assert.equal(JSON.stringify(recorded).includes('123456'), false);
+    } finally {
+        await new Promise(resolve => (server ? server.close(resolve) : resolve()));
+        for (const [resolved, original] of stubbed.reverse()) {
+            if (original) require.cache[resolved] = original;
+            else delete require.cache[resolved];
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -575,6 +667,7 @@ async function run() {
     testQueryFilters();
     await testRetention();
     testContextFromRequest();
+    await testExpiredChallengeAudit();
     await testServerFlow();
     console.log('Authentication audit log tests passed.');
 }

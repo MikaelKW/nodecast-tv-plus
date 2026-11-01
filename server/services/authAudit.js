@@ -98,6 +98,16 @@ function normalizeRetentionSettings(settings = {}) {
     };
 }
 
+/** Lower-case host name of a Host header value, without its port. */
+function hostWithoutPort(value) {
+    const text = String(value || '').trim().toLowerCase();
+    const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(text);
+    if (bracketed) return bracketed[1];
+    // A bare IPv6 address has several colons and no port.
+    if ((text.match(/:/g) || []).length > 1) return text;
+    return text.replace(/:\d+$/, '');
+}
+
 /**
  * Collect the request context for an entry. `req.ip` and `req.ips` follow the
  * application's explicit `trust proxy` setting, so forwarded headers are only
@@ -119,7 +129,7 @@ function contextFromRequest(req) {
         // trusted proxy supplied a different host name.
         const rawHost = typeof req.get === 'function' ? req.get('host') : req.headers?.host;
         const hostname = req.hostname;
-        host = hostname && rawHost && !String(rawHost).toLowerCase().startsWith(String(hostname).toLowerCase())
+        host = hostname && rawHost && hostWithoutPort(rawHost) !== String(hostname).toLowerCase()
             ? hostname
             : rawHost || hostname || null;
     } catch {
@@ -434,10 +444,12 @@ function createAuthAudit({
         }
 
         const pageSize = clampInteger(filters.pageSize, 1, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE);
-        const page = clampInteger(filters.page, 1, Number.MAX_SAFE_INTEGER, 1);
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
         const database = db();
         const total = database.prepare(`SELECT COUNT(*) AS count FROM auth_events ${clause}`).get(...params).count;
+        // Clamp to the last page, which can move when entries are pruned.
+        const pages = Math.max(1, Math.ceil(total / pageSize));
+        const page = Math.min(pages, clampInteger(filters.page, 1, Number.MAX_SAFE_INTEGER, 1));
         const rows = database.prepare(`
             SELECT * FROM auth_events ${clause}
             ORDER BY created_at DESC, id DESC
@@ -449,7 +461,7 @@ function createAuthAudit({
             total,
             page,
             pageSize,
-            pages: Math.max(1, Math.ceil(total / pageSize))
+            pages
         };
     }
 
@@ -490,6 +502,7 @@ module.exports = {
     createAuthAudit,
     contextFromRequest,
     describeClient,
+    hostWithoutPort,
     normalizeIp,
     normalizeRetentionSettings,
     record: (...args) => getDefault().record(...args),
