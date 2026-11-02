@@ -11,6 +11,7 @@ class SettingsPage {
         this.visibilityGeneration = 0;
         this.syncStatusRequest = null;
         this.diagnosticsPanel = new DiagnosticsPanel();
+        this.authLogPanel = new AuthLogPanel();
         this.subtitlePreferences = SubtitlePreferences.normalizePreferences(app.currentUser?.subtitlePreferences);
 
         this.init();
@@ -1118,20 +1119,29 @@ class SettingsPage {
             tab.setAttribute('aria-hidden', String(!visible));
         });
 
-        const usersTab = document.getElementById('users-tab');
-        if (usersTab) usersTab.style.display = !viewer && this.app.currentUser?.role === 'admin'
-            ? 'block'
-            : 'none';
+        const isAdmin = !viewer && this.app.currentUser?.role === 'admin';
+        for (const id of ['users-tab', 'logs-tab']) {
+            const tab = document.getElementById(id);
+            if (tab) tab.style.display = isAdmin ? 'block' : 'none';
+        }
     }
 
     switchTab(tabName) {
         if (this.isViewer() && tabName !== 'preferences') tabName = 'preferences';
         this.diagnosticsPanel.hide();
+        this.authLogPanel.hide();
         this.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         this.tabContents.forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
+        // Keep the active tab visible when the tab row is wider than the screen.
+        [...this.tabs].find(t => t.dataset.tab === tabName)
+            ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 
         if (tabName === 'diagnostics' && this.isVisible) {
             this.diagnosticsPanel.show();
+        }
+
+        if (tabName === 'logs' && this.isVisible) {
+            this.authLogPanel.show();
         }
 
         // Load content browser when switching to that tab
@@ -1175,6 +1185,9 @@ class SettingsPage {
 
         if (document.getElementById('tab-diagnostics')?.classList.contains('active')) {
             this.diagnosticsPanel.show();
+        }
+        if (document.getElementById('tab-logs')?.classList.contains('active')) {
+            this.authLogPanel.show();
         }
 
         // Load sources when page is shown
@@ -1309,6 +1322,7 @@ class SettingsPage {
         this.visibilityGeneration += 1;
         this.cancelSyncStatusRequest();
         this.diagnosticsPanel.hide();
+        this.authLogPanel.hide();
     }
 }
 

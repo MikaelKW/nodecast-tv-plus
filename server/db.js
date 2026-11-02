@@ -2,6 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { constants, existsSync, mkdirSync } = require('fs');
 const { normalizePreferences } = require('../public/js/components/SubtitlePreferences');
+const { normalizeRetentionSettings: normalizeAuthLogSettings } = require('./services/authAudit');
 
 // Ensure data directory exists (sync is fine for startup)
 const dataDir = process.env.NODECAST_DATA_DIR
@@ -101,6 +102,9 @@ function getDefaultSettings() {
     upscaleEnabled: false,
     upscaleMethod: 'hardware',    // hardware | software
     upscaleTarget: '1080p',       // 1080p | 4k | 720p
+    // Authentication audit log retention
+    authLogRetentionDays: 90,     // 1-3650
+    authLogMaxEntries: 50000,     // 1000-1000000
     navigation: getDefaultNavigationSettings()
   };
 }
@@ -429,11 +433,26 @@ const settings = {
     return currentSettings;
   },
 
+  /**
+   * Like get(), but rejects when db.json exists and cannot be read or parsed
+   * instead of falling back to defaults. Use it before destructive actions
+   * that depend on a saved setting, such as pruning by retention.
+   */
+  async getStrict() {
+    const db = await readDbForMutation();
+    return { ...getDefaultSettings(), ...db.settings };
+  },
+
   async update(newSettings) {
     return mutateDb(db => {
       const updates = { ...newSettings };
       if (Object.prototype.hasOwnProperty.call(updates, 'automaticUpdateChecks')) {
         updates.automaticUpdateChecks = updates.automaticUpdateChecks === true;
+      }
+      for (const key of ['authLogRetentionDays', 'authLogMaxEntries']) {
+        if (Object.prototype.hasOwnProperty.call(updates, key)) {
+          updates[key] = normalizeAuthLogSettings({ ...db.settings, ...updates })[key];
+        }
       }
       if (Object.prototype.hasOwnProperty.call(updates, 'navigation')) {
         updates.navigation = normalizeNavigationSettings({

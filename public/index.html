@@ -430,6 +430,7 @@
             <button class="tab" data-tab="transcode">Transcoding</button>
             <button class="tab" data-tab="content">Manage Content</button>
             <button class="tab" data-tab="users" id="users-tab" style="display:none;">Users</button>
+            <button class="tab" data-tab="logs" id="logs-tab" style="display:none;">Logs</button>
             <button class="tab" data-tab="diagnostics" id="diagnostics-tab">Diagnostics</button>
             <button class="tab" data-tab="about" id="about-tab">About</button>
           </div>
@@ -1120,6 +1121,115 @@
             </div>
           </div>
 
+          <!-- Logs Tab (administrators) -->
+          <div id="tab-logs" class="tab-content">
+            <div class="settings-section">
+              <h3>Sign-in activity</h3>
+              <p class="hint">Successful and failed sign-ins, sign-outs and two-factor steps. Passwords, codes, cookies
+                and tokens are never recorded. Times are shown in your local time zone; select an entry for details.</p>
+
+              <form id="auth-log-filters" class="auth-log-filters">
+                <div class="form-group">
+                  <label for="auth-log-from">From</label>
+                  <input type="datetime-local" id="auth-log-from" class="form-input">
+                </div>
+                <div class="form-group">
+                  <label for="auth-log-to">To</label>
+                  <input type="datetime-local" id="auth-log-to" class="form-input">
+                </div>
+                <div class="form-group">
+                  <label for="auth-log-account">Account</label>
+                  <input type="search" id="auth-log-account" class="form-input" placeholder="Username" maxlength="128"
+                    autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="auth-log-ip">IP address</label>
+                  <input type="search" id="auth-log-ip" class="form-input" placeholder="e.g. 192.168." maxlength="64"
+                    autocomplete="off">
+                </div>
+                <div class="form-group">
+                  <label for="auth-log-outcome">Outcome</label>
+                  <select id="auth-log-outcome" class="form-input">
+                    <option value="">All</option>
+                    <option value="success">Succeeded</option>
+                    <option value="failure">Failed</option>
+                    <option value="mfa_required">Two-factor required</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="auth-log-event">Event</label>
+                  <select id="auth-log-event" class="form-input">
+                    <option value="">All</option>
+                    <option value="sign_in">Sign-in</option>
+                    <option value="sign_out">Sign-out</option>
+                    <option value="setup">Initial setup</option>
+                  </select>
+                </div>
+                <div class="auth-log-filter-actions">
+                  <button type="submit" class="btn btn-primary">Apply</button>
+                  <button type="button" class="btn btn-secondary" id="auth-log-reset">Reset</button>
+                  <button type="button" class="btn btn-secondary" id="auth-log-refresh">Refresh</button>
+                </div>
+              </form>
+
+              <p id="auth-log-status" class="hint" role="status" aria-live="polite"></p>
+              <div class="user-list-container">
+                <table class="user-table auth-log-table">
+                  <colgroup>
+                    <col class="auth-log-col-time">
+                    <col class="auth-log-col-account">
+                    <col class="auth-log-col-event">
+                    <col class="auth-log-col-outcome">
+                    <col class="auth-log-col-ip">
+                    <col class="auth-log-col-client">
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">Time</th>
+                      <th scope="col">Account</th>
+                      <th scope="col">Event</th>
+                      <th scope="col">Outcome</th>
+                      <th scope="col">IP address</th>
+                      <th scope="col">Client</th>
+                    </tr>
+                  </thead>
+                  <tbody id="auth-log-rows"></tbody>
+                </table>
+              </div>
+              <div class="auth-log-pagination">
+                <button type="button" class="btn btn-secondary" id="auth-log-prev" disabled>Previous</button>
+                <span id="auth-log-page" aria-live="polite"></span>
+                <button type="button" class="btn btn-secondary" id="auth-log-next" disabled>Next</button>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Retention</h3>
+              <form id="auth-log-retention" class="auth-log-retention">
+                <div class="setting-item">
+                  <div class="setting-info" style="flex: 1;">
+                    <label class="setting-label" for="auth-log-retention-days">Keep entries for (days)</label>
+                    <span class="setting-hint">Older entries are removed automatically. 1–3650 days.</span>
+                  </div>
+                  <input type="number" id="auth-log-retention-days" class="form-input auth-log-number" min="1" max="3650"
+                    step="1" required>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-info" style="flex: 1;">
+                    <label class="setting-label" for="auth-log-max-entries">Maximum entries</label>
+                    <span class="setting-hint">The oldest entries are removed beyond this limit. 1,000–1,000,000.</span>
+                  </div>
+                  <input type="number" id="auth-log-max-entries" class="form-input auth-log-number" min="1000"
+                    max="1000000" step="1000" required>
+                </div>
+                <div class="auth-log-filter-actions">
+                  <button type="submit" class="btn btn-primary">Save retention</button>
+                  <span id="auth-log-retention-status" class="hint" role="status" aria-live="polite"></span>
+                </div>
+              </form>
+            </div>
+          </div>
+
           <!-- Diagnostics Tab -->
           <div id="tab-diagnostics" class="tab-content">
             <div class="settings-section">
@@ -1597,6 +1707,7 @@
   <script src="js/pages/MoviesPage.js?v=6"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
   <script src="js/components/DiagnosticsPanel.js?v=4"></script>
+  <script src="js/components/AuthLogPanel.js?v=1"></script>
   <script src="js/pages/Settings.js?v=12"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>

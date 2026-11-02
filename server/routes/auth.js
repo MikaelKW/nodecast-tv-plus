@@ -7,6 +7,7 @@ const authenticationConfig = require('../config/authentication');
 const { requestBasePath, withBasePath } = require('../config/basePath');
 const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
+const authAudit = require('../services/authAudit');
 const { normalizePreferences } = require('../../public/js/components/SubtitlePreferences');
 const {
     passwordIdentityLimiter,
@@ -34,6 +35,10 @@ function loginIpKey(req) {
 function loginIdentityKey(req) {
     const username = String(req.body?.username || '').trim().toLowerCase();
     return `${loginIpKey(req)}:${username}`;
+}
+
+function attemptedUsername(req) {
+    return typeof req.body?.username === 'string' ? req.body.username : null;
 }
 
 function rejectRateLimited(res, states) {
@@ -117,30 +122,81 @@ router.get('/oidc/status', async (req, res) => {
 router.get('/oidc/login', limitOidcAuthorization, authenticateOidc());
 
 /**
+ * Complete the OIDC callback and record failed provider responses in the
+ * audit log before redirecting back to the sign-in page.
+ */
+function authenticateOidcCallback(req, res, next) {
+    const failureRedirect = withBasePath('/login.html?error=SSO+Failed');
+    oidcReady.then(enabled => {
+        if (!enabled) {
+            authAudit.recordRequest(req, {
+                event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'sso_unavailable'
+            });
+            return res.status(503).json({ error: 'Single sign-on is not available.' });
+        }
+        return auth.passport.authenticate('openidconnect', { session: false }, (err, user) => {
+            if (err) {
+                authAudit.recordRequest(req, {
+                    event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'server_error'
+                });
+                return next(err);
+            }
+            if (!user) {
+                authAudit.recordRequest(req, {
+                    event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'sso_failed'
+                });
+                return res.redirect(failureRedirect);
+            }
+            req.user = user;
+            return next();
+        })(req, res, next);
+    }).catch(error => {
+        console.error('[OIDC] Authentication initialization failed:', error.message);
+        authAudit.recordRequest(req, {
+            event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'sso_unavailable'
+        });
+        res.status(503).json({ error: 'Single sign-on is not available.' });
+    });
+}
+
+/**
  * OIDC Callback
  * GET /api/auth/oidc/callback
  */
 router.get('/oidc/callback',
     limitOidcAuthorization,
-    authenticateOidc({ session: false, failureRedirect: withBasePath('/login.html?error=SSO+Failed') }),
+    authenticateOidcCallback,
     async (req, res) => {
         try {
             if (twoFactorAuth.hasEnabledTotp(req.user)) {
                 if (!totpService.isAvailable()) {
+                    authAudit.recordRequest(req, {
+                        event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'mfa_unavailable', user: req.user
+                    });
                     return res.status(503).send('Two-factor authentication is temporarily unavailable.');
                 }
                 auth.clearAuthCookie(req, res);
-                await twoFactorAuth.beginChallenge(req, req.user);
+                const flowId = authAudit.createFlowId();
+                await twoFactorAuth.beginChallenge(req, req.user, { firstFactor: 'sso', flowId });
+                authAudit.recordRequest(req, {
+                    event: 'sign_in', outcome: 'mfa_required', method: 'sso', user: req.user, flowId
+                });
                 return res.redirect(withBasePath('/login.html', requestBasePath(req)));
             }
 
             // Successful authentication
             const token = auth.generateToken(req.user);
             auth.setAuthCookie(req, res, token);
+            authAudit.recordRequest(req, {
+                event: 'sign_in', outcome: 'success', method: 'sso', user: req.user
+            });
 
             // The HttpOnly cookie authenticates the app without exposing the token in the URL.
             res.redirect(withBasePath('/', requestBasePath(req)));
         } catch {
+            authAudit.recordRequest(req, {
+                event: 'sign_in', outcome: 'failure', method: 'sso', reason: 'server_error', user: req.user
+            });
             res.status(500).send('Authentication could not be completed.');
         }
     }
@@ -202,6 +258,9 @@ router.post('/setup', async (req, res) => {
         // Generate token for immediate login
         const token = auth.generateToken(adminUser);
         auth.setAuthCookie(req, res, token);
+        authAudit.recordRequest(req, {
+            event: 'setup', outcome: 'success', method: 'password', user: adminUser
+        });
 
         res.status(201).json({
             message: 'Admin user created successfully',
@@ -221,7 +280,13 @@ router.post('/setup', async (req, res) => {
  * POST /api/auth/login
  */
 router.post('/login', (req, res, next) => {
+    const username = attemptedUsername(req);
+    const audit = (entry) => authAudit.recordRequest(req, {
+        event: 'sign_in', method: 'password', username, ...entry
+    });
+
     if (!authenticationConfig.localAuthEnabled) {
+        audit({ outcome: 'failure', reason: 'local_sign_in_disabled' });
         return res.status(403).json({ error: 'Local sign-in is disabled. Use single sign-on.' });
     }
 
@@ -230,18 +295,25 @@ router.post('/login', (req, res, next) => {
     if (rejectRateLimited(res, [
         passwordIdentityLimiter.check(identityKey),
         passwordIpLimiter.check(ipKey)
-    ])) return;
+    ])) {
+        audit({ outcome: 'failure', reason: 'rate_limited' });
+        return;
+    }
 
     auth.passport.authenticate('local', { session: false }, async (err, user, info) => {
         try {
             if (err) {
                 console.error('Login error:', err);
+                audit({ outcome: 'failure', reason: 'server_error' });
                 return res.status(500).json({ error: 'Server error' });
             }
 
             if (!user) {
                 passwordIdentityLimiter.recordFailure(identityKey);
                 passwordIpLimiter.recordFailure(ipKey);
+                const reason = info?.reason
+                    || (info?.message === 'Missing credentials' ? 'missing_credentials' : null);
+                audit({ outcome: 'failure', reason, user: info?.user || null });
                 return res.status(401).json({ error: info?.message || 'Invalid credentials' });
             }
 
@@ -250,19 +322,24 @@ router.post('/login', (req, res, next) => {
 
             if (twoFactorAuth.hasEnabledTotp(user)) {
                 if (!totpService.isAvailable()) {
+                    audit({ outcome: 'failure', reason: 'mfa_unavailable', user });
                     return res.status(503).json({ error: 'Two-factor authentication is temporarily unavailable.' });
                 }
                 auth.clearAuthCookie(req, res);
-                await twoFactorAuth.beginChallenge(req, user);
+                const flowId = authAudit.createFlowId();
+                await twoFactorAuth.beginChallenge(req, user, { firstFactor: 'password', flowId });
+                audit({ outcome: 'mfa_required', user, flowId });
                 return res.json({ requiresTwoFactor: true });
             }
 
             // Generate JWT token
             const token = auth.generateToken(user);
             auth.setAuthCookie(req, res, token);
+            audit({ outcome: 'success', user });
 
             res.json({ user: db.users.toPublic(user) });
         } catch {
+            audit({ outcome: 'failure', reason: 'server_error', user });
             if (!res.headersSent) res.status(500).json({ error: 'Authentication could not be completed.' });
         }
     })(req, res, next);
@@ -273,6 +350,12 @@ router.post('/login', (req, res, next) => {
  * POST /api/auth/logout
  */
 router.post('/logout', (req, res) => {
+    const signedIn = auth.getRequestTokenPayload(req);
+    if (signedIn) {
+        authAudit.recordRequest(req, {
+            event: 'sign_out', outcome: 'success', user: { id: signedIn.id, username: signedIn.username }
+        });
+    }
     auth.clearAuthCookie(req, res);
     if (req.session) delete req.session.twoFactorChallenge;
     res.json({ success: true, message: 'Logged out successfully' });
