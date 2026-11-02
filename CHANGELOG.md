@@ -6,15 +6,20 @@ The project follows [Semantic Versioning](https://semver.org/). Historical notes
 
 ## [2.7.2] - 2026-11-02
 
-This maintenance release improves iPhone and iPad playback compatibility and includes dependency updates.
+This maintenance release improves iPhone and iPad playback compatibility and updates dependencies to address security vulnerabilities.
+
+### Security
+
+- Update the `body-parser` dependency from `1.20.6` to `1.20.9`, fixing [CVE-2026-111181](https://github.com/advisories/GHSA-27r3-jxmh-p828).
+- Update the `ip-address` dependency from `10.7.3` to `10.7.4`, fixing [CVE-2026-111997](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5).
+- Update the `qs` dependency from `6.16.0` to `6.16.1`, fixing [CVE-2026-110816](https://github.com/advisories/GHSA-6pq8-jhm2-2vcw).
 
 ### Fixed
 
-- Use the compatible HLS remux session for channels that require remuxing on iPhone and iPad, including iPadOS desktop browsing. Play the generated playlist natively when HLS.js is unsupported, while retaining the existing HLS.js path on supported browsers and the direct remux path on macOS Safari ([#520]).
+- Use the compatible HLS remux session for channels that require remuxing on iPhone and iPad, including iPadOS desktop browsing. Play the generated playlist natively when HLS.js is unsupported, while retaining the existing HLS.js path on supported browsers and the direct remux path on macOS Safari ([#520]). Thanks to @StevenVBeek.
 
 ### Changed
 
-- Update dependencies while retaining the existing protected application, browser, migration and container validation paths.
 - Extend migration coverage to the published Plus v2.7.1 baseline while retaining earlier supported baselines.
 
 ### Upgrade notes
