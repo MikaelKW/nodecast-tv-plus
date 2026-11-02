@@ -137,6 +137,128 @@ function testClientRemuxUrl() {
         ),
         false
     );
+
+    const iPhoneSafari = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1';
+    const iPhoneChrome = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0.0.0 Mobile/15E148 Safari/604.1';
+    const iPadSafari = 'Mozilla/5.0 (iPad; CPU OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1';
+    const macSafari = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+    const prefersHls = sandbox.window.NodeCastUrl.prefersHlsRemuxFallback;
+
+    // iOS and iPadOS WebKit cannot play the progressive fMP4 remux pipe.
+    assert.equal(prefersHls(iPhoneSafari, 'iPhone', 5), true);
+    assert.equal(prefersHls(iPhoneChrome, 'iPhone', 5), true);
+    assert.equal(prefersHls(iPadSafari, 'iPad', 5), true);
+    // iPadOS in desktop mode reports a Mac user agent with touch support.
+    assert.equal(prefersHls(macSafari, 'MacIntel', 5), true);
+    // macOS Safari keeps the direct remux pipe.
+    assert.equal(prefersHls(macSafari, 'MacIntel', 0), false);
+}
+
+function createHlsStub(supported) {
+    const instances = [];
+    class Hls {
+        constructor() { instances.push(this); }
+        static isSupported() { return supported; }
+        loadSource(url) { this.source = url; }
+        attachMedia() {}
+        on() {}
+        destroy() {}
+    }
+    Hls.Events = {};
+    Hls.instances = instances;
+    return Hls;
+}
+
+function createVideoStub(nativeHlsSupport) {
+    return {
+        src: '',
+        playCalls: 0,
+        canPlayType(type) {
+            return type === 'application/vnd.apple.mpegurl' ? nativeHlsSupport : '';
+        },
+        play() {
+            this.playCalls += 1;
+            return Promise.resolve();
+        },
+        querySelectorAll() { return []; }
+    };
+}
+
+function loadClientClass(file, className, Hls) {
+    const context = {
+        window: {},
+        document: {},
+        console: { log() {}, warn() {}, error() {} },
+        Hls,
+        NodeCastUrl: { resolve: value => value },
+        fetch: async () => ({ ok: true, json: async () => ({}) }),
+        setInterval() { return 1; }, clearInterval() {},
+        setTimeout() { return 1; }, clearTimeout() {}
+    };
+    vm.createContext(context);
+    vm.runInContext(
+        fs.readFileSync(path.join(__dirname, '..', 'public', 'js', file), 'utf8'),
+        context,
+        { filename: file }
+    );
+    return context.window[className];
+}
+
+function createLivePlayer(Hls, video) {
+    const VideoPlayer = loadClientClass('components/VideoPlayer.js', 'VideoPlayer', Hls);
+    const player = Object.create(VideoPlayer.prototype);
+    Object.assign(player, {
+        _playId: 1,
+        hls: null,
+        video,
+        getHlsConfig: () => ({}),
+        startVideoPlayback: () => video.play(),
+        reportBrowserPlaybackFailure() {}
+    });
+    return player;
+}
+
+function createWatchPage(Hls, video) {
+    const WatchPage = loadClientClass('pages/WatchPage.js', 'WatchPage', Hls);
+    const watch = Object.create(WatchPage.prototype);
+    Object.assign(watch, {
+        _diagnosticPlayId: 1,
+        hls: null,
+        video,
+        assertPlaybackRequestCurrent() {},
+        reportBrowserPlaybackFailure() {},
+        renderProbeSubtitleTracks() {},
+        scheduleSelectedSubtitleRestore() {}
+    });
+    return watch;
+}
+
+function testNativeHlsFallback() {
+    const playlist = '/api/transcode/session/test/stream.m3u8';
+
+    // iOS 16 and 17.0 select the HLS remux session but cannot run HLS.js.
+    // Both players must hand the playlist to WebKit's native HLS support.
+    for (const create of [createLivePlayer, createWatchPage]) {
+        const Hls = createHlsStub(false);
+        const video = createVideoStub('maybe');
+        const target = create(Hls, video);
+        target.playHls(playlist, { playId: 1 });
+        assert.equal(Hls.instances.length, 0, `${create.name} must not start HLS.js without MSE.`);
+        assert.equal(target.hls, null);
+        assert.equal(video.src, playlist, `${create.name} must play the playlist natively.`);
+        assert.equal(video.playCalls, 1);
+    }
+
+    // Browsers with MSE keep using HLS.js, even when native HLS is available.
+    for (const create of [createLivePlayer, createWatchPage]) {
+        const Hls = createHlsStub(true);
+        const video = createVideoStub('maybe');
+        const target = create(Hls, video);
+        target.playHls(playlist, { playId: 1 });
+        assert.equal(Hls.instances.length, 1, `${create.name} must use HLS.js when supported.`);
+        assert.equal(Hls.instances[0].source, playlist);
+        assert.equal(video.src, '');
+    }
 }
 
 async function main() {
@@ -154,6 +276,7 @@ async function main() {
     assert.equal(mixedArgs.includes('-bsf:a:1'), false);
     assert.equal(mixedArgs[mixedArgs.indexOf('-bsf:a:2') + 1], 'aac_adtstoasc');
     testClientRemuxUrl();
+    testNativeHlsFallback();
 
     const ffmpegPath = resolveFFmpegPath().path;
     assert.ok(ffmpegPath, 'System FFmpeg or the optional ffmpeg-static package is required for the remux test.');
