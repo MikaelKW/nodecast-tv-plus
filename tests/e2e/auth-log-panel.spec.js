@@ -70,11 +70,7 @@ async function openPanel(page) {
                 }
             }
         };
-        window.retentionCallbacks = [];
-        window.panel = new window.AuthLogPanel({
-            api: window.API,
-            onRetentionSaved: retention => window.retentionCallbacks.push(retention)
-        });
+        window.panel = new window.AuthLogPanel({ api: window.API });
         window.panel.show();
     }, {
         first: entry({}),
@@ -179,8 +175,4 @@ test('retention settings load and save', async ({ page }) => {
     expect(await page.evaluate(() => window.savedSettings.at(-1))).toEqual({
         authLogRetentionDays: 30, authLogMaxEntries: 50000
     });
-    // Other settings caches (the player's) receive the saved policy.
-    expect(await page.evaluate(() => window.retentionCallbacks)).toEqual([
-        { authLogRetentionDays: 30, authLogMaxEntries: 50000 }
-    ]);
 });

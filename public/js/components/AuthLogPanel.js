@@ -18,12 +18,9 @@ class AuthLogPanel {
         }
     });
 
-    constructor({ api = window.API, root = document, onRetentionSaved = null } = {}) {
+    constructor({ api = window.API, root = document } = {}) {
         this.api = api;
         this.root = root;
-        // Lets the page update other cached copies of the settings, such as
-        // the player's, which saves its whole settings object later.
-        this.onRetentionSaved = onRetentionSaved;
         const $ = id => root.getElementById(id);
         this.form = $('auth-log-filters');
         this.fields = {
@@ -335,14 +332,6 @@ class AuthLogPanel {
             });
             if (this.retentionDays) this.retentionDays.value = saved.authLogRetentionDays;
             if (this.maxEntries) this.maxEntries.value = saved.authLogMaxEntries;
-            try {
-                this.onRetentionSaved?.({
-                    authLogRetentionDays: saved.authLogRetentionDays,
-                    authLogMaxEntries: saved.authLogMaxEntries
-                });
-            } catch {
-                // Keeping another cache in sync must not hide a successful save.
-            }
             if (this.retentionStatus) this.retentionStatus.textContent = 'Retention saved.';
             this.load();
         } catch (error) {

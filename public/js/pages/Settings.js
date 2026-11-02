@@ -11,14 +11,7 @@ class SettingsPage {
         this.visibilityGeneration = 0;
         this.syncStatusRequest = null;
         this.diagnosticsPanel = new DiagnosticsPanel();
-        this.authLogPanel = new AuthLogPanel({
-            // The player saves its complete settings object, so keep its
-            // copy of the retention policy current to avoid restoring an
-            // older policy (and pruning with it) on a later player change.
-            onRetentionSaved: retention => {
-                if (this.app.player?.settings) Object.assign(this.app.player.settings, retention);
-            }
-        });
+        this.authLogPanel = new AuthLogPanel();
         this.subtitlePreferences = SubtitlePreferences.normalizePreferences(app.currentUser?.subtitlePreferences);
 
         this.init();

@@ -729,6 +729,111 @@ async function testServerFlow() {
     }
 }
 
+/**
+ * Load the browser's VideoPlayer class in its own context, as one browser
+ * would, with an API client bound to one signed-in session.
+ */
+async function loadBrowserPlayer(baseUrl, jar) {
+    const vm = require('node:vm');
+    const source = await fs.readFile(path.join(projectRoot, 'public/js/components/VideoPlayer.js'), 'utf8');
+    const storage = new Map();
+    const call = async (method, route, body) => {
+        const result = await request(baseUrl, `/api${route}`, { method, body, jar });
+        if (!result.response.ok) throw new Error(`${method} ${route} failed with ${result.response.status}`);
+        return result.payload;
+    };
+    const context = {
+        console: { log() {}, warn() {}, error() {} },
+        navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        localStorage: {
+            getItem: key => storage.get(key) ?? null,
+            setItem: (key, value) => storage.set(key, String(value))
+        },
+        API: { settings: { get: () => call('GET', '/settings'), update: data => call('PUT', '/settings', data) } }
+    };
+    context.window = context;
+    vm.runInNewContext(source, context, { filename: 'VideoPlayer.js' });
+    // Only the settings methods are exercised; the constructor needs a page.
+    const player = Object.create(context.VideoPlayer.prototype);
+    await player.loadSettingsFromServer();
+    return player;
+}
+
+/**
+ * A player in another tab or browser keeps an older copy of the settings.
+ * Saving a player setting there must not restore an older sign-in log
+ * retention policy, or prune entries the newer policy keeps.
+ */
+async function testPlayerSaveKeepsRetention() {
+    const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-auth-retention-'));
+    const secrets = {
+        jwt: crypto.randomBytes(48).toString('hex'),
+        session: crypto.randomBytes(48).toString('hex'),
+        totp: crypto.randomBytes(48).toString('hex')
+    };
+    const password = `Admin-${crypto.randomBytes(8).toString('hex')}`;
+    let server;
+    try {
+        server = await startServer(dataDirectory, secrets);
+        const { baseUrl } = server;
+        const setup = await request(baseUrl, '/api/auth/setup', {
+            method: 'POST', body: { username: 'admin', password, passwordConfirmation: password }
+        });
+        assert.equal(setup.response.status, 201);
+
+        // Two independent clients, each with its own session and cache.
+        const signIn = async () => {
+            const jar = new CookieJar();
+            const login = await request(baseUrl, '/api/auth/login', {
+                method: 'POST', jar, body: { username: 'admin', password }
+            });
+            assert.equal(login.response.status, 200);
+            return jar;
+        };
+        const browserA = await signIn();
+        const browserB = await signIn();
+        const playerA = await loadBrowserPlayer(baseUrl, browserA);
+        const playerB = await loadBrowserPlayer(baseUrl, browserB);
+        assert.equal(playerB.settings.authLogRetentionDays, 90, 'Browser B caches the default policy.');
+
+        // Browser A raises the retention, as the Logs panel saves it.
+        const raised = await request(baseUrl, '/api/settings', {
+            method: 'PUT', jar: browserA, body: { authLogRetentionDays: 365, authLogMaxEntries: 50000 }
+        });
+        assert.equal(raised.payload.authLogRetentionDays, 365);
+        await playerA.loadSettingsFromServer();
+        assert.equal(playerA.settings.authLogRetentionDays, 365);
+
+        // An entry that the 365-day policy keeps and a 90-day policy would remove.
+        const contentDb = new Database(path.join(dataDirectory, 'content.db'));
+        try {
+            contentDb.prepare(`
+                INSERT INTO auth_events (created_at, event, outcome, method, username)
+                VALUES (?, 'sign_in', 'success', 'password', 'retained')
+            `).run(Date.now() - 200 * 24 * 60 * 60 * 1000);
+        } finally {
+            contentDb.close();
+        }
+
+        // Browser B still has 90 days cached and saves a player setting.
+        assert.equal(playerB.settings.authLogRetentionDays, 90);
+        playerB.settings.lastVolume = 35;
+        await playerB.saveSettings();
+        // Give any pruning triggered by this save time to finish.
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        const saved = await request(baseUrl, '/api/settings', { jar: browserA });
+        assert.equal(saved.payload.authLogRetentionDays, 365, 'A stale player cache must not restore the retention policy.');
+        assert.equal(saved.payload.authLogMaxEntries, 50000);
+        assert.equal(saved.payload.lastVolume, 35, 'The player setting itself is saved.');
+        const retained = await readLog(baseUrl, browserA, '?account=retained');
+        assert.equal(retained.total, 1, 'Entries within the newer retention period are kept.');
+    } finally {
+        await stopServer(server?.child);
+        await fs.rm(dataDirectory, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
 async function run() {
     testDescribeClient();
     testNormalizeIp();
@@ -739,6 +844,7 @@ async function run() {
     await testStrictSettingsReader();
     testContextFromRequest();
     await testExpiredChallengeAudit();
+    await testPlayerSaveKeepsRetention();
     await testServerFlow();
     console.log('Authentication audit log tests passed.');
 }
