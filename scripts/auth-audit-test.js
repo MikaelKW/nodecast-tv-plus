@@ -616,6 +616,12 @@ async function testServerFlow() {
             method: 'POST', body: { credentialType: 'totp', credential: '123456' }
         });
 
+        // Sign-out without a session, or with a forged token, records nothing.
+        await request(baseUrl, '/api/auth/logout', { method: 'POST' });
+        await request(baseUrl, '/api/auth/logout', {
+            method: 'POST', headers: { Authorization: 'Bearer forged.token.value' }
+        });
+
         // Sign-out of the recovery session.
         const logout = await request(baseUrl, '/api/auth/logout', { method: 'POST', jar: recovery });
         assert.equal(logout.response.status, 200);
@@ -633,8 +639,9 @@ async function testServerFlow() {
         ]);
         assert.ok(log.entries.find(entry => entry.method === 'password+recovery_code' && entry.outcome === 'success'));
         assert.ok(log.entries.find(entry => entry.reason === 'mfa_challenge_expired'));
-        const signOut = log.entries.find(entry => entry.event === 'sign_out');
-        assert.equal(signOut.username, 'admin');
+        const signOuts = log.entries.filter(entry => entry.event === 'sign_out');
+        assert.equal(signOuts.length, 1, 'Only the authenticated sign-out is recorded.');
+        assert.equal(signOuts[0].username, 'admin');
 
         // API filters and pagination.
         const failures = await readLog(baseUrl, mfa, '?outcome=failure&account=ghost');

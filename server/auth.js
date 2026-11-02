@@ -135,8 +135,9 @@ function getRequestTokenPayload(req) {
     const bearer = typeof header === 'string' && header.slice(0, 7).toLowerCase() === 'bearer '
         ? header.slice(7).trim()
         : null;
-    const token = bearer || extractJwtFromCookie(req);
-    return token ? verifyToken(token) : null;
+    // verifyToken() returns null for a missing, malformed, expired or forged
+    // token, so every value is verified rather than pre-filtered.
+    return verifyToken(bearer || extractJwtFromCookie(req));
 }
 
 /**
