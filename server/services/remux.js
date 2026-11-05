@@ -2,6 +2,7 @@
 
 const { FFMPEG_PROTOCOL_WHITELIST } = require('./urlSecurity');
 const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
+const { parseProgram } = require('./mpegTsProgram');
 
 const MAX_AUDIO_CODEC_HINTS = 16;
 const AUDIO_CODEC_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
@@ -27,7 +28,8 @@ function parseAudioCodecs(value) {
     return codecs;
 }
 
-function buildRemuxArgs({ url, userAgent, audioCodecs = [], output = '-' }) {
+function buildRemuxArgs({ url, userAgent, audioCodecs = [], output = '-', program = null }) {
+    const selectedProgram = parseProgram(program);
     const audioBitstreamFilters = [];
     audioCodecs.forEach((codec, outputAudioIndex) => {
         if (codec === 'aac') {
@@ -59,8 +61,8 @@ function buildRemuxArgs({ url, userAgent, audioCodecs = [], output = '-' }) {
         '-protocol_whitelist', FFMPEG_PROTOCOL_WHITELIST,
         '-i', url,
         // Only map video and audio, ignoring subtitles, data, and attachments.
-        '-map', '0:v',
-        '-map', '0:a',
+        '-map', selectedProgram === null ? '0:v' : `0:p:${selectedProgram}:v:0`,
+        '-map', selectedProgram === null ? '0:a' : `0:p:${selectedProgram}:a?`,
         '-sn', '-dn',
         // Copy streams without re-encoding.
         '-c', 'copy',

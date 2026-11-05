@@ -1000,13 +1000,21 @@ class ChannelList {
             sourceId,
             sourceType
         }));
+        const source = sourceType === 'm3u' ? this.sources?.find(candidate => String(candidate.id) === String(sourceId)) : null;
         const channels = streams.map(stream => ({
             id: `${sourceType}_${sourceId}_${stream.stream_id}`,
             streamId: stream.stream_id,
             name: stream.name,
             tvgId: stream.epg_channel_id,
             tvgLogo: stream.stream_icon,
-            ...(sourceType === 'm3u' ? { url: stream.stream_url } : {}),
+            ...(sourceType === 'm3u' ? {
+                url: stream.stream_url,
+                ...(stream.program != null || source?.zapBeforeStreaming === true ? {
+                    program: stream.program ?? null,
+                    zapBeforeStreaming: source?.zapBeforeStreaming === true,
+                    zapDelay: source?.zapDelay ?? 1500
+                } : {})
+            } : {}),
             groupId: `${sourceType}_${sourceId}_${stream.category_id}`,
             groupTitle: categoryNames.get(String(stream.category_id)) || 'Uncategorized',
             sourceId,
@@ -1391,7 +1399,12 @@ class ChannelList {
             tvgId: item.epg_channel_id,
             tvgLogo: item.stream_icon,
             ...(sourceType === 'm3u'
-                ? { url: item.stream_url || item.url || null }
+                ? { url: item.stream_url || item.url || null,
+                    ...(item.program != null || source.zapBeforeStreaming === true ? {
+                        program: item.program ?? null,
+                        zapBeforeStreaming: source.zapBeforeStreaming === true,
+                        zapDelay: source.zapDelay ?? 1500
+                    } : {}) }
                 : {}),
             groupId: `${sourceType}_${source.id}_${item.category_id || ''}`,
             groupTitle: item.category_name || fallbackGroupName,

@@ -20,6 +20,7 @@ const hwDetect = require('./hwDetect');
 const { FFMPEG_PROTOCOL_WHITELIST, redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 const { appendHttpReconnectArgs } = require('./ffmpegNetwork');
 const diagnosticEvents = require('./diagnosticEvents');
+const { parseProgram } = require('./mpegTsProgram');
 
 // Session storage
 const sessions = new Map();
@@ -162,7 +163,8 @@ class TranscodeSession extends EventEmitter {
             upscaleEnabled: options.upscaleEnabled || false,
             upscaleMethod: options.upscaleMethod || 'hardware', // 'hardware' or 'software'
             upscaleTarget: options.upscaleTarget || '1080p',
-            ...options
+            ...options,
+            program: parseProgram(options.program)
         };
     }
 
@@ -380,10 +382,11 @@ class TranscodeSession extends EventEmitter {
         args.push('-i', this.url);
 
         // Map streams
-        args.push('-map', '0:v:0');
+        const programPrefix = this.options.program === null ? '0' : `0:p:${this.options.program}`;
+        args.push('-map', `${programPrefix}:v:0`);
         const audioMap = Number.isInteger(this.options.audioStreamIndex)
             ? `0:${this.options.audioStreamIndex}?`
-            : '0:a:0?';
+            : `${programPrefix}:a:0?`;
         args.push('-map', audioMap);
 
         // Add video encoder and filters based on selected encoder OR copy

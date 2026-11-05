@@ -115,6 +115,8 @@ class LivePage {
 
     hide() {
         document.removeEventListener('keydown', this.handleKeydown);
+        // Cancel pending tuner startup, but preserve Plus background playback.
+        if (this.app.player?._zapPendingPlayId != null) this.app.player.stop();
     }
 }
 

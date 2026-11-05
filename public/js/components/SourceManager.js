@@ -454,7 +454,25 @@ class SourceManager {
       `;
         }
 
-        return nameField + urlField + visibilityFields;
+        const zapDelay = Number.isInteger(Number(source.zapDelay)) ? Math.max(0, Math.min(10000, Number(source.zapDelay))) : 1500;
+        const enigmaFields = type === 'm3u' ? `
+          <div class="form-group">
+            <label class="checkbox-label"><input type="checkbox" id="source-zap-before-streaming"${source.zapBeforeStreaming === true ? ' checked' : ''}>
+              Zap before streaming (Enigma2/OpenWebif)</label>
+          </div>
+          <div class="form-group">
+            <label for="source-zap-delay">Zap delay (milliseconds)</label>
+            <input type="number" class="form-input" id="source-zap-delay" min="0" max="10000" step="100" value="${zapDelay}">
+          </div>` : '';
+        return nameField + urlField + visibilityFields + enigmaFields;
+    }
+
+    getEnigmaOptions(type) {
+        if (type !== 'm3u') return {};
+        return {
+            zapBeforeStreaming: document.getElementById('source-zap-before-streaming')?.checked === true,
+            zapDelay: Number(document.getElementById('source-zap-delay')?.value ?? 1500)
+        };
     }
 
     getSourceContentVisibility(type) {
@@ -513,7 +531,8 @@ class SourceManager {
                 }
             }
 
-            const source = await API.sources.create({ type, name, url, username, password, contentVisibility });
+            const source = await API.sources.create({ type, name, url, username, password, contentVisibility,
+                ...this.getEnigmaOptions(type) });
             this.setInitialSyncState(source.id, type, 'syncing', 'Synchronizing source data…');
             document.getElementById('modal').classList.remove('active');
             this.setSourceSubmissionLoading(false);
@@ -551,6 +570,11 @@ class SourceManager {
 
         try {
             const data = {};
+            if (type === 'm3u') {
+                const enigma = this.getEnigmaOptions(type);
+                if (enigma.zapBeforeStreaming !== (original.zapBeforeStreaming === true)) data.zapBeforeStreaming = enigma.zapBeforeStreaming;
+                if (enigma.zapDelay !== (original.zapDelay ?? 1500)) data.zapDelay = enigma.zapDelay;
+            }
             if (name !== original.name) data.name = name;
             if (url !== original.url) data.url = url;
             if (type === 'xtream') {
