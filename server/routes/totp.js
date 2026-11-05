@@ -3,67 +3,69 @@ const router = express.Router();
 const db = require('../db');
 const auth = require('../auth');
 const totpService = require('../services/totpService');
+const recoveryCodes = require('../services/recoveryCodes');
+const passkeyService = require('../services/passkeyService');
 const twoFactorAuth = require('../services/twoFactorAuth');
+const { twoFactorLimiter } = require('../services/authRateLimiter');
 const {
-    passwordIdentityLimiter,
-    twoFactorLimiter
-} = require('../services/authRateLimiter');
+    REAUTH_PASSKEY_PURPOSE,
+    enforceLimiter,
+    noStore,
+    respondError,
+    verifyExistingFactor,
+    verifyPasswordReauthentication
+} = require('./securityChecks');
 
-router.use((req, res, next) => {
-    res.set('Cache-Control', 'no-store');
-    res.set('Pragma', 'no-cache');
-    res.set('Referrer-Policy', 'no-referrer');
-    next();
+const SIGN_IN_PASSKEY_PURPOSE = 'sign-in-second-factor';
+
+router.use(noStore);
+
+async function pendingChallengeUser(req) {
+    const challenge = twoFactorAuth.getChallenge(req);
+    if (!challenge) return { challenge: null, user: null };
+    const user = await db.users.getById(challenge.userId);
+    return { challenge, user: twoFactorAuth.challengeMatchesUser(challenge, user) ? user : null };
+}
+
+router.get('/challenge', async (req, res) => {
+    try {
+        const { challenge, user } = await pendingChallengeUser(req);
+        if (!challenge || !user) return res.json({ required: false, methods: [] });
+        res.json({ required: true, methods: twoFactorAuth.availableMethods(user) });
+    } catch {
+        res.json({ required: false, methods: [] });
+    }
 });
 
-function limiterKey(suffix) {
-    return suffix;
-}
+/**
+ * Passkey options for the second step of password sign-in. Only the
+ * passkeys of the account that passed the password step are allowed.
+ */
+router.post('/passkey-options', async (req, res) => {
+    try {
+        const { challenge, user } = await pendingChallengeUser(req);
+        if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
+        if (!user) {
+            await twoFactorAuth.clearChallenge(req);
+            return res.status(401).json({ error: 'The two-factor challenge is no longer valid.' });
+        }
+        if (!enforceLimiter(res, twoFactorLimiter, `login:${challenge.userId}:${challenge.challengeId}`)) return;
+        if (!twoFactorAuth.availableMethods(user).includes('passkey')) {
+            return res.status(400).json({ error: 'Passkeys cannot be used for this sign-in.' });
+        }
 
-function enforceLimiter(res, limiter, key) {
-    const state = limiter.check(key);
-    if (state.allowed) return true;
-    res.set('Retry-After', String(Math.max(1, Math.ceil(state.retryAfterMs / 1000))));
-    res.status(429).json({ error: 'Too many authentication attempts. Try again later.' });
-    return false;
-}
-
-function respondError(res, error, fallback) {
-    const status = error.statusCode || 500;
-    res.status(status).json({ error: status === 500 ? fallback : error.message });
-}
-
-async function verifyPasswordReauthentication(req, res, user) {
-    const key = limiterKey(`reauth:${user.id}`);
-    if (!enforceLimiter(res, passwordIdentityLimiter, key)) return false;
-    if (!user.passwordHash || !await auth.verifyPassword(String(req.body.password || ''), user.passwordHash)) {
-        passwordIdentityLimiter.recordFailure(key);
-        res.status(401).json({ error: 'Password verification failed.' });
-        return false;
+        const options = await passkeyService.authenticationOptions({
+            passkeys: passkeyService.userPasskeys(user),
+            userVerification: 'preferred'
+        });
+        challenge.passkeyChallengeId = passkeyService.issueChallenge(SIGN_IN_PASSKEY_PURPOSE, options.challenge, {
+            userId: user.id,
+            authEpoch: challenge.authEpoch
+        });
+        res.json({ options });
+    } catch (error) {
+        respondError(res, error, 'Could not start passkey verification.');
     }
-    passwordIdentityLimiter.reset(key);
-    return true;
-}
-
-async function verifyExistingFactor(req, res, user) {
-    if (!twoFactorAuth.hasEnabledTotp(user)) return true;
-    const key = limiterKey(`factor:${user.id}`);
-    if (!enforceLimiter(res, twoFactorLimiter, key)) return false;
-    const valid = await twoFactorAuth.verifyCredential(user, {
-        type: req.body.credentialType,
-        credential: req.body.credential
-    });
-    if (!valid) {
-        twoFactorLimiter.recordFailure(key);
-        res.status(401).json({ error: 'Two-factor verification failed.' });
-        return false;
-    }
-    twoFactorLimiter.reset(key);
-    return true;
-}
-
-router.get('/challenge', (req, res) => {
-    res.json({ required: Boolean(twoFactorAuth.getChallenge(req)) });
 });
 
 router.post('/verify', async (req, res) => {
@@ -71,23 +73,33 @@ router.post('/verify', async (req, res) => {
         const challenge = twoFactorAuth.getChallenge(req);
         if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
 
-        const key = limiterKey(`login:${challenge.userId}:${challenge.challengeId}`);
+        const key = `login:${challenge.userId}:${challenge.challengeId}`;
         if (!enforceLimiter(res, twoFactorLimiter, key)) return;
 
         const user = await db.users.getById(challenge.userId);
-        if (!user || !twoFactorAuth.hasEnabledTotp(user)) {
+        if (!twoFactorAuth.challengeMatchesUser(challenge, user)) {
             await twoFactorAuth.clearChallenge(req);
             return res.status(401).json({ error: 'The two-factor challenge is no longer valid.' });
         }
 
-        const valid = await twoFactorAuth.verifyCredential(user, {
-            type: req.body.credentialType,
-            credential: req.body.credential
-        });
+        const type = req.body.credentialType || 'totp';
+        let valid = false;
+        if (twoFactorAuth.availableMethods(user).includes(type)) {
+            const challengeId = type === 'passkey' ? challenge.passkeyChallengeId : null;
+            if (type === 'passkey') delete challenge.passkeyChallengeId;
+            valid = await twoFactorAuth.verifyCredential(user, {
+                type,
+                credential: req.body.credential,
+                challengeId,
+                purpose: SIGN_IN_PASSKEY_PURPOSE
+            });
+        }
         if (!valid) {
             const state = twoFactorLimiter.recordFailure(key);
             if (!state.allowed) await twoFactorAuth.clearChallenge(req);
-            return res.status(401).json({ error: 'Invalid authentication code.' });
+            return res.status(401).json({
+                error: type === 'passkey' ? 'The passkey could not be verified.' : 'Invalid authentication code.'
+            });
         }
 
         twoFactorLimiter.reset(key);
@@ -107,13 +119,40 @@ router.get('/status', auth.requireAuth, async (req, res) => {
         const pending = user.totpPending?.expiresAt > Date.now();
         res.json({
             enabled: twoFactorAuth.hasEnabledTotp(user),
+            secondFactorEnabled: twoFactorAuth.hasSecondFactor(user),
+            passkeyCount: passkeyService.userPasskeys(user).length,
             enrollmentPending: Boolean(pending),
-            recoveryCodesRemaining: user.totp?.recoveryCodeHashes?.length || 0,
+            recoveryCodesRemaining: twoFactorAuth.recoveryCodesRemaining(user),
             canEnroll: Boolean(user.passwordHash && totpService.isAvailable()),
             accountType: user.passwordHash ? 'local' : 'sso'
         });
     } catch {
         res.status(500).json({ error: 'Could not load two-factor status.' });
+    }
+});
+
+/**
+ * Passkey options used to confirm a sensitive account change. The resulting
+ * assertion is submitted as credentialType "passkey" with that change.
+ */
+router.post('/reauth/passkey-options', auth.requireAuth, async (req, res) => {
+    try {
+        const user = await db.users.getById(req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!passkeyService.hasPasskeys(user)) return res.status(400).json({ error: 'This account has no passkeys.' });
+        if (!enforceLimiter(res, twoFactorLimiter, `factor:${user.id}`)) return;
+
+        const options = await passkeyService.authenticationOptions({
+            passkeys: passkeyService.userPasskeys(user),
+            userVerification: 'preferred'
+        });
+        req.session.passkeyReauthChallengeId = passkeyService.issueChallenge(REAUTH_PASSKEY_PURPOSE, options.challenge, {
+            userId: user.id,
+            authEpoch: db.userSecurity.authEpoch(user)
+        });
+        res.json({ options });
+    } catch (error) {
+        respondError(res, error, 'Could not start passkey verification.');
     }
 });
 
@@ -147,7 +186,7 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'The enrollment has expired. Start again.' });
         }
 
-        const key = limiterKey(`enroll:${user.id}`);
+        const key = `enroll:${user.id}`;
         if (!enforceLimiter(res, twoFactorLimiter, key)) return;
         const validation = totpService.validateToken(pending.encryptedSecret, user, req.body.code);
         if (!validation) {
@@ -155,7 +194,9 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
             return res.status(401).json({ error: 'Invalid authentication code.' });
         }
 
-        const recovery = totpService.generateRecoveryCodes();
+        // Recovery codes are shared by all second factors. They are issued
+        // with the first factor and kept when another factor is added.
+        const recovery = recoveryCodes.generateRecoveryCodes();
         const activated = await db.users.activateTotp(
             user.id,
             pending.enrollmentId,
@@ -164,7 +205,7 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
         );
         if (!activated) return res.status(409).json({ error: 'The enrollment changed or expired. Start again.' });
         twoFactorLimiter.reset(key);
-        res.json({ recoveryCodes: recovery.codes });
+        res.json({ recoveryCodes: activated.recoveryCodesIssued ? recovery.codes : [] });
     } catch (error) {
         respondError(res, error, 'Could not enable two-factor authentication.');
     }
@@ -173,11 +214,13 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
 router.post('/recovery-codes', auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
-        if (!user || !twoFactorAuth.hasEnabledTotp(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
+        if (!user || !twoFactorAuth.hasSecondFactor(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
-        const recovery = totpService.generateRecoveryCodes();
-        await db.users.replaceRecoveryCodes(user.id, recovery.hashes);
+        const recovery = recoveryCodes.generateRecoveryCodes();
+        if (!await db.users.replaceRecoveryCodes(user.id, recovery.hashes)) {
+            return res.status(409).json({ error: 'Two-factor authentication changed. Reload and try again.' });
+        }
         res.json({ recoveryCodes: recovery.codes });
     } catch (error) {
         respondError(res, error, 'Could not regenerate recovery codes.');
@@ -190,8 +233,8 @@ router.post('/disable', auth.requireAuth, async (req, res) => {
         if (!user || !twoFactorAuth.hasEnabledTotp(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
-        await db.users.disableTotp(user.id);
-        res.json({ success: true });
+        const result = await db.users.disableTotp(user.id);
+        res.json({ success: true, secondFactorEnabled: Boolean(result?.secondFactorEnabled) });
     } catch (error) {
         respondError(res, error, 'Could not disable two-factor authentication.');
     }
@@ -209,7 +252,8 @@ router.delete('/admin/:id', auth.requireAuth, auth.requireAdmin, async (req, res
 
         const target = await db.users.getById(targetId);
         if (!target) return res.status(404).json({ error: 'User not found' });
-        await db.users.disableTotp(targetId);
+        await db.users.resetSecondFactors(targetId);
+        passkeyService.revokeUserChallenges(targetId);
         res.json({ success: true });
     } catch (error) {
         respondError(res, error, 'Could not reset two-factor authentication.');

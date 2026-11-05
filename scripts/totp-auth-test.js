@@ -252,13 +252,15 @@ async function run() {
         }
         const database = JSON.parse(databaseText);
         assert.equal(database.users[0].totp.encryptedSecret.version, 1);
-        assert.equal(database.users[0].totp.recoveryCodeHashes.length, 10);
+        assert.equal(database.users[0].recoveryCodes.hashes.length, 10);
+        assert.equal(Object.hasOwn(database.users[0].totp, 'recoveryCodeHashes'), false, 'Recovery codes are stored independently of TOTP.');
 
         const publicUsers = await request(server.baseUrl, '/api/auth/users', { jar: adminJar });
         assert.equal(publicUsers.response.status, 200);
         assert.equal(publicUsers.payload[0].twoFactorEnabled, true);
         assert.equal(JSON.stringify(publicUsers.payload).includes('encryptedSecret'), false);
         assert.equal(JSON.stringify(publicUsers.payload).includes('recoveryCodeHashes'), false);
+        assert.equal(JSON.stringify(publicUsers.payload).includes('"hashes"'), false);
         assert.equal(JSON.stringify(publicUsers.payload).includes('passwordHash'), false);
 
         const firstChallenge = await beginPasswordLogin(server.baseUrl, admin.username, admin.password);

@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=23">
+  <link rel="stylesheet" href="css/main.css?v=24">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -1218,10 +1218,24 @@
           <h2>Account</h2>
           <p class="hint">Manage sign-in protection for this account.</p>
 
+          <section class="account-security-card" aria-labelledby="passkeys-heading">
+            <div class="account-security-header">
+              <div>
+                <h3 id="passkeys-heading">Passkeys</h3>
+                <p class="hint">Sign in with your device's fingerprint, face, or screen lock. A passkey also works as the second step after your password.</p>
+              </div>
+              <span id="passkeys-status-badge" class="security-status-badge">Loading…</span>
+            </div>
+            <div id="passkeys-status-message" class="account-message" role="status"></div>
+            <ul id="passkeys-list" class="passkey-list"></ul>
+            <div id="passkeys-actions" class="account-actions"></div>
+            <div id="passkeys-flow" class="account-flow hidden"></div>
+          </section>
+
           <section class="account-security-card" aria-labelledby="two-factor-heading">
             <div class="account-security-header">
               <div>
-                <h3 id="two-factor-heading">Two-factor authentication</h3>
+                <h3 id="two-factor-heading">Authenticator app</h3>
                 <p class="hint">Use a standard authenticator app to protect password sign-in.</p>
               </div>
               <span id="two-factor-status-badge" class="security-status-badge">Loading…</span>
@@ -1229,6 +1243,18 @@
             <div id="two-factor-status-message" class="account-message" role="status"></div>
             <div id="two-factor-actions" class="account-actions"></div>
             <div id="two-factor-flow" class="account-flow hidden"></div>
+          </section>
+
+          <section id="recovery-codes-card" class="account-security-card hidden" aria-labelledby="recovery-codes-heading">
+            <div class="account-security-header">
+              <div>
+                <h3 id="recovery-codes-heading">Recovery codes</h3>
+                <p class="hint">Use a recovery code when your passkeys and authenticator app are not available.</p>
+              </div>
+            </div>
+            <div id="recovery-codes-message" class="account-message" role="status"></div>
+            <div id="recovery-codes-actions" class="account-actions"></div>
+            <div id="recovery-codes-flow" class="account-flow hidden"></div>
           </section>
         </div>
       </div>
@@ -1583,7 +1609,7 @@
   <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=7"></script>
+  <script src="js/api.js?v=8"></script>
   <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/VodDuration.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
@@ -1597,8 +1623,10 @@
   <script src="js/pages/MoviesPage.js?v=6"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
   <script src="js/components/DiagnosticsPanel.js?v=4"></script>
-  <script src="js/pages/Settings.js?v=12"></script>
-  <script src="js/pages/Account.js?v=4"></script>
+  <script src="js/pages/Settings.js?v=13"></script>
+  <script src="js/passkeys.js?v=1"></script>
+  <script src="js/verificationFields.js?v=1"></script>
+  <script src="js/pages/Account.js?v=5"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
   <script src="js/pages/WatchPage.js?v=12"></script>
   <script src="js/app.js?v=10"></script>

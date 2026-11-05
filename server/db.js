@@ -496,6 +496,64 @@ function normalizeLastLiveChannel(value) {
   return { sourceId, itemId };
 }
 
+function userPasskeys(user) {
+  return Array.isArray(user?.passkeys) ? user.passkeys : [];
+}
+
+function hasTotpFactor(user) {
+  return Boolean(user?.totp?.enabled && user.totp.encryptedSecret);
+}
+
+function hasSecondFactor(user) {
+  return hasTotpFactor(user) || userPasskeys(user).length > 0;
+}
+
+// Recovery codes were originally stored inside the TOTP record. They are now
+// independent of any single factor; older records are read in place and moved
+// on the next security change, so upgrading needs no manual migration.
+function recoveryCodeHashes(user) {
+  if (Array.isArray(user?.recoveryCodes?.hashes)) return user.recoveryCodes.hashes;
+  if (Array.isArray(user?.totp?.recoveryCodeHashes)) return user.totp.recoveryCodeHashes;
+  return [];
+}
+
+function migrateLegacyRecoveryCodes(user) {
+  if (!user.totp || !Object.hasOwn(user.totp, 'recoveryCodeHashes')) return;
+  if (!Array.isArray(user.recoveryCodes?.hashes)) {
+    user.recoveryCodes = {
+      hashes: Array.isArray(user.totp.recoveryCodeHashes) ? [...user.totp.recoveryCodeHashes] : [],
+      createdAt: user.totp.enabledAt || new Date().toISOString()
+    };
+  }
+  delete user.totp.recoveryCodeHashes;
+}
+
+function setRecoveryCodesIfMissing(user, hashes) {
+  if (!Array.isArray(hashes) || hashes.length === 0 || recoveryCodeHashes(user).length > 0) return false;
+  user.recoveryCodes = { hashes: [...hashes], createdAt: new Date().toISOString() };
+  return true;
+}
+
+function removeOrphanedRecoveryCodes(user) {
+  if (!hasSecondFactor(user)) delete user.recoveryCodes;
+}
+
+// Pending sign-in, re-authentication and registration challenges record this
+// value and are rejected once it changes.
+function advanceAuthEpoch(user) {
+  user.authEpoch = (Number(user.authEpoch) || 0) + 1;
+}
+
+function authEpoch(user) {
+  return Number(user?.authEpoch) || 0;
+}
+
+function createPasskeyConflictError() {
+  const error = new Error('This passkey is already registered.');
+  error.code = 'PASSKEY_EXISTS';
+  return error;
+}
+
 function toPublicUser(user) {
   if (!user) return null;
   return {
@@ -506,7 +564,9 @@ function toPublicUser(user) {
     email: user.email || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
-    twoFactorEnabled: Boolean(user.totp?.enabled),
+    twoFactorEnabled: hasSecondFactor(user),
+    totpEnabled: hasTotpFactor(user),
+    passkeyCount: userPasskeys(user).length,
     subtitlePreferences: normalizePreferences(user.subtitlePreferences),
     liveTvPreferences: normalizeLiveTvPreferences(user.liveTvPreferences),
     lastLiveChannel: normalizeLastLiveChannel(user.lastLiveChannel)
@@ -518,9 +578,11 @@ function mutateUserSecurity(id, mutator) {
     const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
     if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
-    const outcome = await mutator(db.users[userIndex]);
+    const user = db.users[userIndex];
+    migrateLegacyRecoveryCodes(user);
+    const outcome = await mutator(user, db);
     if (outcome?.changed !== false) {
-      db.users[userIndex].updatedAt = new Date().toISOString();
+      user.updatedAt = new Date().toISOString();
     }
     return outcome;
   });
@@ -675,11 +737,11 @@ const users = {
         enabled: true,
         encryptedSecret: pending.encryptedSecret,
         enabledAt: new Date().toISOString(),
-        lastUsedStep,
-        recoveryCodeHashes: [...recoveryCodeHashes]
+        lastUsedStep
       };
       delete user.totpPending;
-      return { result: true };
+      const recoveryCodesIssued = setRecoveryCodesIfMissing(user, recoveryCodeHashes);
+      return { result: { recoveryCodesIssued } };
     });
   },
 
@@ -695,7 +757,8 @@ const users = {
 
   async consumeRecoveryCode(id, recoveryCodeHash) {
     return mutateUserSecurity(id, user => {
-      const hashes = user.totp?.recoveryCodeHashes || [];
+      if (!hasSecondFactor(user)) return { changed: false, result: false };
+      const hashes = user.recoveryCodes?.hashes || [];
       const index = hashes.indexOf(recoveryCodeHash);
       if (index === -1) return { changed: false, result: false };
       hashes.splice(index, 1);
@@ -705,20 +768,158 @@ const users = {
 
   async replaceRecoveryCodes(id, recoveryCodeHashes) {
     return mutateUserSecurity(id, user => {
-      if (!user.totp?.enabled) return { changed: false, result: false };
-      user.totp.recoveryCodeHashes = [...recoveryCodeHashes];
+      if (!hasSecondFactor(user)) return { changed: false, result: false };
+      user.recoveryCodes = { hashes: [...recoveryCodeHashes], createdAt: new Date().toISOString() };
       return { result: true };
     });
   },
 
+  /**
+   * Remove the authenticator app. Recovery codes stay valid while passkeys
+   * remain and are removed with the last second factor.
+   */
   async disableTotp(id) {
     return mutateUserSecurity(id, user => {
       if (!user.totp && !user.totpPending) return { changed: false, result: false };
       delete user.totp;
       delete user.totpPending;
+      removeOrphanedRecoveryCodes(user);
+      advanceAuthEpoch(user);
+      return { result: { secondFactorEnabled: hasSecondFactor(user) } };
+    });
+  },
+
+  /** Administrator reset: removes every second factor and recovery code. */
+  async resetSecondFactors(id) {
+    return mutateUserSecurity(id, user => {
+      delete user.totp;
+      delete user.totpPending;
+      delete user.passkeys;
+      delete user.recoveryCodes;
+      advanceAuthEpoch(user);
+      return { result: true };
+    });
+  },
+
+  async getByPasskeyCredentialId(credentialId) {
+    if (typeof credentialId !== 'string' || !credentialId) return undefined;
+    const db = await loadDb();
+    return db.users?.find(user => userPasskeys(user).some(passkey => passkey.id === credentialId));
+  },
+
+  /** Return the account's stable random WebAuthn user handle, creating it once. */
+  async ensureWebauthnUserId(id, generate) {
+    return mutateUserSecurity(id, (user, db) => {
+      if (typeof user.webauthnUserId === 'string' && user.webauthnUserId) {
+        return { changed: false, result: user.webauthnUserId };
+      }
+      let candidate;
+      do {
+        candidate = generate();
+      } while (db.users.some(other => other.webauthnUserId === candidate));
+      user.webauthnUserId = candidate;
+      return { result: candidate };
+    });
+  },
+
+  async addPasskey(id, passkey, { expectedAuthEpoch, webauthnUserId, recoveryCodeHashes: newRecoveryCodeHashes, maxPasskeys }) {
+    return mutateUserSecurity(id, (user, db) => {
+      if (!user.passwordHash || authEpoch(user) !== expectedAuthEpoch || user.webauthnUserId !== webauthnUserId) {
+        return { changed: false, result: null };
+      }
+      if (db.users.some(other => userPasskeys(other).some(existing => existing.id === passkey.id))) {
+        throw createPasskeyConflictError();
+      }
+      const passkeys = userPasskeys(user);
+      if (passkeys.length >= maxPasskeys) return { changed: false, result: null };
+
+      const stored = {
+        id: passkey.id,
+        publicKey: passkey.publicKey,
+        counter: passkey.counter,
+        transports: [...passkey.transports],
+        deviceType: passkey.deviceType,
+        backedUp: passkey.backedUp,
+        name: passkey.name,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null
+      };
+      user.passkeys = [...passkeys, stored];
+      const recoveryCodesIssued = setRecoveryCodesIfMissing(user, newRecoveryCodeHashes);
+      return { result: { passkey: stored, recoveryCodesIssued } };
+    });
+  },
+
+  async renamePasskey(id, credentialId, name) {
+    return mutateUserSecurity(id, user => {
+      const passkey = userPasskeys(user).find(candidate => candidate.id === credentialId);
+      if (!passkey) return { changed: false, result: null };
+      if (passkey.name === name) return { changed: false, result: passkey };
+      passkey.name = name;
+      return { result: passkey };
+    });
+  },
+
+  async removePasskey(id, credentialId) {
+    return mutateUserSecurity(id, user => {
+      const passkeys = userPasskeys(user);
+      const remaining = passkeys.filter(passkey => passkey.id !== credentialId);
+      if (remaining.length === passkeys.length) return { changed: false, result: null };
+      if (remaining.length > 0) user.passkeys = remaining;
+      else delete user.passkeys;
+      removeOrphanedRecoveryCodes(user);
+      advanceAuthEpoch(user);
+      return {
+        result: {
+          remainingPasskeys: remaining.length,
+          totpEnabled: hasTotpFactor(user),
+          secondFactorEnabled: hasSecondFactor(user)
+        }
+      };
+    });
+  },
+
+  /**
+   * Verify an assertion and record its use in one queued transaction, so
+   * concurrent sign-ins always compare against the latest signature counter.
+   */
+  async usePasskey(id, credentialId, verify, { expectedAuthEpoch = null } = {}) {
+    return mutateUserSecurity(id, async user => {
+      if (expectedAuthEpoch !== null && authEpoch(user) !== expectedAuthEpoch) {
+        return { changed: false, result: false };
+      }
+      const passkey = userPasskeys(user).find(candidate => candidate.id === credentialId);
+      if (!passkey) return { changed: false, result: false };
+      const info = await verify(passkey);
+      if (!info) return { changed: false, result: false };
+      passkey.counter = info.newCounter;
+      passkey.backedUp = Boolean(info.credentialBackedUp);
+      passkey.deviceType = info.credentialDeviceType;
+      passkey.lastUsedAt = new Date().toISOString();
       return { result: true };
     });
   }
 };
 
-module.exports = { loadDb, checkHealth, mutateDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };
+module.exports = {
+  loadDb,
+  checkHealth,
+  mutateDb,
+  sources,
+  hiddenItems,
+  favorites,
+  settings,
+  users,
+  getDefaultSettings,
+  getUserAgent,
+  USER_AGENT_PRESETS,
+  normalizeLiveTvPreferences,
+  normalizeLastLiveChannel,
+  userSecurity: {
+    authEpoch,
+    hasSecondFactor,
+    hasTotpFactor,
+    recoveryCodeHashes,
+    userPasskeys
+  }
+};
