@@ -21,8 +21,8 @@ NodeCast TV Plus uses Semantic Versioning and publishes releases only from teste
 
 ## Publish
 
-1. Create a draft GitHub Release named `vX.Y.Z`, targeting the exact verified `main` commit and using the curated notes file.
-2. Recheck the tag name, target commit, release title, links, section rendering, and notes before publishing.
+1. Create a draft GitHub Release for `vX.Y.Z`, targeting the exact verified `main` commit. Set its title to `NodeCast TV Plus vX.Y.Z`. Prepare the body from the curated notes file, omitting the leading `# NodeCast TV Plus vX.Y.Z` heading and its following blank line because GitHub already displays the release title. Keep that heading in the standalone Markdown file.
+2. Recheck the tag name, target commit, release title, links, section rendering, and notes before publishing. Confirm that the title appears only once on the release page.
 3. Publish the GitHub Release. Publishing creates the release tag and starts the official multi-architecture container build.
 4. Verify the release page and the `linux/amd64` and `linux/arm64` images.
 5. Confirm the registry provides `X.Y.Z`, `X.Y`, and `latest` tags. The `latest` tag must point to the newest stable release, not an unreleased `main` build.

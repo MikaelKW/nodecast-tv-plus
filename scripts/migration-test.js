@@ -37,6 +37,11 @@ const baselines = [
         version: '2.7.0',
         image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.7.0',
         kind: 'plus'
+    },
+    {
+        version: '2.7.1',
+        image: 'ghcr.io/mikaelkw/nodecast-tv-plus:2.7.1',
+        kind: 'plus'
     }
 ];
 
