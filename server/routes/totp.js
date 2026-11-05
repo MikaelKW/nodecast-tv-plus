@@ -165,11 +165,12 @@ router.post('/enroll', limitSecurityRequests, auth.requireAuth, async (req, res)
         const user = await db.users.getById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (!user.passwordHash) return res.status(400).json({ error: 'Two-factor enrollment is available for local accounts only.' });
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(user);
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
 
         const enrollment = await totpService.createEnrollment(user);
-        await db.users.setTotpPending(user.id, enrollment);
+        await db.users.setTotpPending(user.id, enrollment, { expectedAuthEpoch: verifiedAuthEpoch });
         res.json({
             qrDataUrl: enrollment.qrDataUrl,
             manualSecret: enrollment.manualSecret,
@@ -218,10 +219,11 @@ router.post('/recovery-codes', limitSecurityRequests, auth.requireAuth, async (r
     try {
         const user = await db.users.getById(req.user.id);
         if (!user || !twoFactorAuth.hasSecondFactor(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(user);
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
         const recovery = recoveryCodes.generateRecoveryCodes();
-        if (!await db.users.replaceRecoveryCodes(user.id, recovery.hashes)) {
+        if (!await db.users.replaceRecoveryCodes(user.id, recovery.hashes, { expectedAuthEpoch: verifiedAuthEpoch })) {
             return res.status(409).json({ error: 'Two-factor authentication changed. Reload and try again.' });
         }
         res.json({ recoveryCodes: recovery.codes });
@@ -234,9 +236,10 @@ router.post('/disable', limitSecurityRequests, auth.requireAuth, async (req, res
     try {
         const user = await db.users.getById(req.user.id);
         if (!user || !twoFactorAuth.hasEnabledTotp(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(user);
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
-        const result = await db.users.disableTotp(user.id);
+        const result = await db.users.disableTotp(user.id, { expectedAuthEpoch: verifiedAuthEpoch });
         res.json({ success: true, secondFactorEnabled: Boolean(result?.secondFactorEnabled) });
     } catch (error) {
         respondError(res, error, 'Could not disable two-factor authentication.');
@@ -250,12 +253,14 @@ router.delete('/admin/:id', limitSecurityRequests, auth.requireAuth, auth.requir
         if (targetId === req.user.id) return res.status(400).json({ error: 'Use the account security page to disable your own two-factor authentication.' });
 
         const admin = await db.users.getById(req.user.id);
-        if (!admin || !await verifyPasswordReauthentication(req, res, admin)) return;
+        if (!admin) return res.status(404).json({ error: 'User not found' });
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(admin);
+        if (!await verifyPasswordReauthentication(req, res, admin)) return;
         if (!await verifyExistingFactor(req, res, admin)) return;
 
         const target = await db.users.getById(targetId);
         if (!target) return res.status(404).json({ error: 'User not found' });
-        await db.users.resetSecondFactors(targetId);
+        await db.users.resetSecondFactors(targetId, { actorId: admin.id, actorAuthEpoch: verifiedAuthEpoch });
         passkeyService.revokeUserChallenges(targetId);
         res.json({ success: true });
     } catch (error) {

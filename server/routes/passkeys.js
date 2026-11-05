@@ -169,10 +169,13 @@ router.delete('/:credentialId', limitSecurityRequests, auth.requireAuth, async (
         if (!passkeyService.userPasskeys(user).some(passkey => passkey.id === req.params.credentialId)) {
             return res.status(404).json({ error: 'Passkey not found.' });
         }
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(user);
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
 
-        const removed = await db.users.removePasskey(user.id, req.params.credentialId);
+        const removed = await db.users.removePasskey(user.id, req.params.credentialId, {
+            expectedAuthEpoch: verifiedAuthEpoch
+        });
         if (!removed) return res.status(404).json({ error: 'Passkey not found.' });
         passkeyService.revokeUserChallenges(user.id);
         res.json(removed);

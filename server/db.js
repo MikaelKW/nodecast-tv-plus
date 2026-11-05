@@ -548,6 +548,24 @@ function authEpoch(user) {
   return Number(user?.authEpoch) || 0;
 }
 
+// Protected account changes pass the epoch of the security state they
+// verified. The check runs inside the queued mutation, so a factor that is
+// added, removed or reset after verification voids the change instead of
+// letting it apply to a state that was never verified.
+function requireVerifiedAuthEpoch(user, expectedAuthEpoch) {
+  if (!Number.isInteger(expectedAuthEpoch)) {
+    throw new TypeError('The verified authentication epoch is required.');
+  }
+  if (authEpoch(user) !== expectedAuthEpoch) throw createSecurityStateChangedError();
+}
+
+function createSecurityStateChangedError() {
+  const error = new Error('Account security changed. Start again.');
+  error.code = 'SECURITY_STATE_CHANGED';
+  error.statusCode = 409;
+  return error;
+}
+
 function createPasskeyConflictError() {
   const error = new Error('This passkey is already registered.');
   error.code = 'PASSKEY_EXISTS';
@@ -704,12 +722,16 @@ const users = {
     return db.users?.length || 0;
   },
 
-  async setTotpPending(id, pending) {
+  async setTotpPending(id, pending, { expectedAuthEpoch } = {}) {
     return mutateUserSecurity(id, user => {
+      requireVerifiedAuthEpoch(user, expectedAuthEpoch);
       user.totpPending = {
         enrollmentId: pending.enrollmentId,
         encryptedSecret: pending.encryptedSecret,
         expiresAt: pending.expiresAt,
+        // Confirmation only succeeds while the account is still in the
+        // security state that authorized the enrollment.
+        authEpoch: expectedAuthEpoch,
         createdAt: new Date().toISOString()
       };
       return { result: true };
@@ -732,6 +754,10 @@ const users = {
       if (!pending || pending.enrollmentId !== enrollmentId || pending.expiresAt <= Date.now()) {
         return { changed: false, result: false };
       }
+      if (pending.authEpoch !== authEpoch(user)) {
+        delete user.totpPending;
+        return { result: false };
+      }
 
       user.totp = {
         enabled: true,
@@ -741,6 +767,7 @@ const users = {
       };
       delete user.totpPending;
       const recoveryCodesIssued = setRecoveryCodesIfMissing(user, recoveryCodeHashes);
+      advanceAuthEpoch(user);
       return { result: { recoveryCodesIssued } };
     });
   },
@@ -766,8 +793,9 @@ const users = {
     });
   },
 
-  async replaceRecoveryCodes(id, recoveryCodeHashes) {
+  async replaceRecoveryCodes(id, recoveryCodeHashes, { expectedAuthEpoch } = {}) {
     return mutateUserSecurity(id, user => {
+      requireVerifiedAuthEpoch(user, expectedAuthEpoch);
       if (!hasSecondFactor(user)) return { changed: false, result: false };
       user.recoveryCodes = { hashes: [...recoveryCodeHashes], createdAt: new Date().toISOString() };
       return { result: true };
@@ -778,8 +806,9 @@ const users = {
    * Remove the authenticator app. Recovery codes stay valid while passkeys
    * remain and are removed with the last second factor.
    */
-  async disableTotp(id) {
+  async disableTotp(id, { expectedAuthEpoch } = {}) {
     return mutateUserSecurity(id, user => {
+      requireVerifiedAuthEpoch(user, expectedAuthEpoch);
       if (!user.totp && !user.totpPending) return { changed: false, result: false };
       delete user.totp;
       delete user.totpPending;
@@ -789,9 +818,15 @@ const users = {
     });
   },
 
-  /** Administrator reset: removes every second factor and recovery code. */
-  async resetSecondFactors(id) {
-    return mutateUserSecurity(id, user => {
+  /**
+   * Administrator reset: removes every second factor and recovery code. The
+   * administrator's own security state must still be the one they verified.
+   */
+  async resetSecondFactors(id, { actorId, actorAuthEpoch } = {}) {
+    return mutateUserSecurity(id, (user, db) => {
+      const actor = db.users.find(candidate => candidate.id === actorId);
+      if (!actor) throw createSecurityStateChangedError();
+      requireVerifiedAuthEpoch(actor, actorAuthEpoch);
       delete user.totp;
       delete user.totpPending;
       delete user.passkeys;
@@ -846,6 +881,7 @@ const users = {
       };
       user.passkeys = [...passkeys, stored];
       const recoveryCodesIssued = setRecoveryCodesIfMissing(user, newRecoveryCodeHashes);
+      advanceAuthEpoch(user);
       return { result: { passkey: stored, recoveryCodesIssued } };
     });
   },
@@ -860,8 +896,9 @@ const users = {
     });
   },
 
-  async removePasskey(id, credentialId) {
+  async removePasskey(id, credentialId, { expectedAuthEpoch } = {}) {
     return mutateUserSecurity(id, user => {
+      requireVerifiedAuthEpoch(user, expectedAuthEpoch);
       const passkeys = userPasskeys(user);
       const remaining = passkeys.filter(passkey => passkey.id !== credentialId);
       if (remaining.length === passkeys.length) return { changed: false, result: null };
