@@ -20,8 +20,11 @@ async function addVirtualAuthenticator(page) {
 }
 
 async function signOut(page) {
-    await page.request.post('api/auth/logout');
-    await page.goto('login.html');
+    // Let the application's logout action own navigation rather than racing
+    // its redirect with a second, test-initiated visit to the login page.
+    await page.locator('#account-menu-trigger').click();
+    await page.locator('#logout-btn').click();
+    await page.waitForURL(/\/nodecast\/login\.html(?:[?#].*)?$/);
 }
 
 async function openAccountSecurity(page) {
