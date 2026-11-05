@@ -450,14 +450,16 @@ class AccountPage {
         input.select();
         flow.querySelector('form').addEventListener('submit', async event => {
             event.preventDefault();
-            const submit = event.currentTarget.querySelector('[type="submit"]');
+            // event.currentTarget is cleared once the handler awaits.
+            const form = event.currentTarget;
+            const submit = form.querySelector('[type="submit"]');
             this.setBusy(submit, true);
             try {
                 await API.passkeys.rename(passkey.id, input.value);
                 this.clearSensitiveView();
                 await this.loadStatus();
             } catch (error) {
-                this.showFlowError(event.currentTarget, error.message);
+                this.showFlowError(form, error.message);
                 this.setBusy(submit, false);
             }
         });
@@ -543,8 +545,9 @@ class AccountPage {
         this.recoveryCodes = [...codes];
         flow.querySelector('#account-recovery-codes').textContent = codes.join('\n');
         flow.querySelector('[data-copy]').addEventListener('click', async event => {
+            const button = event.currentTarget;
             const copied = await this.copyText(this.recoveryCodes.join('\n'));
-            event.currentTarget.textContent = copied ? 'Copied' : 'Select and copy the codes above';
+            button.textContent = copied ? 'Copied' : 'Select and copy the codes above';
         });
         flow.querySelector('[data-download]').addEventListener('click', () => this.downloadRecoveryCodes());
         flow.querySelector('[data-finish]').addEventListener('click', async () => {

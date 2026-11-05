@@ -88,6 +88,12 @@ test('passkeys can be added, used for sign-in and removed', async ({ page }) => 
     await openAccountSecurity(page);
     await expect(page.locator('.passkey-item')).not.toContainText('Not used yet');
     await page.locator('.passkey-item').getByRole('button', { name: 'Rename' }).click();
+    // A blank name passes the browser's required check but is rejected by the
+    // server; the error must be shown and the form must stay usable.
+    await page.locator('#account-passkey-new-name').fill('   ');
+    await page.locator('#account-passkey-rename-form').getByRole('button', { name: 'Save' }).click();
+    await expect(page.locator('#account-passkey-rename-form .account-flow-error')).toHaveText('Enter a name for the passkey.');
+    await expect(page.locator('#account-passkey-rename-form').getByRole('button', { name: 'Save' })).toBeEnabled();
     await page.locator('#account-passkey-new-name').fill('Work laptop');
     await page.locator('#account-passkey-rename-form').getByRole('button', { name: 'Save' }).click();
     await expect(page.locator('.passkey-item')).toContainText('Work laptop');

@@ -85,6 +85,10 @@ router.post('/registration/options', limitSecurityRequests, auth.requireAuth, as
         if (passkeyService.userPasskeys(user).length >= passkeyService.MAX_PASSKEYS_PER_USER) {
             return res.status(400).json({ error: `An account can have at most ${passkeyService.MAX_PASSKEYS_PER_USER} passkeys.` });
         }
+        // The challenge is bound to the security state that was verified
+        // below. If a factor is removed or reset meanwhile, the epoch changes
+        // and the registration is refused instead of adopting the new state.
+        const verifiedAuthEpoch = db.userSecurity.authEpoch(user);
         if (!await verifyPasswordReauthentication(req, res, user)) return;
         if (!await verifyExistingFactor(req, res, user)) return;
 
@@ -93,10 +97,13 @@ router.post('/registration/options', limitSecurityRequests, auth.requireAuth, as
             () => crypto.randomBytes(32).toString('base64url')
         );
         const current = await db.users.getById(user.id);
+        if (!current || db.userSecurity.authEpoch(current) !== verifiedAuthEpoch) {
+            return res.status(409).json({ error: 'Account security changed. Start again.' });
+        }
         const options = await passkeyService.registrationOptions(current, webauthnUserId);
         req.session.passkeyRegistrationChallengeId = passkeyService.issueChallenge(REGISTRATION_PURPOSE, options.challenge, {
             userId: current.id,
-            authEpoch: db.userSecurity.authEpoch(current),
+            authEpoch: verifiedAuthEpoch,
             webauthnUserId
         });
         res.json({
@@ -228,8 +235,11 @@ router.post('/login/verify', limitSecurityRequests, async (req, res) => {
 
         passwordIpLimiter.reset(ipKey);
         // Start a fresh session after sign-in, as the two-factor flow does,
-        // so a session identifier set before sign-in cannot be reused.
-        await twoFactorAuth.clearChallenge(req);
+        // so a session identifier set before sign-in cannot be reused. This
+        // also drops any pending two-factor challenge.
+        await new Promise((resolve, fail) => {
+            req.session.regenerate(error => error ? fail(error) : resolve());
+        });
         const token = auth.generateToken(user);
         auth.setAuthCookie(req, res, token);
         res.json({ user: db.users.toPublic(user) });
