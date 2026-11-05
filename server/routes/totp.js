@@ -9,6 +9,7 @@ const twoFactorAuth = require('../services/twoFactorAuth');
 const { twoFactorLimiter } = require('../services/authRateLimiter');
 const {
     REAUTH_PASSKEY_PURPOSE,
+    createSecurityRequestLimiter,
     enforceLimiter,
     noStore,
     respondError,
@@ -17,6 +18,8 @@ const {
 } = require('./securityChecks');
 
 const SIGN_IN_PASSKEY_PURPOSE = 'sign-in-second-factor';
+
+const limitSecurityRequests = createSecurityRequestLimiter();
 
 router.use(noStore);
 
@@ -27,7 +30,7 @@ async function pendingChallengeUser(req) {
     return { challenge, user: twoFactorAuth.challengeMatchesUser(challenge, user) ? user : null };
 }
 
-router.get('/challenge', async (req, res) => {
+router.get('/challenge', limitSecurityRequests, async (req, res) => {
     try {
         const { challenge, user } = await pendingChallengeUser(req);
         if (!challenge || !user) return res.json({ required: false, methods: [] });
@@ -41,7 +44,7 @@ router.get('/challenge', async (req, res) => {
  * Passkey options for the second step of password sign-in. Only the
  * passkeys of the account that passed the password step are allowed.
  */
-router.post('/passkey-options', async (req, res) => {
+router.post('/passkey-options', limitSecurityRequests, async (req, res) => {
     try {
         const { challenge, user } = await pendingChallengeUser(req);
         if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
@@ -68,7 +71,7 @@ router.post('/passkey-options', async (req, res) => {
     }
 });
 
-router.post('/verify', async (req, res) => {
+router.post('/verify', limitSecurityRequests, async (req, res) => {
     try {
         const challenge = twoFactorAuth.getChallenge(req);
         if (!challenge) return res.status(401).json({ error: 'The two-factor challenge has expired. Sign in again.' });
@@ -112,7 +115,7 @@ router.post('/verify', async (req, res) => {
     }
 });
 
-router.get('/status', auth.requireAuth, async (req, res) => {
+router.get('/status', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -135,7 +138,7 @@ router.get('/status', auth.requireAuth, async (req, res) => {
  * Passkey options used to confirm a sensitive account change. The resulting
  * assertion is submitted as credentialType "passkey" with that change.
  */
-router.post('/reauth/passkey-options', auth.requireAuth, async (req, res) => {
+router.post('/reauth/passkey-options', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -156,7 +159,7 @@ router.post('/reauth/passkey-options', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.post('/enroll', auth.requireAuth, async (req, res) => {
+router.post('/enroll', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         if (!totpService.isAvailable()) throw totpService.unavailableError();
         const user = await db.users.getById(req.user.id);
@@ -177,7 +180,7 @@ router.post('/enroll', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.post('/confirm', auth.requireAuth, async (req, res) => {
+router.post('/confirm', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         const pending = user?.totpPending;
@@ -211,7 +214,7 @@ router.post('/confirm', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.post('/recovery-codes', auth.requireAuth, async (req, res) => {
+router.post('/recovery-codes', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!user || !twoFactorAuth.hasSecondFactor(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
@@ -227,7 +230,7 @@ router.post('/recovery-codes', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.post('/disable', auth.requireAuth, async (req, res) => {
+router.post('/disable', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!user || !twoFactorAuth.hasEnabledTotp(user)) return res.status(400).json({ error: 'Two-factor authentication is not enabled.' });
@@ -240,7 +243,7 @@ router.post('/disable', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.delete('/admin/:id', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+router.delete('/admin/:id', limitSecurityRequests, auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
         const targetId = Number(req.params.id);
         if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Invalid user ID.' });

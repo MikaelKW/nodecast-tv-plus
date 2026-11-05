@@ -121,6 +121,10 @@ function client(baseUrl) {
     };
 }
 
+function sessionCookie(jar) {
+    return [...jar.cookies].find(([name]) => name.startsWith('nodecast.sid.'))?.[1] || null;
+}
+
 function totp(secret, timestamp = Date.now()) {
     return new OTPAuth.TOTP({
         issuer: 'NodeCast TV Plus',
@@ -337,9 +341,10 @@ async function run() {
 
         async function passwordless(authenticator, overrides) {
             const { jar, options } = await passwordlessOptions();
+            const sessionBefore = sessionCookie(jar);
             const response = authenticator.assert(options, overrides);
             const result = await request('/api/auth/passkeys/login/verify', { method: 'POST', jar, body: { response } });
-            return { ...result, assertion: response };
+            return { ...result, assertion: response, sessionBefore, sessionAfter: sessionCookie(jar) };
         }
 
         const discoverable = await passwordlessOptions();
@@ -350,6 +355,8 @@ async function run() {
         assert.equal(signedIn.status, 200);
         assert.equal(signedIn.payload.user.username, admin.username);
         assert.equal(signedIn.jar.hasPrefix('nodecast_auth_'), true);
+        assert.ok(signedIn.sessionBefore, 'Starting passkey sign-in creates a session.');
+        assert.notEqual(signedIn.sessionAfter, signedIn.sessionBefore, 'Sign-in must replace the session.');
         const me = await request('/api/auth/me', { jar: signedIn.jar });
         assert.equal(me.status, 200);
         assert.equal((await passwordless(synced)).status, 200, 'Synced passkeys that always report zero remain valid.');

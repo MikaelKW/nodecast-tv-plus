@@ -1,3 +1,4 @@
+const { rateLimit } = require('express-rate-limit');
 const auth = require('../auth');
 const twoFactorAuth = require('../services/twoFactorAuth');
 const {
@@ -12,6 +13,21 @@ function noStore(req, res, next) {
     res.set('Pragma', 'no-cache');
     res.set('Referrer-Policy', 'no-referrer');
     next();
+}
+
+/**
+ * A coarse per-client request budget for account-security endpoints. The
+ * per-account attempt limiters below still bound guessing; this caps the
+ * overall request volume, including endpoints that create challenges.
+ */
+function createSecurityRequestLimiter() {
+    return rateLimit({
+        limit: 300,
+        windowMs: 15 * 60 * 1000,
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        message: { error: 'Too many account security requests. Try again shortly.' }
+    });
 }
 
 function enforceLimiter(res, limiter, key) {
@@ -71,6 +87,7 @@ async function verifyExistingFactor(req, res, user) {
 
 module.exports = {
     REAUTH_PASSKEY_PURPOSE,
+    createSecurityRequestLimiter,
     enforceLimiter,
     noStore,
     respondError,

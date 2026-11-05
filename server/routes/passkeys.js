@@ -10,6 +10,7 @@ const passkeyService = require('../services/passkeyService');
 const twoFactorAuth = require('../services/twoFactorAuth');
 const { passwordIpLimiter } = require('../services/authRateLimiter');
 const {
+    createSecurityRequestLimiter,
     enforceLimiter,
     noStore,
     respondError,
@@ -27,6 +28,8 @@ const limitCeremonyStarts = rateLimit({
     legacyHeaders: false,
     message: { error: 'Too many passkey requests. Try again shortly.' }
 });
+
+const limitSecurityRequests = createSecurityRequestLimiter();
 
 router.use(noStore);
 
@@ -47,7 +50,7 @@ function signInIpKey(req) {
 }
 
 /** Public: whether the login page should offer passkey sign-in. */
-router.get('/availability', (req, res) => {
+router.get('/availability', limitSecurityRequests, (req, res) => {
     const availability = passkeyService.publicAvailability();
     res.json({
         ...availability,
@@ -55,7 +58,7 @@ router.get('/availability', (req, res) => {
     });
 });
 
-router.get('/', auth.requireAuth, async (req, res) => {
+router.get('/', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -74,7 +77,7 @@ router.get('/', auth.requireAuth, async (req, res) => {
  * Start adding a passkey. Requires the current password and, when the
  * account already has a second factor, one of those factors.
  */
-router.post('/registration/options', auth.requireAuth, async (req, res) => {
+router.post('/registration/options', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         if (!passkeyService.isAvailable()) throw passkeyService.unavailableError();
         const user = await db.users.getById(req.user.id);
@@ -105,7 +108,7 @@ router.post('/registration/options', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.post('/registration/verify', auth.requireAuth, async (req, res) => {
+router.post('/registration/verify', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const challengeId = req.session?.passkeyRegistrationChallengeId;
         if (req.session) delete req.session.passkeyRegistrationChallengeId;
@@ -140,7 +143,7 @@ router.post('/registration/verify', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.patch('/:credentialId', auth.requireAuth, async (req, res) => {
+router.patch('/:credentialId', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const name = passkeyService.normalizeName(req.body.name, '');
         if (!name) return res.status(400).json({ error: 'Enter a name for the passkey.' });
@@ -152,7 +155,7 @@ router.patch('/:credentialId', auth.requireAuth, async (req, res) => {
     }
 });
 
-router.delete('/:credentialId', auth.requireAuth, async (req, res) => {
+router.delete('/:credentialId', limitSecurityRequests, auth.requireAuth, async (req, res) => {
     try {
         const user = await db.users.getById(req.user.id);
         if (!requireLocalAccount(user, res)) return;
@@ -175,7 +178,7 @@ router.delete('/:credentialId', auth.requireAuth, async (req, res) => {
  * Passwordless sign-in. Discoverable credentials with user verification
  * complete the sign-in on their own, without a password or other factor.
  */
-router.post('/login/options', limitCeremonyStarts, async (req, res) => {
+router.post('/login/options', limitSecurityRequests, limitCeremonyStarts, async (req, res) => {
     try {
         if (!authenticationConfig.localAuthEnabled) {
             return res.status(403).json({ error: 'Local sign-in is disabled. Use single sign-on.' });
@@ -189,7 +192,7 @@ router.post('/login/options', limitCeremonyStarts, async (req, res) => {
     }
 });
 
-router.post('/login/verify', async (req, res) => {
+router.post('/login/verify', limitSecurityRequests, async (req, res) => {
     const ipKey = signInIpKey(req);
     const reject = () => {
         passwordIpLimiter.recordFailure(ipKey);
@@ -224,7 +227,9 @@ router.post('/login/verify', async (req, res) => {
         if (!valid) return reject();
 
         passwordIpLimiter.reset(ipKey);
-        if (req.session) delete req.session.twoFactorChallenge;
+        // Start a fresh session after sign-in, as the two-factor flow does,
+        // so a session identifier set before sign-in cannot be reused.
+        await twoFactorAuth.clearChallenge(req);
         const token = auth.generateToken(user);
         auth.setAuthCookie(req, res, token);
         res.json({ user: db.users.toPublic(user) });

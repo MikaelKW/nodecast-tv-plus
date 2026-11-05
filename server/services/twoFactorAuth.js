@@ -62,6 +62,8 @@ function challengeMatchesUser(challenge, user) {
     return Boolean(user && hasSecondFactor(user) && authEpoch(user) === (Number(challenge?.authEpoch) || 0));
 }
 
+// Regenerating replaces the session and everything stored in it, including
+// a pending two-factor challenge.
 async function clearChallenge(req) {
     await regenerateSession(req);
 }
