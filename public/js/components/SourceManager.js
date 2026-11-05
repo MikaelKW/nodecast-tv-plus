@@ -167,6 +167,13 @@ class SourceManager {
      * Resolves with the account, or null when the provider gave none.
      */
     async loadAccountStatus(id, { refresh = false } = {}) {
+        // Only the latest lookup for a source may render. An earlier one can
+        // finish last, for example after the source's credentials were edited.
+        this.accountLookups ??= new Map();
+        const lookup = (this.accountLookups.get(id) || 0) + 1;
+        this.accountLookups.set(id, lookup);
+        const isCurrent = () => this.accountLookups.get(id) === lookup;
+
         const findContainer = () => document.querySelector(`.source-item[data-id="${id}"] .source-account`);
         const loading = findContainer();
         if (loading && loading.hidden) {
@@ -175,11 +182,11 @@ class SourceManager {
 
         try {
             const { account } = await API.sources.getAccount(id, { refresh });
-            const container = findContainer();
+            const container = isCurrent() ? findContainer() : null;
             if (container) this.renderAccountStatus(container, this.describeAccount(account));
             return account;
         } catch (err) {
-            const container = findContainer();
+            const container = isCurrent() ? findContainer() : null;
             if (container) {
                 this.renderAccountStatus(container, [{ text: 'Account status unavailable', tone: 'muted' }]);
             }
@@ -230,13 +237,16 @@ class SourceManager {
         }
 
         const { activeConnections: activeCount, maxConnections: maxCount } = account;
-        if (maxCount) {
-            const inUse = activeCount ?? 0;
+        const usageKnown = activeCount !== null && activeCount !== undefined;
+        if (maxCount && usageKnown) {
             parts.push({
-                text: `Connections ${inUse} / ${maxCount}`,
-                tone: inUse >= maxCount ? 'warning' : ''
+                text: `Connections ${activeCount} / ${maxCount}`,
+                tone: activeCount >= maxCount ? 'warning' : ''
             });
-        } else if (activeCount !== null && activeCount !== undefined) {
+        } else if (maxCount) {
+            // The provider did not report usage: show the limit without guessing it.
+            parts.push({ text: `Up to ${maxCount} connections`, tone: '' });
+        } else if (usageKnown) {
             parts.push({ text: `Connections ${activeCount} in use`, tone: '' });
         }
 

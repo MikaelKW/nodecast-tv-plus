@@ -85,15 +85,68 @@ function testNormalize() {
     assert.equal(normalizeAccountInfo({ user_info: 'nope' }), null);
 }
 
-function loadSourceManager() {
+function loadSourceManager(globals = {}) {
     const sourceManagerPath = path.join(projectRoot, 'public', 'js', 'components', 'SourceManager.js');
-    const context = vm.createContext({ console, window: {} });
+    const context = vm.createContext({ console, window: {}, ...globals });
     vm.runInContext(
         `${fs.readFileSync(sourceManagerPath, 'utf8')}\nglobalThis.SourceManagerForTest = SourceManager;`,
         context,
         { filename: sourceManagerPath }
     );
     return Object.create(context.SourceManagerForTest.prototype);
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
+
+async function testSupersededLookups() {
+    const container = {
+        hidden: true,
+        texts: [],
+        replaceChildren(...children) { this.texts = children.map(child => child.textContent); }
+    };
+    const lookups = [];
+    const manager = loadSourceManager({
+        document: {
+            querySelector: () => container,
+            createElement: () => ({ className: '', textContent: '' })
+        },
+        API: { sources: { getAccount: () => { const lookup = deferred(); lookups.push(lookup); return lookup.promise; } } }
+    });
+    const account = activeConnections => ({
+        authorized: true, status: 'Active', active: true, expiresAt: null, expired: false,
+        isTrial: false, maxConnections: 2, activeConnections, createdAt: null
+    });
+
+    // The source is edited while the first lookup is still pending, and the
+    // first lookup finishes last.
+    const first = manager.loadAccountStatus(7);
+    const second = manager.loadAccountStatus(7);
+    lookups[1].resolve({ account: account(2) });
+    await second;
+    lookups[0].resolve({ account: account(0) });
+    await first;
+    assert.ok(container.texts.includes('Connections 2 / 2'), 'A superseded lookup never overwrites the latest result.');
+
+    // A superseded failure does not replace the latest result either.
+    const failing = manager.loadAccountStatus(7);
+    const latest = manager.loadAccountStatus(7);
+    lookups[3].resolve({ account: account(1) });
+    await latest;
+    lookups[2].reject(new Error('old credentials'));
+    await assert.rejects(failing);
+    assert.ok(container.texts.includes('Connections 1 / 2'));
+    assert.ok(!container.texts.includes('Account status unavailable'));
+
+    // Lookups for other sources are tracked separately.
+    const other = manager.loadAccountStatus(8);
+    lookups[4].resolve({ account: account(0) });
+    await other;
+    assert.ok(container.texts.includes('Connections 0 / 2'));
 }
 
 function testDescribeAccount() {
@@ -140,6 +193,12 @@ function testDescribeAccount() {
 
     parts = describe({ ...base, maxConnections: null, activeConnections: 3 });
     assert.deepEqual(parts[2], { text: 'Connections 3 in use', tone: '' });
+
+    parts = describe({ ...base, activeConnections: null });
+    assert.deepEqual(parts[2], { text: 'Up to 2 connections', tone: '' }, 'Unknown usage is never shown as zero.');
+
+    parts = describe({ ...base, activeConnections: 0 });
+    assert.deepEqual(parts[2], { text: 'Connections 0 / 2', tone: '' });
 
     parts = describe({ ...base, maxConnections: null, activeConnections: null });
     assert.equal(parts.length, 2, 'Unknown connection counts are left out.');
@@ -321,6 +380,7 @@ async function testAccountRoute() {
 async function run() {
     testNormalize();
     testDescribeAccount();
+    await testSupersededLookups();
     await testAccountRoute();
     console.log('Xtream account status tests passed.');
 }
