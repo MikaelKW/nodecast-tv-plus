@@ -201,6 +201,15 @@ function escapeLike(value) {
     return value.replace(/[\\%_]/g, character => `\\${character}`);
 }
 
+// Sign-in matches usernames with JavaScript toLowerCase() (getUsernameKey in
+// server/db.js), while SQLite only folds ASCII. The account filter folds both
+// sides the same way, so it finds every entry of an account such as "Jörg".
+const USERNAME_KEY_FUNCTION = 'auth_username_key';
+
+function usernameKey(value) {
+    return typeof value === 'string' ? value.toLowerCase() : null;
+}
+
 function parseTime(value) {
     if (value === undefined || value === null || value === '') return null;
     const number = Number(value);
@@ -221,12 +230,17 @@ function createAuthAudit({
     let lastPruneAt = 0;
     let pruning = null;
     let maintenanceTimer = null;
+    const preparedDatabases = new WeakSet();
 
     function db() {
         const database = getDb();
         if (!schemaReady) {
             ensureSchema(database);
             schemaReady = true;
+        }
+        if (!preparedDatabases.has(database)) {
+            database.function(USERNAME_KEY_FUNCTION, { deterministic: true }, usernameKey);
+            preparedDatabases.add(database);
         }
         return database;
     }
@@ -419,9 +433,8 @@ function createAuthAudit({
 
         const account = cleanText(filters.account, LIMITS.username);
         if (account) {
-            // LIKE is case-insensitive for ASCII in SQLite.
-            where.push("username LIKE ? ESCAPE '\\'");
-            params.push(`%${escapeLike(account)}%`);
+            where.push(`${USERNAME_KEY_FUNCTION}(username) LIKE ? ESCAPE '\\'`);
+            params.push(`%${escapeLike(usernameKey(account))}%`);
         }
 
         const ip = cleanText(filters.ip, LIMITS.ip);

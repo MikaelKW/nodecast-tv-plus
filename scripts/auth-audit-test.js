@@ -167,6 +167,14 @@ function testQueryFilters() {
     assert.equal(beyond.page, 2);
     assert.equal(beyond.entries.length, 2);
     assert.equal(audit.query({ account: 'nobody', page: 3 }).page, 1);
+
+    // Sign-in folds non-ASCII letters too, so "Jörg" and "JÖRG" are one account.
+    add({ outcome: 'success', user: { id: 3, username: 'Jörg' } }, { ip: '192.0.2.7' });
+    add({ outcome: 'failure', reason: 'rate_limited', username: 'JÖRG' }, { ip: '192.0.2.7' });
+    assert.equal(audit.query({ account: 'JÖRG' }).total, 2, 'Account filter folds non-ASCII case like sign-in does.');
+    assert.equal(audit.query({ account: 'jörg' }).total, 2);
+    assert.equal(audit.query({ account: 'Ö' }).total, 2);
+    assert.equal(audit.query({ account: 'ADM' }).total, 2, 'ASCII matching is unchanged.');
 }
 
 async function testRetention() {
