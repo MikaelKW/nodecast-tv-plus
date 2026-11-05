@@ -1,4 +1,3 @@
-const crypto = require('node:crypto');
 const express = require('express');
 const { rateLimit } = require('express-rate-limit');
 const router = express.Router();
@@ -52,33 +51,35 @@ const limitSourceAccount = rateLimit({
 // The settings page asks for every Xtream source each time the list renders.
 // A short cache keeps that from becoming a provider request per render.
 const ACCOUNT_CACHE_TTL_MS = 30 * 1000;
-const accountCache = new Map(); // source id -> { key, checkedAt, account }
-const accountRequests = new Map(); // source id -> { key, promise }
+const accountCache = new Map(); // source id -> { connection, checkedAt, account }
+const accountRequests = new Map(); // source id -> { connection, promise }
 
-const accountCacheKey = source => crypto
-    .createHash('sha256')
-    .update(JSON.stringify([source.url, source.username, source.password]))
-    .digest('hex');
+// An entry belongs to the connection details it was fetched with, so an
+// edited source never reuses the account of its old credentials.
+const connectionOf = source => ({ url: source.url, username: source.username, password: source.password });
+const sameConnection = (a, b) => Boolean(a && b)
+    && a.url === b.url && a.username === b.username && a.password === b.password;
 
 async function getAccountStatus(source, { refresh = false } = {}) {
-    const key = accountCacheKey(source);
+    const connection = connectionOf(source);
     const cached = accountCache.get(source.id);
-    if (!refresh && cached?.key === key && Date.now() - cached.checkedAt < ACCOUNT_CACHE_TTL_MS) {
+    if (!refresh && sameConnection(cached?.connection, connection)
+        && Date.now() - cached.checkedAt < ACCOUNT_CACHE_TTL_MS) {
         return cached;
     }
 
     const pending = accountRequests.get(source.id);
-    if (pending?.key === key) return pending.promise;
+    if (sameConnection(pending?.connection, connection)) return pending.promise;
 
     const promise = (async () => {
         const data = await xtreamApi.authenticate(source.url, source.username, source.password);
         const account = xtreamApi.normalizeAccountInfo(data);
         if (!account) throw new Error('Invalid credentials or server response');
-        const entry = { key, checkedAt: Date.now(), account };
+        const entry = { connection, checkedAt: Date.now(), account };
         accountCache.set(source.id, entry);
         return entry;
     })();
-    accountRequests.set(source.id, { key, promise });
+    accountRequests.set(source.id, { connection, promise });
     try {
         return await promise;
     } finally {
