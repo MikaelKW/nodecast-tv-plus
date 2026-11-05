@@ -53,6 +53,9 @@ jobs:
       - name: Run reverse-proxy subpath tests
         run: npm run test:e2e:subpath
 
+      - name: Run passkey browser tests
+        run: npm run test:e2e:passkeys
+
       - name: Upload browser test diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
