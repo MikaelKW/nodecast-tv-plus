@@ -192,6 +192,11 @@ router.post('/login/options', limitSecurityRequests, limitCeremonyStarts, async 
         }
         if (!enforceLimiter(res, passwordIpLimiter, signInIpKey(req))) return;
         const options = await passkeyService.authenticationOptions({ userVerification: 'required' });
+        // Each sign-in attempt starts in a fresh session; an identifier that
+        // existed before the attempt never carries the challenge.
+        await new Promise((resolve, fail) => {
+            req.session.regenerate(error => error ? fail(error) : resolve());
+        });
         req.session.passkeySignInChallengeId = passkeyService.issueChallenge(SIGN_IN_PURPOSE, options.challenge);
         res.json({ options });
     } catch (error) {
