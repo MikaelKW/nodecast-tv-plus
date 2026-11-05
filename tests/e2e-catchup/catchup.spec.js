@@ -84,9 +84,33 @@ test('a past programme plays from the provider archive and can be sought', async
         .toBeGreaterThanOrEqual(1800);
     await expect(page.locator('#watch-title')).toHaveText('Archived Test Programme');
 
-    // Return to the live channel.
+    // A seek while paused keeps playback paused on the new stream.
+    await page.evaluate(() => document.querySelector('#watch-video').pause());
+    await page.evaluate(() => window.app.pages.watch.seekToContentTime(2400));
+    const pausedSeekStart = providerTime(new Date(programmeStart.getTime() + 40 * 60 * 1000));
+    await expect.poll(async () => (await catchupRequests())
+        .some(path => path.endsWith(`/20/${pausedSeekStart}/1501.ts`))).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.app.pages.watch.getCurrentPlaybackTime()))
+        .toBeGreaterThanOrEqual(2400);
+    await page.waitForTimeout(2000);
+    expect(await page.evaluate(() => document.querySelector('#watch-video').paused)).toBe(true);
+    await page.evaluate(() => document.querySelector('#watch-video').play());
+
+    // Watch live while a seek waits for the provider wins over the seek.
+    let releaseSeek;
+    const seekHeld = new Promise(resolve => { releaseSeek = resolve; });
+    await page.route('**/api/proxy/xtream/*/catchup/**', async route => {
+        await seekHeld;
+        await route.continue();
+    });
+    await page.evaluate(() => { void window.app.pages.watch.seekToContentTime(3000); });
     await page.locator('#watch-live-btn').click();
     await expect(page.locator('#page-live')).toHaveClass(/active/);
+    releaseSeek();
+    await page.waitForTimeout(2000);
+    await page.unroute('**/api/proxy/xtream/*/catchup/**');
+    await expect(page.locator('#page-live')).toHaveClass(/active/);
+    await expect(page.locator('#page-watch')).not.toHaveClass(/active/);
     await expect.poll(() => page.evaluate(() => String(window.app.channelList.currentChannel?.streamId))).toBe('1501');
 
     // The archive is not part of the watch history.

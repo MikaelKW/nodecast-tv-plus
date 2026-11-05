@@ -93,6 +93,22 @@ function testTimeshiftUrl() {
     assert.equal(url, 'http://provider.example:8080/timeshift/user%20name/p%2Fss/90/2026-07-01:20-30/2001.ts');
 }
 
+async function testConfirmAvailable() {
+    const respond = status => async (url, options) => {
+        assert.equal(options.headers.Range, 'bytes=0-0', 'Only the first byte is requested.');
+        return new Response(status === 206 ? 'x' : null, { status });
+    };
+    await catchup.confirmAvailable('http://provider/x.ts', respond(206));
+    await catchup.confirmAvailable('http://provider/x.ts', respond(200));
+    await assert.rejects(catchup.confirmAvailable('http://provider/x.ts', respond(403)),
+        error => error.statusCode === 404 && /does not have/.test(error.message));
+    await assert.rejects(catchup.confirmAvailable('http://provider/x.ts', respond(503)),
+        error => error.statusCode === 502 && /unavailable/.test(error.message));
+    await assert.rejects(catchup.confirmAvailable('http://provider/x.ts', async () => {
+        throw new Error('connect ECONNREFUSED');
+    }), error => error.statusCode === 502 && /did not respond/.test(error.message));
+}
+
 function getFreePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -125,13 +141,19 @@ function startProvider(timeshiftRequests) {
             if (action === 'get_live_streams') {
                 return json([
                     { num: 1, name: 'Archive News', stream_id: 2001, category_id: '1', tv_archive: 1, tv_archive_duration: 3 },
-                    { num: 2, name: 'Plain News', stream_id: 2002, category_id: '1', tv_archive: 0, tv_archive_duration: 0 }
+                    { num: 2, name: 'Plain News', stream_id: 2002, category_id: '1', tv_archive: 0, tv_archive_duration: 0 },
+                    // Advertises an archive, but the provider refuses its recordings.
+                    { num: 3, name: 'Gap News', stream_id: 2003, category_id: '1', tv_archive: 1, tv_archive_duration: 3 }
                 ]);
             }
             return json([]);
         }
         if (url.pathname.startsWith('/timeshift/')) {
             timeshiftRequests.push(url.pathname);
+            if (url.pathname.endsWith('/2003.ts')) {
+                res.writeHead(404);
+                return res.end();
+            }
             res.writeHead(200, { 'Content-Type': 'video/mp2t' });
             return res.end(Buffer.alloc(188 * 4, 0x47));
         }
@@ -250,7 +272,13 @@ async function testRoute() {
         });
         assert.equal(proxied.status, 200);
         await proxied.arrayBuffer();
-        assert.equal(timeshiftRequests.length, 1);
+        // One request confirms the recording exists, one is the playback.
+        assert.equal(timeshiftRequests.length, 2);
+
+        // A recording the provider refuses is reported before playback starts.
+        const refused = await request(route(2003, start, end));
+        assert.equal(refused.status, 404);
+        assert.equal(refused.payload.error, 'The provider archive does not have this programme.');
 
         assert.equal((await request(route(2002, start, end))).status, 404, 'Channels without an archive have no catch-up.');
         assert.equal((await request(route(9999, start, end))).status, 404);
@@ -278,6 +306,7 @@ async function run() {
     testProviderTime();
     testResolveRequest();
     testTimeshiftUrl();
+    await testConfirmAvailable();
     await testRoute();
     console.log('Catch-up tests passed.');
 }

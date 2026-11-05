@@ -398,7 +398,8 @@ class WatchPage {
      * @param {Object} content - Movie or episode info
      * @param {string} streamUrl - Stream URL
      */
-    async play(content, streamUrl) {
+    async play(content, streamUrl, { autoPlay = true } = {}) {
+        this.startPaused = !autoPlay;
         this.resetMediaTracks();
         this.playbackTimeOffset = 0;
         this.sourceDuration = 0;
@@ -447,6 +448,10 @@ class WatchPage {
         } catch (error) {
             if (error?.name === 'AbortError') return;
             throw error;
+        } finally {
+            // Only the initial start honours the request; later reloads such
+            // as quality changes start playing as usual.
+            this.startPaused = false;
         }
         if (this.content !== content || this.sourceUrl !== streamUrl) return;
         this.subtitleLoadingEnabled = true;
@@ -1036,7 +1041,7 @@ class WatchPage {
                     this.assertPlaybackRequestCurrent(diagnosticPlayId);
                     this.reportBrowserPlaybackPath('auto_remux', diagnosticPlayId);
                     this.video.src = finalUrl;
-                    this.video.play().catch(e => {
+                    this.startMediaPlayback().catch(e => {
                         this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                         if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
                     });
@@ -1134,7 +1139,7 @@ class WatchPage {
             this.assertPlaybackRequestCurrent(diagnosticPlayId);
             this.reportBrowserPlaybackPath('forced_remux', diagnosticPlayId);
             this.video.src = finalUrl;
-            this.video.play().catch(e => {
+            this.startMediaPlayback().catch(e => {
                 this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
@@ -1160,7 +1165,7 @@ class WatchPage {
             this.updateTranscodeStatus('direct', 'Direct Play');
             this.reportBrowserPlaybackPath(looksLikeHls ? 'native_hls' : 'direct_media', diagnosticPlayId);
             this.video.src = finalUrl;
-            this.video.play().catch(e => {
+            this.startMediaPlayback().catch(e => {
                 this.reportBrowserPlaybackFailure(e, diagnosticPlayId);
                 if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
             });
@@ -1172,6 +1177,12 @@ class WatchPage {
         }
     }
 
+    // Start the media element unless this load was asked to stay paused.
+    startMediaPlayback() {
+        if (this.startPaused) return Promise.resolve();
+        return this.video.play();
+    }
+
     canPlayNativeHls() {
         const support = this.video?.canPlayType?.('application/vnd.apple.mpegurl');
         return support === 'probably' || support === 'maybe';
@@ -1180,7 +1191,7 @@ class WatchPage {
     /**
      * Play HLS stream using Hls.js, or natively where HLS.js is unsupported
      */
-    playHls(url, { autoPlay = true, playId = this._diagnosticPlayId } = {}) {
+    playHls(url, { autoPlay = !this.startPaused, playId = this._diagnosticPlayId } = {}) {
         this.assertPlaybackRequestCurrent(playId);
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
@@ -2119,7 +2130,7 @@ class WatchPage {
             const selectedTrack = Array.from(this.video.querySelectorAll('track[data-nodecast-probe-track]'))
                 .find(track => Number(track.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
             if (selectedTrack) void this.loadProbeSubtitleTrack(selectedTrack, {
-                windowStart: this.getSubtitleWindowStart(this.getCurrentPlaybackTime())
+                windowStart: this.getSubtitleWindowStart(this.getStreamPlaybackTime())
             });
         }
 
@@ -2247,7 +2258,8 @@ class WatchPage {
             .find(element => Number(element.dataset.nodecastSubtitleIndex) === this.selectedSubtitleStreamIndex);
         if (!trackElement) return;
 
-        const contentTime = this.getCurrentPlaybackTime();
+        // Subtitle windows follow the source stream's clock, like the cues.
+        const contentTime = this.getStreamPlaybackTime();
         if (this.subtitleWindowCovers(trackElement, contentTime)) return;
 
         const requestedStart = this.getSubtitleWindowStart(contentTime);
@@ -2656,12 +2668,12 @@ class WatchPage {
                 .find(element => element.track === tracks[index]);
             if (probeTrack) {
                 this.selectedSubtitleStreamIndex = Number(probeTrack.dataset.nodecastSubtitleIndex);
-                if (this.subtitleWindowCovers(probeTrack, this.getCurrentPlaybackTime())) {
+                if (this.subtitleWindowCovers(probeTrack, this.getStreamPlaybackTime())) {
                     this.activateProbeSubtitleTrack(probeTrack);
                     this.scheduleSelectedSubtitleRestore();
                 } else {
                     void this.loadProbeSubtitleTrack(probeTrack, {
-                        windowStart: this.getSubtitleWindowStart(this.getCurrentPlaybackTime())
+                        windowStart: this.getSubtitleWindowStart(this.getStreamPlaybackTime())
                     });
                 }
             } else {
@@ -3180,17 +3192,32 @@ class WatchPage {
 
         // Anything else is requested from the provider at the new position.
         const shouldResume = !this.video.paused;
+        // Watch live, Back or another selection while the provider answers
+        // supersedes this seek; stop() and every new load advance the ID.
+        const operationPlayId = this._diagnosticPlayId;
         this.seekChanging = true;
         this.pendingSeekProgress = target;
         this.showLoading();
+        const superseded = () => this._diagnosticPlayId !== operationPlayId
+            || this.catchup?.programme !== programme
+            || this.app?.currentPage !== 'watch';
         try {
-            const prepared = await this.prepareCatchup(channel, programme, { offset: target });
-            await this.play(prepared.content, prepared.url);
-            if (!shouldResume) this.video.pause();
+            let prepared;
+            try {
+                prepared = await this.prepareCatchup(channel, programme, { offset: target });
+            } catch (error) {
+                if (superseded()) return;
+                console.warn('[WatchPage] Catch-up seek failed:', error.message);
+                this.hideLoading();
+                this.updateTranscodeStatus('warning', 'Seek unavailable in the provider archive');
+                return;
+            }
+            if (superseded()) return;
+            await this.play(prepared.content, prepared.url, { autoPlay: shouldResume });
         } catch (error) {
-            if (error?.name === 'AbortError') return;
-            console.warn('[WatchPage] Catch-up seek failed:', error.message);
-            this.updateTranscodeStatus('warning', 'Seek unavailable in the provider archive');
+            if (error?.name !== 'AbortError') {
+                console.warn('[WatchPage] Catch-up playback failed after seeking:', error.message);
+            }
         } finally {
             this.seekChanging = false;
             this.pendingSeekProgress = null;

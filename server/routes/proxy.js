@@ -468,15 +468,19 @@ router.get('/xtream/:sourceId/catchup/:streamId', limitUpstreamMetadata, async (
             window: catchup.archiveWindow(channel)
         });
         const timeZone = await providerTimeZone(resolved.source);
+        const url = catchup.buildTimeshiftUrl(
+            resolved.source, channel.stream_id, request.providerStart, request.minutes, timeZone
+        );
+        await catchup.confirmAvailable(url, (target, options) => fetchWithPolicy(
+            target, options, { allowPrivateHosts: [resolved.source.url] }
+        ));
         res.json({
-            url: catchup.buildTimeshiftUrl(
-                resolved.source, channel.stream_id, request.providerStart, request.minutes, timeZone
-            ),
+            url,
             providerStart: new Date(request.providerStart).toISOString(),
             minutes: request.minutes
         });
     } catch (err) {
-        if (err.statusCode && err.statusCode < 500) {
+        if (err.statusCode && (err.statusCode < 500 || err.statusCode === 502)) {
             return res.status(err.statusCode).json({ error: err.message });
         }
         logSafeError('Catch-up URL error:', err);

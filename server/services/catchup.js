@@ -112,11 +112,41 @@ function buildTimeshiftUrl(source, streamId, providerStart, minutes, timeZone, c
     return `${baseUrl}/${segments.join('/')}`;
 }
 
+const PROBE_TIMEOUT_MS = 10 * 1000;
+
+/**
+ * Ask the provider whether it serves the recording, reading at most its
+ * first byte. A provider that advertises an archive may still refuse a
+ * particular programme; finding out here keeps the browser's current
+ * playback running and lets the guide show the refusal.
+ */
+async function confirmAvailable(url, fetchImpl, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
+    let response;
+    try {
+        response = await fetchImpl(url, {
+            headers: { Range: 'bytes=0-0' },
+            signal: AbortSignal.timeout(timeoutMs)
+        });
+    } catch {
+        const error = new Error('The provider archive did not respond. Try again later.');
+        error.statusCode = 502;
+        throw error;
+    }
+    await response.body?.cancel().catch(() => {});
+    if (response.ok) return;
+    const error = new Error(response.status >= 500
+        ? 'The provider archive is unavailable. Try again later.'
+        : 'The provider archive does not have this programme.');
+    error.statusCode = response.status >= 500 ? 502 : 404;
+    throw error;
+}
+
 module.exports = {
     MAX_ARCHIVE_DAYS,
     MAX_DURATION_MINUTES,
     archiveWindow,
     buildTimeshiftUrl,
+    confirmAvailable,
     formatProviderTime,
     normalizeTimeZone,
     resolveRequest
