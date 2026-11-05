@@ -54,6 +54,7 @@ class WatchPage {
         this.playBtn = document.getElementById('watch-play-btn');
         this.playBtnText = document.getElementById('watch-play-btn-text');
         this.favoriteBtn = document.getElementById('watch-favorite-btn');
+        this.liveBtn = document.getElementById('watch-live-btn');
 
         // Recommended / Episodes
         this.recommendedSection = document.getElementById('watch-recommended');
@@ -133,6 +134,12 @@ class WatchPage {
         // original VOD duration separately so the scrubber never treats that
         // temporary playlist length as the full movie or episode.
         this.sourceDuration = 0;
+        // Catch-up plays a provider recording requested from a given start
+        // time. The stream's position 0 lies this many seconds into the
+        // programme; seeking requests a new stream instead of reading
+        // through the old one.
+        this.catchup = null;
+        this.catchupStreamOffset = 0;
         this.currentTranscodeOptions = null;
         this.seekChanging = false;
         this.progressScrubbing = false;
@@ -326,6 +333,7 @@ class WatchPage {
         // Details section buttons
         this.playBtn?.addEventListener('click', () => this.scrollToVideo());
         this.favoriteBtn?.addEventListener('click', () => this.toggleFavorite());
+        this.liveBtn?.addEventListener('click', () => this.watchCatchupChannelLive());
 
         // Next episode buttons
         this.nextPlayNowBtn?.addEventListener('click', () => this.playNextEpisode());
@@ -404,7 +412,12 @@ class WatchPage {
         this.resumeTime = content.resumeTime || 0;
         this.pendingSeekProgress = null;
         this.containerExtension = content.containerExtension || 'mp4';
-        this.returnPage = content.type === 'movie' ? 'movies' : 'series';
+        this.catchup = content.type === 'catchup' ? content.catchup : null;
+        this.catchupStreamOffset = this.catchup ? Number(content.catchupStreamOffset) || 0 : 0;
+        this.returnPage = content.returnPage
+            || (content.type === 'movie' ? 'movies' : content.type === 'catchup' ? 'guide' : 'series');
+        this.favoriteBtn?.classList.toggle('hidden', Boolean(this.catchup));
+        this.liveBtn?.classList.toggle('hidden', !this.catchup);
         this.sourceUrl = streamUrl;
         this.playbackQuality = 'auto';
         this.updateQualityMenu();
@@ -443,6 +456,14 @@ class WatchPage {
 
         // Populate details section
         this.renderDetails();
+
+        // Catch-up has no recommendations, episodes, favorites or history.
+        if (this.catchup) {
+            this.recommendedSection?.classList.add('hidden');
+            this.episodesSection?.classList.add('hidden');
+            this.showOverlay();
+            return;
+        }
 
         // Load recommended (movies) or episodes (series)
         if (content.type === 'movie') {
@@ -801,7 +822,7 @@ class WatchPage {
         }
 
         this.qualityChanging = true;
-        const resumeAt = this.getCurrentPlaybackTime();
+        const resumeAt = this.getStreamPlaybackTime();
         try {
             this.stopHistoryTracking();
             this.saveProgress();
@@ -1423,7 +1444,13 @@ class WatchPage {
 
     getCurrentPlaybackTime() {
         const mediaTime = Number(this.video?.currentTime) || 0;
-        return Math.max(0, this.playbackTimeOffset + mediaTime);
+        return Math.max(0, this.catchupStreamOffset + this.playbackTimeOffset + mediaTime);
+    }
+
+    // Position within the current source stream, which a restarted session
+    // resumes from. For catch-up this excludes the programme offset.
+    getStreamPlaybackTime() {
+        return Math.max(0, this.getCurrentPlaybackTime() - this.catchupStreamOffset);
     }
 
     getPlaybackDuration() {
@@ -1432,10 +1459,16 @@ class WatchPage {
         }
         const mediaDuration = Number(this.video?.duration);
         if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaDuration;
-        return Math.max(0, this.playbackTimeOffset + mediaDuration);
+        return Math.max(0, this.catchupStreamOffset + this.playbackTimeOffset + mediaDuration);
     }
 
     setSourceDuration(value) {
+        // A catch-up stream may hold only part of the programme; the guide's
+        // programme length stays the timeline.
+        if (this.catchup && this.sourceDuration > 0) {
+            this.updateDurationDisplay();
+            return;
+        }
         const duration = VodDuration.parse(value);
         if (duration > 0) this.sourceDuration = duration;
         this.updateDurationDisplay();
@@ -1483,6 +1516,10 @@ class WatchPage {
 
     async seekToContentTime(requestedTime) {
         if (!this.video || this.seekChanging) return;
+        if (this.catchup) {
+            await this.seekCatchup(requestedTime);
+            return;
+        }
 
         const operationPlayId = this._diagnosticPlayId;
         const duration = this.getPlaybackDuration();
@@ -2459,7 +2496,7 @@ class WatchPage {
         const previousIndex = this.selectedAudioTrackIndex;
         const previousExplicit = this.audioSelectionExplicit;
         const operationPlayId = this._diagnosticPlayId;
-        const resumeAt = this.getCurrentPlaybackTime();
+        const resumeAt = this.getStreamPlaybackTime();
         const streamInfo = this.currentStreamInfo ? { ...this.currentStreamInfo } : {};
         this.audioTrackChanging = true;
         this.selectedAudioTrackIndex = Number(index);
@@ -2724,7 +2761,7 @@ class WatchPage {
     renderDetails() {
         if (!this.content) return;
 
-        const isChannel = this.content.type === 'channel' || !this.content.type; // Default to channel if unknown
+        const isChannel = ['channel', 'catchup'].includes(this.content.type) || !this.content.type; // Default to channel if unknown
         const fallback = isChannel ? 'img/placeholder.png' : 'img/poster-placeholder.jpg';
 
         this.posterEl.onerror = () => {
@@ -3065,6 +3102,114 @@ class WatchPage {
         }
     }
 
+    // === Catch-up ===
+
+    /**
+     * Resolve the provider recording of a past programme on an
+     * archive-enabled channel, starting `offset` seconds into it. Throws when
+     * the provider archive cannot serve it, before anything is stopped.
+     */
+    async prepareCatchup(channel, programme, { offset = 0, returnPage = null } = {}) {
+        const programmeStart = Date.parse(programme?.start);
+        const programmeStop = Date.parse(programme?.stop);
+        if (!channel || !Number.isFinite(programmeStart) || !Number.isFinite(programmeStop)) {
+            throw new Error('This programme cannot be played from the archive.');
+        }
+        const requestedStart = programmeStart + Math.max(0, Number(offset) || 0) * 1000;
+        const result = await API.proxy.xtream.getCatchupUrl(
+            channel.sourceId,
+            channel.streamId,
+            new Date(requestedStart).toISOString(),
+            new Date(programmeStop).toISOString()
+        );
+        const providerStart = Date.parse(result?.providerStart);
+        if (!result?.url || !Number.isFinite(providerStart)) {
+            throw new Error('The provider archive did not return a stream.');
+        }
+
+        const startLabel = new Date(programmeStart).toLocaleString([], {
+            weekday: 'short', hour: '2-digit', minute: '2-digit'
+        });
+        return {
+            url: result.url,
+            content: {
+                type: 'catchup',
+                id: `catchup:${channel.sourceId}:${channel.streamId}:${programmeStart}`,
+                title: programme.title || 'Programme',
+                subtitle: `${channel.name || 'Channel'} · ${startLabel}`,
+                description: programme.description || '',
+                poster: channel.tvgLogo
+                    ? (window.app?.epgGuide?.getProxiedImageUrl?.(channel.tvgLogo) || channel.tvgLogo)
+                    : null,
+                sourceId: channel.sourceId,
+                containerExtension: 'ts',
+                durationSeconds: (programmeStop - programmeStart) / 1000,
+                // Providers address whole minutes, so the stream can begin
+                // shortly before the requested position.
+                catchupStreamOffset: (providerStart - programmeStart) / 1000,
+                resumeTime: Math.max(0, (requestedStart - providerStart) / 1000),
+                returnPage: returnPage || this.catchup?.returnPage || 'guide',
+                catchup: { channel, programme, returnPage: returnPage || this.catchup?.returnPage || 'guide' }
+            }
+        };
+    }
+
+    async playCatchup(channel, programme, options = {}) {
+        const prepared = await this.prepareCatchup(channel, programme, options);
+        await this.play(prepared.content, prepared.url);
+    }
+
+    async seekCatchup(requestedTime) {
+        const duration = this.getPlaybackDuration();
+        const { channel, programme } = this.catchup;
+        // An ongoing programme is only archived up to the present.
+        const archivedUntil = (Date.now() - Date.parse(programme.start)) / 1000 - 60;
+        const limit = Math.max(0, Math.min(duration || 0, archivedUntil));
+        const target = Math.max(0, Math.min(Number(requestedTime) || 0, limit));
+
+        // Positions the current stream already holds are seeked in place.
+        const streamStart = this.catchupStreamOffset + this.playbackTimeOffset;
+        const mediaTarget = target - streamStart;
+        const seekable = this.video.seekable;
+        for (let index = 0; seekable && index < seekable.length; index++) {
+            if (mediaTarget >= seekable.start(index) && mediaTarget <= seekable.end(index)) {
+                this.video.currentTime = mediaTarget;
+                return;
+            }
+        }
+
+        // Anything else is requested from the provider at the new position.
+        const shouldResume = !this.video.paused;
+        this.seekChanging = true;
+        this.pendingSeekProgress = target;
+        this.showLoading();
+        try {
+            const prepared = await this.prepareCatchup(channel, programme, { offset: target });
+            await this.play(prepared.content, prepared.url);
+            if (!shouldResume) this.video.pause();
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            console.warn('[WatchPage] Catch-up seek failed:', error.message);
+            this.updateTranscodeStatus('warning', 'Seek unavailable in the provider archive');
+        } finally {
+            this.seekChanging = false;
+            this.pendingSeekProgress = null;
+        }
+    }
+
+    /** Leave the recording and play the same channel live. */
+    async watchCatchupChannelLive() {
+        const channel = this.catchup?.channel;
+        if (!channel) return;
+        this.stop({ saveHistory: false });
+        this.app.navigateTo('live');
+        try {
+            await this.app.channelList?.playChannelRecord(channel);
+        } catch (error) {
+            console.error('[WatchPage] Could not start the live channel:', error);
+        }
+    }
+
     // === Navigation ===
 
     async goBack() {
@@ -3105,6 +3250,8 @@ class WatchPage {
 
     async saveProgress({ allowPaused = false, progressOverride = null } = {}) {
         if (!this.content || !this.video || (!allowPaused && this.video.paused)) return;
+        // Archive recordings are not part of the watch history.
+        if (this.catchup) return;
 
         const effectiveOverride = progressOverride ?? this.pendingSeekProgress;
         const hasProgressOverride = effectiveOverride !== null

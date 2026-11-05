@@ -78,6 +78,33 @@ function controlledGuideXml() {
 </tv>`;
 }
 
+const catchupTimeZone = 'Europe/Amsterdam';
+const catchupRequests = [];
+
+function isCatchupAccount(username) {
+    return typeof username === 'string' && username.startsWith('catchup-');
+}
+
+// One archived programme that ended twenty minutes ago and one upcoming.
+function catchupGuideXml() {
+    const minute = 60 * 1000;
+    const now = Math.floor(Date.now() / minute) * minute;
+    const archivedStart = new Date(now - 80 * minute);
+    const archivedStop = new Date(now - 20 * minute);
+    const upcomingStop = new Date(now + 60 * minute);
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="NodeCast TV Plus tests">
+  <channel id="visibility.live.test"><display-name>Controlled Visibility Channel</display-name></channel>
+  <programme start="${xmltvTimestamp(archivedStart)}" stop="${xmltvTimestamp(archivedStop)}" channel="visibility.live.test">
+    <title>Archived Test Programme</title>
+    <desc>Played back from the provider archive.</desc>
+  </programme>
+  <programme start="${xmltvTimestamp(archivedStop)}" stop="${xmltvTimestamp(upcomingStop)}" channel="visibility.live.test">
+    <title>Current Test Programme</title>
+  </programme>
+</tv>`;
+}
+
 function generateMedia() {
     const ffmpegPath = resolveFFmpegPath().path;
     if (!ffmpegPath) {
@@ -302,6 +329,9 @@ async function start() {
             }
 
             const action = requestUrl.searchParams.get('action');
+            // Accounts named catchup-* model a provider with a TV archive in
+            // a non-UTC time zone; other suites keep the plain account.
+            const archiveAccount = isCatchupAccount(username);
             let response;
             if (!action) {
                 response = {
@@ -315,7 +345,7 @@ async function start() {
                         url: '127.0.0.1',
                         port: String(fixturePort),
                         server_protocol: 'http',
-                        timezone: 'UTC',
+                        timezone: archiveAccount ? catchupTimeZone : 'UTC',
                         timestamp_now: Math.floor(Date.now() / 1000)
                     }
                 };
@@ -331,7 +361,8 @@ async function start() {
                     epg_channel_id: 'visibility.live.test',
                     added: '1784073598',
                     category_id: '15',
-                    container_extension: 'm3u8'
+                    container_extension: 'm3u8',
+                    ...(archiveAccount ? { tv_archive: 1, tv_archive_duration: 2 } : {})
                 }];
             } else if (action === 'get_vod_categories') {
                 response = [{ category_id: '16', category_name: 'Visibility Movie Test', parent_id: 0 }];
@@ -404,7 +435,18 @@ async function start() {
 
         if (pathname === '/xtream/xmltv.php') {
             res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
+            if (isCatchupAccount(requestUrl.searchParams.get('username'))) return res.end(catchupGuideXml());
             return res.end('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
+        }
+
+        // Provider TV archive: /timeshift/user/pass/minutes/YYYY-MM-DD:HH-MM/id.ts
+        if (pathname.startsWith('/xtream/timeshift/')) {
+            catchupRequests.push(decodeURIComponent(pathname.slice('/xtream'.length)));
+            return sendFile(req, res, remuxMediaPath, 'video/mp2t');
+        }
+        if (pathname === '/catchup-requests') {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            return res.end(JSON.stringify(catchupRequests));
         }
 
         if (pathname === '/sample.mp4') return sendFile(req, res, mediaPath, 'video/mp4');

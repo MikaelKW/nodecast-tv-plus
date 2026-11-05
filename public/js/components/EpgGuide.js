@@ -672,7 +672,7 @@ class EpgGuide {
             <div class="resize-handle"></div>
           </div>
           <div class="epg-programs">
-            ${this.renderProgrammes(channelProgrammes, this.startTime, this.endTime)}
+            ${this.renderProgrammes(channelProgrammes, this.startTime, this.endTime, sourceChannel)}
           </div>
         `;
 
@@ -685,8 +685,9 @@ class EpgGuide {
      */
     attachRowListeners(row) {
         // Program click handlers
+        const channel = this.filteredChannels?.[Number(row.dataset.index)]?.sourceChannel || null;
         row.querySelectorAll('.epg-program').forEach(prog => {
-            prog.addEventListener('click', () => this.showProgramDetails(prog.dataset));
+            prog.addEventListener('click', () => this.showProgramDetails(prog.dataset, channel));
         });
 
         const info = row.querySelector('.epg-channel-info');
@@ -851,7 +852,24 @@ class EpgGuide {
     /**
      * Render programmes for a channel
      */
-    renderProgrammes(programmes, startTime, endTime) {
+    /**
+     * Whether the provider archive holds a programme of this channel: it has
+     * started and began within the channel's catch-up window.
+     */
+    static isCatchupAvailable(channel, start, now = Date.now()) {
+        const days = Number(channel?.catchupDays) || 0;
+        const startMs = new Date(start).getTime();
+        if (days <= 0 || !Number.isFinite(startMs) || startMs >= now) return false;
+        return startMs >= now - days * 24 * 60 * 60 * 1000;
+    }
+
+    static escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[character]);
+    }
+
+    renderProgrammes(programmes, startTime, endTime, channel = null) {
         if (programmes.length === 0) {
             const width = (endTime - startTime) / 60000 * this.pixelsPerMinute;
             return `<div class="epg-program" style="width: ${width}px;"><span class="epg-program-title">No data</span></div>`;
@@ -873,16 +891,22 @@ class EpgGuide {
 
             const width = (progEnd - progStart) / 60000 * this.pixelsPerMinute;
             const isCurrent = new Date(prog.start) <= now && new Date(prog.stop) > now;
+            const catchup = EpgGuide.isCatchupAvailable(channel, prog.start, now.getTime());
+            const escape = EpgGuide.escapeHtml;
+            const classes = ['epg-program', isCurrent ? 'current' : '', catchup ? 'catchup' : '']
+                .filter(Boolean).join(' ');
 
             html += `
-        <div class="epg-program ${isCurrent ? 'current' : ''}" 
+        <div class="${classes}"
              style="width: ${width}px;"
-             data-title="${prog.title || ''}"
-             data-description="${prog.description || ''}"
-             data-start="${prog.start}"
-             data-stop="${prog.stop}">
-          <div class="epg-program-title">${prog.title || 'Unknown'}</div>
+             data-title="${escape(prog.title)}"
+             data-description="${escape(prog.description)}"
+             data-start="${escape(prog.start)}"
+             data-stop="${escape(prog.stop)}"
+             ${catchup ? 'title="Available to watch from the provider archive"' : ''}>
+          <div class="epg-program-title">${escape(prog.title || 'Unknown')}</div>
           <div class="epg-program-time">
+            ${catchup ? '<span class="epg-catchup-badge" aria-label="Catch-up available">↺</span>' : ''}
             ${new Date(prog.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
         </div>
@@ -956,7 +980,7 @@ class EpgGuide {
     /**
      * Show program details modal
      */
-    showProgramDetails(data) {
+    showProgramDetails(data, channel = null) {
         const modal = document.getElementById('modal');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
@@ -966,18 +990,82 @@ class EpgGuide {
 
         const start = new Date(data.start);
         const stop = new Date(data.stop);
+        const timeOptions = { hour: '2-digit', minute: '2-digit' };
+        const now = Date.now();
 
-        body.innerHTML = `
-      <p><strong>Time:</strong> ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${stop.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-      <p><strong>Description:</strong></p>
-      <p>${data.description || 'No description available'}</p>
-    `;
+        // Programme text comes from the EPG provider; render it as text.
+        const paragraph = (label, text) => {
+            const element = document.createElement('p');
+            if (label) {
+                const strong = document.createElement('strong');
+                strong.textContent = label;
+                element.append(strong, ' ');
+            }
+            if (text) element.append(text);
+            return element;
+        };
+        body.replaceChildren(
+            paragraph('Time:', `${start.toLocaleTimeString([], timeOptions)} - ${stop.toLocaleTimeString([], timeOptions)}`),
+            paragraph('Description:'),
+            paragraph(null, data.description || 'No description available')
+        );
 
-        footer.innerHTML = '<button class="btn btn-secondary" id="modal-close">Close</button>';
+        const catchup = EpgGuide.isCatchupAvailable(channel, data.start, now);
+        if (catchup) {
+            const days = Number(channel.catchupDays);
+            body.append(paragraph('Catch-up:', `The provider keeps ${days} ${days === 1 ? 'day' : 'days'} of this channel.`));
+        }
+
+        footer.replaceChildren();
+        const close = () => modal.classList.remove('active');
+        if (catchup) {
+            const watch = document.createElement('button');
+            watch.className = 'btn btn-primary';
+            watch.id = 'modal-catchup-watch';
+            watch.textContent = stop.getTime() > now ? 'Watch from start' : 'Watch';
+            const error = document.createElement('p');
+            error.className = 'epg-catchup-error hidden';
+            error.setAttribute('role', 'alert');
+            body.append(error);
+            watch.onclick = async () => {
+                const watchPage = window.app?.pages?.watch;
+                if (!watchPage) return;
+                watch.disabled = true;
+                error.classList.add('hidden');
+                let prepared;
+                try {
+                    // Ask the provider first so a refusal is shown here,
+                    // before the current playback is interrupted.
+                    prepared = await watchPage.prepareCatchup(channel, {
+                        title: data.title,
+                        description: data.description,
+                        start: data.start,
+                        stop: data.stop
+                    });
+                } catch (err) {
+                    error.textContent = err?.message || 'The provider archive could not play this programme.';
+                    error.classList.remove('hidden');
+                    watch.disabled = false;
+                    return;
+                }
+                close();
+                try {
+                    await watchPage.play(prepared.content, prepared.url);
+                } catch (err) {
+                    console.error('[TV Guide] Catch-up playback failed:', err);
+                }
+            };
+            footer.append(watch);
+        }
+        const closeButton = document.createElement('button');
+        closeButton.className = 'btn btn-secondary';
+        closeButton.id = 'modal-close';
+        closeButton.textContent = 'Close';
+        closeButton.onclick = close;
+        footer.append(closeButton);
 
         modal.classList.add('active');
-        document.getElementById('modal-close').onclick = () => modal.classList.remove('active');
-        modal.querySelector('.modal-close').onclick = () => modal.classList.remove('active');
+        modal.querySelector('.modal-close').onclick = close;
     }
 
     /**
