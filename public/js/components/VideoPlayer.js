@@ -536,9 +536,11 @@ class VideoPlayer {
             }
         } else {
             const element = this.container;
-            if (element.requestFullscreen) {
+            if (document.fullscreenEnabled !== false &&
+                (document.fullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && element.requestFullscreen) {
                 element.requestFullscreen().catch(err => console.error('Fullscreen error:', err));
-            } else if (element.webkitRequestFullscreen) {
+            } else if (document.webkitFullscreenEnabled !== false && document.fullscreenEnabled !== false &&
+                (document.webkitFullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && element.webkitRequestFullscreen) {
                 element.webkitRequestFullscreen();
             } else if (this.video.webkitEnterFullscreen) {
                 // iOS Safari: use native video fullscreen
