@@ -164,17 +164,29 @@ class VideoPlayer {
     }
 
     /**
+     * The settings the player writes back. The player saves its whole cached
+     * settings object, so settings that are managed elsewhere are left out:
+     * a stale cached copy (from another tab or browser) would otherwise
+     * overwrite a newer saved value.
+     */
+    settingsForSave() {
+        const payload = { ...this.settings };
+        for (const key of VideoPlayer.SETTINGS_SAVED_ELSEWHERE) delete payload[key];
+        return payload;
+    }
+
+    /**
      * Save settings to server API
      */
     async saveSettings() {
         try {
-            await API.settings.update(this.settings);
+            await API.settings.update(this.settingsForSave());
             console.log('[Player] Settings saved to server');
         } catch (err) {
             console.error('[Player] Error saving settings to server:', err);
             // Also save to localStorage as backup
             try {
-                localStorage.setItem('nodecast_tv_player_settings', JSON.stringify(this.settings));
+                localStorage.setItem('nodecast_tv_player_settings', JSON.stringify(this.settingsForSave()));
             } catch (localErr) {
                 console.error('[Player] Error saving to localStorage:', localErr);
             }
@@ -2333,6 +2345,9 @@ class VideoPlayer {
     }
 
 }
+
+// Saved by the sign-in log panel (Settings > Logs), never by the player.
+VideoPlayer.SETTINGS_SAVED_ELSEWHERE = Object.freeze(['authLogRetentionDays', 'authLogMaxEntries']);
 
 // Export
 window.VideoPlayer = VideoPlayer;
