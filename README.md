@@ -333,6 +333,18 @@ Common adjustments under **Settings > Transcoding**:
 
 HLS is preferred. Raw MPEG-TS streams are automatically remuxed when required. RTMP and RTSP cannot be played directly by web browsers.
 
+### Catch-up from the provider archive
+
+Xtream providers can keep recent programmes of some channels in a TV archive. When a channel has one, its past programmes in the **TV Guide** show a ↺ mark. Open a programme and choose **Watch** (or **Watch from start** while it is still on) to play it on the Watch page.
+
+- The scrubber and skip buttons cover the whole programme. Positions beyond what has already loaded are requested from the provider from that point on.
+- **Watch live** switches to the same channel live.
+- How many days are available and which channels have an archive is set by the provider. NodeCast TV Plus reads it from the channel list on every sync.
+- Start times are sent in the provider's time zone, as reported by the provider. Without one, UTC is used.
+- Catch-up programmes are not added to the watch history.
+
+Catch-up is available for Xtream sources only. M3U playlists with catch-up attributes are not supported yet. Pausing or rewinding live TV without a provider archive is a separate feature (#437).
+
 ### Personal subtitle preferences
 
 Open **Settings > Preferences** to choose a preferred subtitle language and automatic mode for Movies and Series: **No subtitles**, **Default**, **Forced only**, or **Always preferred**. Select a language to enable **Always preferred**; tracks can still be changed manually during playback.

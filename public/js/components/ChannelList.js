@@ -1010,10 +1010,18 @@ class ChannelList {
             groupId: `${sourceType}_${sourceId}_${stream.category_id}`,
             groupTitle: categoryNames.get(String(stream.category_id)) || 'Uncategorized',
             sourceId,
-            sourceType
+            sourceType,
+            catchupDays: ChannelList.catchupDays(stream, sourceType)
         }));
 
         return { groups, channels };
+    }
+
+    /** Days of provider catch-up (Xtream TV archive); 0 when unavailable. */
+    static catchupDays(item, sourceType) {
+        if (sourceType !== 'xtream') return 0;
+        if (!(item?.tv_archive === true || Number(item?.tv_archive) === 1)) return 0;
+        return Math.max(0, Math.floor(Number(item.tv_archive_duration)) || 0);
     }
 
     _applySourceChannels(result) {
@@ -1396,7 +1404,8 @@ class ChannelList {
             groupId: `${sourceType}_${source.id}_${item.category_id || ''}`,
             groupTitle: item.category_name || fallbackGroupName,
             sourceId: source.id,
-            sourceType
+            sourceType,
+            catchupDays: ChannelList.catchupDays(item, sourceType)
         };
     }
 

@@ -1342,6 +1342,17 @@ video::cue {
   color: var(--color-text-muted);
 }
 
+/* Past programmes the provider archive can still play */
+.epg-catchup-badge {
+  color: var(--color-accent);
+  font-weight: 600;
+  margin-right: 0.25em;
+}
+
+.epg-catchup-error {
+  color: var(--color-error, #e5484d);
+}
+
 /* Current time indicator */
 .epg-now-line {
   position: absolute;

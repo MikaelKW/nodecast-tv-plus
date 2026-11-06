@@ -27,6 +27,7 @@ const {
     SingleFlight
 } = require('../services/requestControls');
 const catalogueService = require('../services/catalogueService');
+const catchup = require('../services/catchup');
 
 const logSafeError = (message, err) => console.error(message, redactText(err?.stack || err));
 const MAX_HLS_MANIFEST_BYTES = 5 * 1024 * 1024;
@@ -424,6 +425,66 @@ router.get('/xtream/:sourceId/stream/:streamId/:type?', async (req, res) => {
     } catch (err) {
         logSafeError('Error getting stream URL:', err);
         res.status(500).json({ error: 'Failed to get stream URL' });
+    }
+});
+
+// The provider's time zone addresses timeshift start times. It comes from
+// the cached account response; without it, UTC is the documented default.
+async function providerTimeZone(source) {
+    const read = () => cache.get('xtream', source.id, 'auth', 300000);
+    let data = read();
+    if (!data) {
+        try {
+            data = await upstreamSingleFlight.run(`auth:${source.id}`, async () => {
+                const latestCached = read();
+                if (latestCached) return latestCached;
+                return xtreamApi.createFromSource(source).authenticate();
+            });
+            cache.set('xtream', source.id, 'auth', data);
+        } catch (err) {
+            logSafeError('Xtream time zone lookup failed:', err);
+            return null;
+        }
+    }
+    return catchup.normalizeTimeZone(data?.server_info?.timezone);
+}
+
+// Catch-up: the provider's recording of a past programme on an
+// archive-enabled channel, starting at `start` and ending at `end`.
+router.get('/xtream/:sourceId/catchup/:streamId', limitUpstreamMetadata, async (req, res) => {
+    try {
+        const resolved = await requireLiveCatalogueSource(req, res);
+        if (!resolved) return;
+        if (resolved.source.type !== 'xtream') {
+            return res.status(404).json({ error: 'Catch-up is available for Xtream sources only' });
+        }
+
+        const channel = catalogueService.getLiveChannel(resolved.sourceId, req.params.streamId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        const request = catchup.resolveRequest({
+            start: req.query.start,
+            end: req.query.end,
+            window: catchup.archiveWindow(channel)
+        });
+        const timeZone = await providerTimeZone(resolved.source);
+        const url = catchup.buildTimeshiftUrl(
+            resolved.source, channel.stream_id, request.providerStart, request.minutes, timeZone
+        );
+        await catchup.confirmAvailable(url, (target, options) => fetchWithPolicy(
+            target, options, { allowPrivateHosts: [resolved.source.url] }
+        ));
+        res.json({
+            url,
+            providerStart: new Date(request.providerStart).toISOString(),
+            minutes: request.minutes
+        });
+    } catch (err) {
+        if (err.statusCode && (err.statusCode < 500 || err.statusCode === 502)) {
+            return res.status(err.statusCode).json({ error: err.message });
+        }
+        logSafeError('Catch-up URL error:', err);
+        res.status(500).json({ error: 'Failed to get catch-up URL' });
     }
 });
 
