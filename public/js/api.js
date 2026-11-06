@@ -217,7 +217,16 @@ const API = {
         enroll: (data) => API.request('POST', '/auth/2fa/enroll', data, { redirectOnUnauthorized: false }),
         confirm: (code) => API.request('POST', '/auth/2fa/confirm', { code }, { redirectOnUnauthorized: false }),
         regenerateRecoveryCodes: (data) => API.request('POST', '/auth/2fa/recovery-codes', data, { redirectOnUnauthorized: false }),
-        disable: (data) => API.request('POST', '/auth/2fa/disable', data, { redirectOnUnauthorized: false })
+        disable: (data) => API.request('POST', '/auth/2fa/disable', data, { redirectOnUnauthorized: false }),
+        reauthPasskeyOptions: () => API.request('POST', '/auth/2fa/reauth/passkey-options', {}, { redirectOnUnauthorized: false })
+    },
+
+    passkeys: {
+        list: () => API.request('GET', '/auth/passkeys'),
+        registrationOptions: (data) => API.request('POST', '/auth/passkeys/registration/options', data, { redirectOnUnauthorized: false }),
+        register: (data) => API.request('POST', '/auth/passkeys/registration/verify', data, { redirectOnUnauthorized: false }),
+        rename: (id, name) => API.request('PATCH', `/auth/passkeys/${encodeURIComponent(id)}`, { name }, { redirectOnUnauthorized: false }),
+        remove: (id, data) => API.request('DELETE', `/auth/passkeys/${encodeURIComponent(id)}`, data, { redirectOnUnauthorized: false })
     }
 };
 

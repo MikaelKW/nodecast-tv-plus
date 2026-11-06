@@ -5,7 +5,6 @@ const db = require('../db');
 const auth = require('../auth');
 const authenticationConfig = require('../config/authentication');
 const { requestBasePath, withBasePath } = require('../config/basePath');
-const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
 const { normalizePreferences } = require('../../public/js/components/SubtitlePreferences');
 const {
@@ -125,8 +124,8 @@ router.get('/oidc/callback',
     authenticateOidc({ session: false, failureRedirect: withBasePath('/login.html?error=SSO+Failed') }),
     async (req, res) => {
         try {
-            if (twoFactorAuth.hasEnabledTotp(req.user)) {
-                if (!totpService.isAvailable()) {
+            if (twoFactorAuth.hasSecondFactor(req.user)) {
+                if (twoFactorAuth.availableMethods(req.user).length === 0) {
                     return res.status(503).send('Two-factor authentication is temporarily unavailable.');
                 }
                 auth.clearAuthCookie(req, res);
@@ -248,13 +247,15 @@ router.post('/login', (req, res, next) => {
             passwordIdentityLimiter.reset(identityKey);
             passwordIpLimiter.reset(ipKey);
 
-            if (twoFactorAuth.hasEnabledTotp(user)) {
-                if (!totpService.isAvailable()) {
+            // Any enrolled second factor, TOTP or passkey, makes password
+            // sign-in a two-step process.
+            if (twoFactorAuth.hasSecondFactor(user)) {
+                if (twoFactorAuth.availableMethods(user).length === 0) {
                     return res.status(503).json({ error: 'Two-factor authentication is temporarily unavailable.' });
                 }
                 auth.clearAuthCookie(req, res);
                 await twoFactorAuth.beginChallenge(req, user);
-                return res.json({ requiresTwoFactor: true });
+                return res.json({ requiresTwoFactor: true, methods: twoFactorAuth.availableMethods(user) });
             }
 
             // Generate JWT token
@@ -468,5 +469,6 @@ router.delete('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res
 });
 
 router.use('/2fa', require('./totp'));
+router.use('/passkeys', require('./passkeys'));
 
 module.exports = router;

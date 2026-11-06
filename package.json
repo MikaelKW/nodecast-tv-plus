@@ -12,6 +12,7 @@
         "test:e2e": "playwright test",
         "test:e2e:mobile": "playwright test --config=playwright.mobile.config.js",
         "test:e2e:subpath": "playwright test --config=playwright.subpath.config.js",
+        "test:e2e:passkeys": "playwright test --config=playwright.passkeys.config.js",
         "test:hardware": "node scripts/hw-detect-test.js",
         "test:oidc": "node scripts/oidc-discovery-test.js",
         "test:xtream": "node scripts/xtream-epg-collision-test.js",
@@ -34,6 +35,8 @@
         "test:remux": "node scripts/remux-test.js",
         "test:xtream-fallback": "node scripts/xtream-format-fallback-test.js",
         "test:totp": "node scripts/totp-auth-test.js",
+        "test:passkeys": "node scripts/passkey-auth-test.js",
+        "test:security-state": "node scripts/security-state-race-test.js",
         "test:session-isolation": "node scripts/session-cookie-isolation-test.js",
         "test:performance": "node scripts/large-provider-performance-test.js",
         "test:favorite-channels": "node scripts/favorite-channels-test.js",
@@ -47,10 +50,11 @@
         "test:resource-controls": "node scripts/resource-controls-test.js",
         "test:updates": "node scripts/release-update-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:users && npm run test:db-concurrency && npm run test:diagnostics && npm run test:health && npm run test:proxy && npm run test:m3u-media-access && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:epg-atomic && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:catalogue-search && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:users && npm run test:db-concurrency && npm run test:diagnostics && npm run test:health && npm run test:proxy && npm run test:m3u-media-access && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:totp && npm run test:passkeys && npm run test:security-state && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:epg-atomic && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:catalogue-search && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
+        "@simplewebauthn/server": "^14.0.3",
         "bcryptjs": "^3.0.3",
         "better-sqlite3": "^12.5.0",
         "compression": "^1.8.2",
@@ -75,7 +79,7 @@
         "qs": "6.16.1"
     },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=20.0.0"
     },
     "devDependencies": {
         "@playwright/test": "^1.64.1"

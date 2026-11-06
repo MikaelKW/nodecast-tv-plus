@@ -847,8 +847,12 @@ class SettingsPage {
                     ? '<span class="user-badge user-badge-admin">Admin</span>'
                     : '<span class="user-badge user-badge-viewer">Viewer</span>';
 
+                const factorNames = [
+                    user.totpEnabled ? 'Authenticator app' : '',
+                    user.passkeyCount > 0 ? `${user.passkeyCount} ${user.passkeyCount === 1 ? 'passkey' : 'passkeys'}` : ''
+                ].filter(Boolean).join(', ');
                 const twoFactorBadge = user.twoFactorEnabled
-                    ? '<span class="user-badge user-badge-2fa">Enabled</span>'
+                    ? `<span class="user-badge user-badge-2fa" title="${factorNames}">Enabled</span>${factorNames ? `<div class="hint">${factorNames}</div>` : ''}`
                     : '<span class="hint">Not enabled</span>';
                 const resetTwoFactorButton = user.twoFactorEnabled &&
                     user.id !== this.app.currentUser?.id &&
@@ -893,18 +897,14 @@ class SettingsPage {
             document.body.appendChild(overlay);
         }
 
-        const factorFields = this.app.currentUser?.twoFactorEnabled ? `
-            <div class="modal-form-group">
-              <label for="reset-two-factor-method">Current verification method</label>
-              <select id="reset-two-factor-method" class="form-input">
-                <option value="totp">Authenticator code</option>
-                <option value="recovery">Recovery code</option>
-              </select>
-            </div>
-            <div class="modal-form-group">
-              <label for="reset-two-factor-code">Current verification code</label>
-              <input id="reset-two-factor-code" class="form-input" type="text" autocomplete="one-time-code" required>
-            </div>` : '';
+        const currentUser = this.app.currentUser || {};
+        const factorFields = currentUser.twoFactorEnabled
+            ? NodeCastVerificationFields.html(NodeCastVerificationFields.methodsFor({
+                passkeyCount: currentUser.passkeyCount || 0,
+                totpEnabled: currentUser.totpEnabled,
+                secondFactorEnabled: currentUser.twoFactorEnabled
+            }), { prefix: 'reset-two-factor', groupClass: 'modal-form-group' })
+            : '';
 
         overlay.innerHTML = `
           <div class="modal">
@@ -913,7 +913,7 @@ class SettingsPage {
               <button type="button" class="modal-close" data-close>&times;</button>
             </div>
             <div class="modal-body">
-              <p class="hint">This removes two-factor protection from the selected account. It does not reveal or replace the existing secret.</p>
+              <p class="hint">This removes every second factor from the selected account: the authenticator app, all passkeys, and all recovery codes. Pending sign-ins for the account are cancelled, and it can then sign in with only its password. Nothing secret is revealed.</p>
               <form id="reset-two-factor-form">
                 <div class="modal-form-group">
                   <label for="reset-two-factor-password">Your current password</label>
@@ -937,18 +937,7 @@ class SettingsPage {
         overlay.addEventListener('click', event => {
             if (event.target === overlay) close();
         }, { once: true });
-        const method = overlay.querySelector('#reset-two-factor-method');
-        const code = overlay.querySelector('#reset-two-factor-code');
-        if (method && code) {
-            const updateInputMode = () => {
-                const recovery = method.value === 'recovery';
-                code.value = '';
-                code.inputMode = recovery ? 'text' : 'numeric';
-                code.placeholder = recovery ? 'XXXXXX-XXXXXX-XXXXXX-XXXXXX' : '000000';
-            };
-            method.addEventListener('change', updateInputMode);
-            updateInputMode();
-        }
+        NodeCastVerificationFields.bind(overlay, 'reset-two-factor');
         overlay.querySelector('form').addEventListener('submit', async event => {
             event.preventDefault();
             const submit = overlay.querySelector('[type="submit"]');
@@ -958,8 +947,7 @@ class SettingsPage {
             try {
                 await API.users.resetTwoFactor(userId, {
                     password: overlay.querySelector('#reset-two-factor-password').value,
-                    credentialType: overlay.querySelector('#reset-two-factor-method')?.value || 'totp',
-                    credential: overlay.querySelector('#reset-two-factor-code')?.value || ''
+                    ...await NodeCastVerificationFields.payload(overlay, 'reset-two-factor')
                 });
                 close();
                 await this.loadUsers();

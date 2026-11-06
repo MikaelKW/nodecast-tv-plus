@@ -7,7 +7,6 @@ const ISSUER = 'NodeCast TV Plus';
 const ALGORITHM = 'SHA1';
 const DIGITS = 6;
 const PERIOD = 30;
-const RECOVERY_CODE_COUNT = 10;
 const ENROLLMENT_TTL_MS = 10 * 60 * 1000;
 
 function unavailableError() {
@@ -111,39 +110,6 @@ function validateToken(encryptedSecret, user, token, timestamp = Date.now()) {
     };
 }
 
-function normalizeRecoveryCode(code) {
-    const raw = String(code || '').trim().toUpperCase();
-    if (!/^[A-F0-9\s-]+$/.test(raw)) return '';
-    const compact = raw.replace(/[\s-]/g, '');
-    return compact.length === 24 ? compact : '';
-}
-
-function hashRecoveryCode(code) {
-    return crypto.createHmac('sha256', deriveKey('recovery-code-hashing'))
-        .update(normalizeRecoveryCode(code), 'utf8')
-        .digest('base64url');
-}
-
-function generateRecoveryCodes() {
-    const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => {
-        const compact = crypto.randomBytes(12).toString('hex').toUpperCase();
-        return compact.match(/.{1,6}/g).join('-');
-    });
-
-    return {
-        codes,
-        hashes: codes.map(hashRecoveryCode)
-    };
-}
-
-function findRecoveryCodeHash(storedHashes, code) {
-    const candidate = Buffer.from(hashRecoveryCode(code));
-    return (storedHashes || []).find(stored => {
-        const expected = Buffer.from(stored);
-        return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
-    }) || null;
-}
-
 function isAvailable() {
     return Boolean(securityConfig.totpEncryptionSecret);
 }
@@ -159,9 +125,5 @@ module.exports = {
     encryptSecret,
     decryptSecret,
     validateToken,
-    generateRecoveryCodes,
-    hashRecoveryCode,
-    findRecoveryCodeHash,
-    normalizeRecoveryCode,
     unavailableError
 };

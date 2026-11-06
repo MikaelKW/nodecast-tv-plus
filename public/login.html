@@ -190,6 +190,31 @@
             font-size: 14px;
         }
 
+        #passkey-login-section {
+            margin-top: var(--space-md);
+        }
+
+        .btn-login-outline {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: transparent;
+            border: 1px solid var(--color-border);
+            color: var(--color-text-primary);
+        }
+
+        .btn-login-outline:hover {
+            background: var(--color-bg-tertiary);
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        #two-factor-form [hidden] {
+            display: none;
+        }
+
         .login-secondary-action {
             width: 100%;
             margin-top: var(--space-md);
@@ -244,15 +269,31 @@
                 <button type="submit" class="btn-login" id="submit-btn">Sign In</button>
             </form>
 
+            <div id="passkey-login-section" hidden>
+                <button type="button" id="btn-passkey-login" class="btn-login btn-login-outline">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+                        style="width: 20px; height: 20px;">
+                        <path
+                            d="M7 14a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm5.65-4A6 6 0 1 0 12.65 14H16v4h4v-4h2v-4h-9.35Z" />
+                    </svg>
+                    Sign in with a passkey
+                </button>
+            </div>
+
             <form id="two-factor-form" hidden>
                 <p class="two-factor-help" id="two-factor-help">Enter the six-digit code from your authenticator app.</p>
-                <div class="form-group">
-                    <label for="two-factor-code" id="two-factor-code-label">Authenticator code</label>
-                    <input type="text" id="two-factor-code" name="code" inputmode="numeric" pattern="[0-9]{6}"
-                        maxlength="6" autocomplete="one-time-code" placeholder="000000">
+                <div id="two-factor-passkey-panel" hidden>
+                    <button type="button" class="btn-login" id="two-factor-passkey-btn">Use your passkey</button>
                 </div>
-                <button type="submit" class="btn-login" id="two-factor-submit-btn">Verify</button>
-                <button type="button" class="login-secondary-action" id="two-factor-method-btn">Use a recovery code</button>
+                <div id="two-factor-code-panel">
+                    <div class="form-group">
+                        <label for="two-factor-code" id="two-factor-code-label">Authenticator code</label>
+                        <input type="text" id="two-factor-code" name="code" inputmode="numeric" pattern="[0-9]{6}"
+                            maxlength="6" autocomplete="one-time-code" placeholder="000000">
+                    </div>
+                    <button type="submit" class="btn-login" id="two-factor-submit-btn">Verify</button>
+                </div>
+                <div id="two-factor-alternatives"></div>
                 <button type="button" class="login-secondary-action" id="two-factor-cancel-btn">Start over</button>
             </form>
 
@@ -290,6 +331,7 @@
     <script src="js/basePath.js?v=1"></script>
     <script src="js/passwordVisibility.js?v=1"></script>
     <script src="js/onboarding.js?v=1"></script>
+    <script src="js/passkeys.js?v=1"></script>
     <script>
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
@@ -317,6 +359,24 @@
         // Check if setup is required
         let isSetupMode = false;
         let twoFactorMethod = 'totp';
+        let twoFactorMethods = [];
+
+        const TWO_FACTOR_METHODS = {
+            passkey: {
+                switchLabel: 'Use a passkey',
+                help: 'Confirm the sign-in with one of your passkeys.'
+            },
+            totp: {
+                switchLabel: 'Use an authenticator code',
+                help: 'Enter the six-digit code from your authenticator app.',
+                label: 'Authenticator code'
+            },
+            recovery: {
+                switchLabel: 'Use a recovery code',
+                help: 'Enter one of the recovery codes saved during setup.',
+                label: 'Recovery code'
+            }
+        };
 
         function showError(message) {
             const errorMessage = document.getElementById('error-message');
@@ -324,12 +384,86 @@
             errorMessage.classList.add('show');
         }
 
-        function showTwoFactorChallenge() {
+        function clearError() {
+            const errorMessage = document.getElementById('error-message');
+            errorMessage.textContent = '';
+            errorMessage.classList.remove('show');
+        }
+
+        async function postJson(endpoint, body) {
+            const response = await fetch(NodeCastUrl.resolve(endpoint), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {})
+            });
+            let data = {};
+            try {
+                data = await response.json();
+            } catch {
+                data = {};
+            }
+            if (!response.ok) throw new Error(data.error || 'Authentication failed');
+            return data;
+        }
+
+        function setTwoFactorMethod(method) {
+            twoFactorMethod = method;
+            const code = document.getElementById('two-factor-code');
+            const usePasskey = method === 'passkey';
+            document.getElementById('two-factor-passkey-panel').hidden = !usePasskey;
+            document.getElementById('two-factor-code-panel').hidden = usePasskey;
+            document.getElementById('two-factor-help').textContent = TWO_FACTOR_METHODS[method].help;
+            code.value = '';
+            if (method === 'recovery') {
+                code.inputMode = 'text';
+                code.removeAttribute('pattern');
+                code.removeAttribute('maxlength');
+                code.placeholder = 'XXXXXX-XXXXXX-XXXXXX-XXXXXX';
+            } else {
+                code.inputMode = 'numeric';
+                code.pattern = '[0-9]{6}';
+                code.maxLength = 6;
+                code.placeholder = '000000';
+            }
+            if (!usePasskey) document.getElementById('two-factor-code-label').textContent = TWO_FACTOR_METHODS[method].label;
+
+            const alternatives = document.getElementById('two-factor-alternatives');
+            alternatives.replaceChildren(...twoFactorMethods
+                .filter(candidate => candidate !== method)
+                .map(candidate => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'login-secondary-action';
+                    button.dataset.method = candidate;
+                    button.textContent = TWO_FACTOR_METHODS[candidate].switchLabel;
+                    button.addEventListener('click', () => {
+                        clearError();
+                        setTwoFactorMethod(candidate);
+                    });
+                    return button;
+                }));
+
+            (usePasskey ? document.getElementById('two-factor-passkey-btn') : code).focus();
+        }
+
+        function showTwoFactorChallenge(methods = ['totp', 'recovery']) {
             document.getElementById('login-form').hidden = true;
             document.getElementById('sso-login-section').hidden = true;
+            document.getElementById('passkey-login-section').hidden = true;
             document.getElementById('two-factor-form').hidden = false;
             document.getElementById('login-subtitle').textContent = 'Two-factor verification';
-            document.getElementById('two-factor-code').focus();
+
+            twoFactorMethods = methods.filter(method => (
+                TWO_FACTOR_METHODS[method] && (method !== 'passkey' || NodeCastPasskeys.isSupported())
+            ));
+            if (twoFactorMethods.length === 0) {
+                document.getElementById('two-factor-passkey-panel').hidden = true;
+                document.getElementById('two-factor-code-panel').hidden = true;
+                document.getElementById('two-factor-help').textContent = '';
+                showError('None of this account\'s verification methods can be used in this browser. Use a recovery code on another device or ask an administrator to reset two-factor authentication.');
+                return;
+            }
+            setTwoFactorMethod(twoFactorMethods[0]);
         }
 
         async function checkTwoFactorChallenge() {
@@ -337,10 +471,22 @@
                 const response = await fetch(NodeCastUrl.resolve('/api/auth/2fa/challenge'));
                 if (!response.ok) return false;
                 const data = await response.json();
-                if (data.required) showTwoFactorChallenge();
+                if (data.required) showTwoFactorChallenge(data.methods);
                 return Boolean(data.required);
             } catch {
                 return false;
+            }
+        }
+
+        async function configurePasskeyLogin() {
+            const section = document.getElementById('passkey-login-section');
+            try {
+                const response = await fetch(NodeCastUrl.resolve('/api/auth/passkeys/availability'));
+                if (!response.ok) return;
+                const availability = await response.json();
+                section.hidden = Boolean(NodeCastPasskeys.unavailableReason(availability));
+            } catch {
+                section.hidden = true;
             }
         }
 
@@ -409,7 +555,10 @@
                     ssoDivider.hidden = true;
                     document.getElementById('login-subtitle').textContent = 'Redirecting to SSO...';
                     window.location.replace(NodeCastUrl.resolve('/api/auth/oidc/login'));
+                    return;
                 }
+
+                if (localAuthEnabled) await configurePasskeyLogin();
             } catch (err) {
                 console.warn('Could not check SSO availability:', err);
                 showError('Sign-in options could not be loaded. Please try again.');
@@ -465,7 +614,7 @@
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Sign In';
                     document.getElementById('password').value = '';
-                    showTwoFactorChallenge();
+                    showTwoFactorChallenge(data.methods);
                     return;
                 }
 
@@ -497,35 +646,51 @@
             }
         }));
 
-        document.getElementById('two-factor-method-btn').addEventListener('click', () => {
-            twoFactorMethod = twoFactorMethod === 'totp' ? 'recovery' : 'totp';
-            const code = document.getElementById('two-factor-code');
-            const label = document.getElementById('two-factor-code-label');
-            const help = document.getElementById('two-factor-help');
-            const methodButton = document.getElementById('two-factor-method-btn');
-            code.value = '';
-            if (twoFactorMethod === 'recovery') {
-                label.textContent = 'Recovery code';
-                help.textContent = 'Enter one of the recovery codes saved during setup.';
-                methodButton.textContent = 'Use an authenticator code';
-                code.inputMode = 'text';
-                code.removeAttribute('pattern');
-                code.removeAttribute('maxlength');
-                code.placeholder = 'XXXXXX-XXXXXX-XXXXXX-XXXXXX';
-            } else {
-                label.textContent = 'Authenticator code';
-                help.textContent = 'Enter the six-digit code from your authenticator app.';
-                methodButton.textContent = 'Use a recovery code';
-                code.inputMode = 'numeric';
-                code.pattern = '[0-9]{6}';
-                code.maxLength = 6;
-                code.placeholder = '000000';
+        document.getElementById('btn-passkey-login').addEventListener('click', async event => {
+            const button = event.currentTarget;
+            clearError();
+            button.disabled = true;
+            try {
+                const { options } = await postJson('/api/auth/passkeys/login/options');
+                let response;
+                try {
+                    response = await NodeCastPasskeys.authenticate(options);
+                } catch (error) {
+                    throw new Error(NodeCastPasskeys.errorMessage(error));
+                }
+                await postJson('/api/auth/passkeys/login/verify', { response });
+                window.location.replace(NodeCastUrl.resolve('/'));
+            } catch (error) {
+                showError(error.message);
+                button.disabled = false;
             }
-            code.focus();
+        });
+
+        document.getElementById('two-factor-passkey-btn').addEventListener('click', async event => {
+            const button = event.currentTarget;
+            clearError();
+            button.disabled = true;
+            button.textContent = 'Please wait...';
+            try {
+                const { options } = await postJson('/api/auth/2fa/passkey-options');
+                let credential;
+                try {
+                    credential = await NodeCastPasskeys.authenticate(options);
+                } catch (error) {
+                    throw new Error(NodeCastPasskeys.errorMessage(error));
+                }
+                await postJson('/api/auth/2fa/verify', { credentialType: 'passkey', credential });
+                window.location.replace(NodeCastUrl.resolve('/'));
+            } catch (error) {
+                showError(error.message);
+                button.disabled = false;
+                button.textContent = 'Use your passkey';
+            }
         });
 
         document.getElementById('two-factor-form').addEventListener('submit', async event => {
             event.preventDefault();
+            if (twoFactorMethod === 'passkey') return;
             const submit = document.getElementById('two-factor-submit-btn');
             const code = document.getElementById('two-factor-code');
             document.getElementById('error-message').classList.remove('show');
