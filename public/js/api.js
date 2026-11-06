@@ -59,6 +59,7 @@ const API = {
         delete: (id) => API.request('DELETE', `/sources/${id}`),
         toggle: (id) => API.request('POST', `/sources/${id}/toggle`),
         test: (id) => API.request('POST', `/sources/${id}/test`),
+        getAccount: (id, { refresh = false } = {}) => API.request('GET', `/sources/${id}/account${refresh ? '?refresh=1' : ''}`),
         sync: (id) => API.request('POST', `/sources/${id}/sync`), // Manual sync
         getStatus: () => API.request('GET', '/sources/status'), // Get all statuses
         estimate: (id) => API.request('GET', `/sources/${id}/estimate`), // Estimate M3U size

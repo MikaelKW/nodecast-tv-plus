@@ -39,6 +39,54 @@ const limitSourceTests = rateLimit({
     message: { error: 'Too many source connection tests. Try again shortly.' }
 });
 
+const limitSourceAccount = rateLimit({
+    limit: 60,
+    windowMs: 60 * 1000,
+    keyGenerator: req => String(req.user.id),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many account status requests. Try again shortly.' }
+});
+
+// The settings page asks for every Xtream source each time the list renders.
+// A short cache keeps that from becoming a provider request per render.
+const ACCOUNT_CACHE_TTL_MS = 30 * 1000;
+const accountCache = new Map(); // source id -> { connection, checkedAt, account }
+const accountRequests = new Map(); // source id -> { connection, promise }
+
+// An entry belongs to the connection details it was fetched with, so an
+// edited source never reuses the account of its old credentials.
+const connectionOf = source => ({ url: source.url, username: source.username, password: source.password });
+const sameConnection = (a, b) => Boolean(a && b)
+    && a.url === b.url && a.username === b.username && a.password === b.password;
+
+async function getAccountStatus(source, { refresh = false } = {}) {
+    const connection = connectionOf(source);
+    const cached = accountCache.get(source.id);
+    if (!refresh && sameConnection(cached?.connection, connection)
+        && Date.now() - cached.checkedAt < ACCOUNT_CACHE_TTL_MS) {
+        return cached;
+    }
+
+    const pending = accountRequests.get(source.id);
+    if (sameConnection(pending?.connection, connection)) return pending.promise;
+
+    const promise = (async () => {
+        const data = await xtreamApi.authenticate(source.url, source.username, source.password);
+        const account = xtreamApi.normalizeAccountInfo(data);
+        if (!account) throw new Error('Invalid credentials or server response');
+        const entry = { connection, checkedAt: Date.now(), account };
+        accountCache.set(source.id, entry);
+        return entry;
+    })();
+    accountRequests.set(source.id, { connection, promise });
+    try {
+        return await promise;
+    } finally {
+        if (accountRequests.get(source.id)?.promise === promise) accountRequests.delete(source.id);
+    }
+}
+
 const maskSource = source => ({
     ...source,
     password: source.password ? '********' : null
@@ -284,6 +332,29 @@ router.post('/:id/test', auth.requireAdmin, limitSourceTests, async (req, res) =
     } catch (err) {
         logSafeError('Error testing source:', err);
         res.json({ success: false, error: err.message });
+    }
+});
+
+// Xtream account status: subscription state, end date and connection usage
+router.get('/:id/account', auth.requireAdmin, limitSourceAccount, async (req, res) => {
+    try {
+        const source = await sources.getById(req.params.id);
+        if (!source) {
+            return res.status(404).json({ error: 'Source not found' });
+        }
+        if (source.type !== 'xtream') {
+            return res.status(400).json({ error: 'Account status is only available for Xtream sources' });
+        }
+
+        validateHttpUrl(source.url, 'Source URL');
+        const { checkedAt, account } = await getAccountStatus(source, { refresh: req.query.refresh === '1' });
+        res.set('Cache-Control', 'no-store');
+        res.json({ sourceId: source.id, checkedAt: new Date(checkedAt).toISOString(), account });
+    } catch (err) {
+        logSafeError('Error getting Xtream account status:', err);
+        res.status(err.statusCode || 502).json({
+            error: err.statusCode ? err.message : 'The provider did not return account information'
+        });
     }
 });
 
