@@ -1741,6 +1741,7 @@ class VideoPlayer {
         // iOS before 17.1 has no Media Source Extensions, so HLS.js cannot run,
         // but WebKit plays HLS playlists natively.
         if (!Hls.isSupported() && this.canPlayNativeHls()) {
+            this.getCaptionTracks().useNative();
             this.video.src = url;
             this.startVideoPlayback(playId).catch(e => {
                 this.reportBrowserPlaybackFailure(e, playId);
