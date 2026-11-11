@@ -1699,6 +1699,41 @@ video::cue {
   font-size: 0.75rem;
 }
 
+.source-account {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.source-account[hidden] {
+  display: none;
+}
+
+.source-account-part:not(:last-child)::after {
+  content: "·";
+  margin-left: var(--space-sm);
+  color: var(--color-text-muted);
+}
+
+.source-account-part.success {
+  color: var(--color-success);
+}
+
+.source-account-part.warning {
+  color: var(--color-warning);
+}
+
+.source-account-part.error {
+  color: var(--color-error);
+}
+
+.source-account-part.muted {
+  color: var(--color-text-muted);
+}
+
 .source-visibility-fields {
   display: grid;
   gap: var(--space-sm);
