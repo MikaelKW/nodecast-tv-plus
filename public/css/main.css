@@ -510,7 +510,10 @@ h4 {
 
 /* Sidebar */
 .channel-sidebar {
-  width: var(--sidebar-width);
+  /* --channel-sidebar-width is set by ChannelSidebarResizer on desktop. */
+  width: var(--channel-sidebar-width, var(--sidebar-width));
+  flex-shrink: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-secondary);
@@ -614,6 +617,42 @@ h4 {
 /* Smooth transitions */
 .channel-sidebar {
   transition: width 0.2s ease, min-width 0.2s ease;
+}
+
+/* Drag handle on the sidebar edge (desktop only) */
+.channel-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 20;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.channel-sidebar-resizer:hover,
+.channel-sidebar-resizer:focus-visible,
+.channel-sidebar-resizer.active {
+  background: var(--color-accent);
+  outline: none;
+}
+
+.channel-sidebar.resizing {
+  transition: none;
+  user-select: none;
+}
+
+.channel-sidebar.collapsed .channel-sidebar-resizer {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .channel-sidebar-resizer {
+    display: none;
+  }
 }
 
 .search-input {
@@ -1658,6 +1697,41 @@ video::cue {
   margin-top: var(--space-xs);
   color: var(--color-text-secondary);
   font-size: 0.75rem;
+}
+
+.source-account {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.source-account[hidden] {
+  display: none;
+}
+
+.source-account-part:not(:last-child)::after {
+  content: "·";
+  margin-left: var(--space-sm);
+  color: var(--color-text-muted);
+}
+
+.source-account-part.success {
+  color: var(--color-success);
+}
+
+.source-account-part.warning {
+  color: var(--color-warning);
+}
+
+.source-account-part.error {
+  color: var(--color-error);
+}
+
+.source-account-part.muted {
+  color: var(--color-text-muted);
 }
 
 .source-visibility-fields {
@@ -3503,6 +3577,14 @@ kbd {
   .channel-nav {
     display: none;
     /* Hide channel nav in landscape to save space */
+  }
+}
+
+/* The landscape rule above fixes the drawer width; on desktop layouts keep
+   the width chosen with the channel sidebar resizer. */
+@media (min-width: 769px) and (max-width: 896px) and (orientation: landscape) {
+  .channel-sidebar {
+    width: var(--channel-sidebar-width, 280px);
   }
 }
 

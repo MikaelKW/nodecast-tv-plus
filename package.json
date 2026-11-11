@@ -1,6 +1,6 @@
 {
     "name": "nodecast-tv-plus",
-    "version": "2.7.1",
+    "version": "2.7.2",
     "description": "NodeCast TV Plus - Modern IPTV Player",
     "license": "GPL-3.0-only",
     "main": "server/index.js",
@@ -16,12 +16,14 @@
         "test:oidc": "node scripts/oidc-discovery-test.js",
         "test:xtream": "node scripts/xtream-epg-collision-test.js",
         "test:xtream-api": "node scripts/xtream-api-compatibility-test.js",
+        "test:xtream-account": "node scripts/xtream-account-test.js",
         "test:variants": "node scripts/channel-variant-test.js",
         "test:catalogue-resilience": "node scripts/channel-catalogue-resilience-test.js && node scripts/live-catalogue-lifecycle-test.js",
         "test:catalogue-search": "node scripts/catalogue-search-test.js",
         "test:transcode": "node scripts/transcode-test.js",
         "test:subtitle": "node scripts/subtitle-test.js",
         "test:vod-duration": "node scripts/vod-duration-test.js",
+        "test:channel-sidebar": "node scripts/channel-sidebar-resize-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:migration": "node scripts/migration-test.js",
         "test:auth": "node scripts/auth-username-test.js",
@@ -47,7 +49,7 @@
         "test:resource-controls": "node scripts/resource-controls-test.js",
         "test:updates": "node scripts/release-update-test.js",
         "test:smoke": "node scripts/smoke-test.js",
-        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:users && npm run test:db-concurrency && npm run test:diagnostics && npm run test:health && npm run test:proxy && npm run test:m3u-media-access && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:epg-atomic && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:catalogue-search && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:smoke"
+        "test": "npm run check && npm run release:check && npm run test:security && npm run test:resource-controls && npm run test:updates && npm run test:auth && npm run test:users && npm run test:db-concurrency && npm run test:diagnostics && npm run test:health && npm run test:proxy && npm run test:m3u-media-access && npm run test:ffmpeg-binary && npm run test:remux && npm run test:xtream-fallback && npm run test:xtream-api && npm run test:xtream-account && npm run test:totp && npm run test:session-isolation && npm run test:performance && npm run test:favorite-channels && npm run test:content-visibility && npm run test:content-group-state && npm run test:epg-atomic && npm run test:xmltv && npm run test:hardware && npm run test:oidc && npm run test:xtream && npm run test:variants && npm run test:catalogue-resilience && npm run test:catalogue-search && npm run test:transcode && npm run test:subtitle && npm run test:vod-duration && npm run test:channel-sidebar && npm run test:smoke"
     },
     "dependencies": {
         "@ffprobe-installer/ffprobe": "^2.1.2",
@@ -72,12 +74,12 @@
         "ffmpeg-static": "^5.3.0"
     },
     "overrides": {
-        "qs": "6.16.0"
+        "qs": "6.16.1"
     },
     "engines": {
         "node": ">=18.0.0"
     },
     "devDependencies": {
-        "@playwright/test": "^1.63.0"
+        "@playwright/test": "^1.64.1"
     }
 }

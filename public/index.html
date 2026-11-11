@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=23">
+  <link rel="stylesheet" href="css/main.css?v=24">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -165,6 +165,9 @@
 
               </div>
             </div>
+            <div class="channel-sidebar-resizer" id="channel-sidebar-resizer" role="separator"
+              aria-orientation="vertical" aria-controls="channel-sidebar" aria-label="Resize channel list"
+              title="Drag to resize · Double-click to reset" tabindex="0"></div>
             <div id="channel-list" class="channel-list">
               <div class="empty-state">
                 <p>No channels loaded</p>
@@ -1583,14 +1586,15 @@
   <script src="js/passwordVisibility.js?v=1"></script>
   <script src="js/onboarding.js?v=1"></script>
   <script src="js/icons.js"></script>
-  <script src="js/api.js?v=7"></script>
+  <script src="js/api.js?v=8"></script>
   <script src="js/components/SubtitlePreferences.js?v=3"></script>
   <script src="js/components/VodDuration.js?v=1"></script>
   <script src="js/components/PlaybackQuality.js?v=1"></script>
   <script src="js/components/CaptionTracks.js?v=1"></script>
   <script src="js/components/VideoPlayer.js?v=15"></script>
   <script src="js/components/ChannelList.js?v=7"></script>
-  <script src="js/components/SourceManager.js?v=7"></script>
+  <script src="js/components/ChannelSidebarResizer.js?v=1"></script>
+  <script src="js/components/SourceManager.js?v=9"></script>
   <script src="js/components/EpgGuide.js?v=2"></script>
   <script src="js/pages/HomePage.js?v=3"></script>
   <script src="js/pages/LivePage.js?v=3"></script>
