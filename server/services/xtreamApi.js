@@ -154,6 +154,52 @@ class XtreamApi {
     }
 }
 
+const ACCOUNT_STATUS_MAX_LENGTH = 32;
+
+function toCount(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+}
+
+function toIsoFromUnixSeconds(value) {
+    const seconds = toCount(value);
+    // Providers send 0, null or an empty string for accounts without an end date.
+    if (!seconds) return null;
+    const date = new Date(seconds * 1000);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
+ * Reduce the provider's user_info to the account fields shown to
+ * administrators. Credentials and other provider fields are left out.
+ */
+function normalizeAccountInfo(data, now = Date.now()) {
+    const info = data && typeof data.user_info === 'object' && data.user_info !== null
+        ? data.user_info
+        : null;
+    if (!info) return null;
+
+    const status = typeof info.status === 'string'
+        ? info.status.replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, ACCOUNT_STATUS_MAX_LENGTH)
+        : '';
+    const authorized = Number(info.auth) === 1;
+    const expiresAt = toIsoFromUnixSeconds(info.exp_date);
+    const expired = expiresAt !== null && Date.parse(expiresAt) <= now;
+
+    return {
+        authorized,
+        status: status || null,
+        active: authorized && !expired && status.toLowerCase() === 'active',
+        expiresAt,
+        expired,
+        isTrial: Number(info.is_trial) === 1,
+        maxConnections: toCount(info.max_connections),
+        activeConnections: toCount(info.active_cons),
+        createdAt: toIsoFromUnixSeconds(info.created_at)
+    };
+}
+
 /**
  * Factory function to create API instance from source
  */
@@ -169,4 +215,4 @@ async function authenticate(url, username, password) {
     return api.authenticate();
 }
 
-module.exports = { XtreamApi, createFromSource, authenticate };
+module.exports = { XtreamApi, createFromSource, authenticate, normalizeAccountInfo };
