@@ -107,7 +107,11 @@ async function testSupersededLookups() {
     const container = {
         hidden: true,
         texts: [],
-        replaceChildren(...children) { this.texts = children.map(child => child.textContent); }
+        classes: [],
+        replaceChildren(...children) {
+            this.texts = children.map(child => child.textContent);
+            this.classes = children.map(child => child.className);
+        }
     };
     const lookups = [];
     const manager = loadSourceManager({
@@ -147,6 +151,12 @@ async function testSupersededLookups() {
     lookups[4].resolve({ account: account(0) });
     await other;
     assert.ok(container.texts.includes('Connections 0 / 2'));
+
+    const currentFailure = manager.loadAccountStatus(8);
+    lookups[5].reject(new Error('provider unavailable'));
+    await assert.rejects(currentFailure);
+    assert.deepEqual(container.texts, ['Account status unavailable']);
+    assert.deepEqual(container.classes, ['source-account-part error']);
 }
 
 function testDescribeAccount() {
@@ -203,7 +213,7 @@ function testDescribeAccount() {
     parts = describe({ ...base, maxConnections: null, activeConnections: null });
     assert.equal(parts.length, 2, 'Unknown connection counts are left out.');
 
-    assert.deepEqual(describe(null), [{ text: 'Account status unavailable', tone: 'muted' }]);
+    assert.deepEqual(describe(null), [{ text: 'Account status unavailable', tone: 'error' }]);
 }
 
 function getFreePort() {

@@ -188,7 +188,7 @@ class SourceManager {
         } catch (err) {
             const container = isCurrent() ? findContainer() : null;
             if (container) {
-                this.renderAccountStatus(container, [{ text: 'Account status unavailable', tone: 'muted' }]);
+                this.renderAccountStatus(container, this.describeAccount(null));
             }
             throw err;
         }
@@ -209,7 +209,7 @@ class SourceManager {
      * Each part has a text and a tone: success, warning, error or muted.
      */
     describeAccount(account, now = Date.now()) {
-        if (!account) return [{ text: 'Account status unavailable', tone: 'muted' }];
+        if (!account) return [{ text: 'Account status unavailable', tone: 'error' }];
 
         const DAY_MS = 24 * 60 * 60 * 1000;
         const parts = [];
