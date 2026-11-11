@@ -64,9 +64,10 @@ jobs:
       - name: Block high and critical production dependency vulnerabilities
         shell: bash
         run: |
+          trivy_image="$(bash scripts/resolve-trivy-image.sh)"
           docker run --rm \
             -v "${{ github.workspace }}:/workspace:ro" \
-            aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
+            "$trivy_image" \
             fs \
             --scanners vuln \
             --pkg-types library \
@@ -136,9 +137,10 @@ jobs:
       - name: Block fixable high and critical runtime vulnerabilities
         shell: bash
         run: |
+          trivy_image="$(bash scripts/resolve-trivy-image.sh)"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
+            "$trivy_image" \
             image \
             --scanners vuln \
             --pkg-types os \
