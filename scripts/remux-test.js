@@ -239,7 +239,7 @@ function createVideoStub(nativeHlsSupport) {
     };
 }
 
-function loadClientClass(file, className, Hls) {
+function loadClientClass(file, className, Hls, dependencies = []) {
     const context = {
         window: {},
         document: {},
@@ -251,16 +251,20 @@ function loadClientClass(file, className, Hls) {
         setTimeout() { return 1; }, clearTimeout() {}
     };
     vm.createContext(context);
-    vm.runInContext(
-        fs.readFileSync(path.join(__dirname, '..', 'public', 'js', file), 'utf8'),
-        context,
-        { filename: file }
-    );
+    for (const script of [...dependencies, file]) {
+        vm.runInContext(
+            fs.readFileSync(path.join(__dirname, '..', 'public', 'js', script), 'utf8'),
+            context,
+            { filename: script }
+        );
+    }
     return context.window[className];
 }
 
 function createLivePlayer(Hls, video) {
-    const VideoPlayer = loadClientClass('components/VideoPlayer.js', 'VideoPlayer', Hls);
+    const VideoPlayer = loadClientClass('components/VideoPlayer.js', 'VideoPlayer', Hls, [
+        'components/CaptionTracks.js'
+    ]);
     const player = Object.create(VideoPlayer.prototype);
     Object.assign(player, {
         _playId: 1,
