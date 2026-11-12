@@ -9,6 +9,7 @@ on:
       - Dockerfile
       - docker/**
       - .github/workflows/docker-publish.yml
+      - scripts/resolve-trivy-image.sh
       - scripts/verify-container-candidate.sh
       - scripts/assemble-container-index.sh
       - scripts/verify-media-build-cache.js
@@ -75,7 +76,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -114,7 +115,7 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request' && !inputs.validate_only
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -122,7 +123,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation)
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -170,7 +171,7 @@ jobs:
           node scripts/verify-media-build-cache.js "${args[@]}"
 
       - name: Upload concise native cache result
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: media-build-cache-${{ matrix.arch }}
           path: ${{ runner.temp }}/media-build-cache.json
@@ -219,7 +220,7 @@ jobs:
 
       - name: Upload native cache invalidation result
         if: github.event_name == 'workflow_dispatch' && inputs.verify_media_cache
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: media-cache-probes-${{ matrix.arch }}
           path: ${{ runner.temp }}/media-cache-probes.json
@@ -229,9 +230,10 @@ jobs:
       - name: Block fixable high and critical runtime vulnerabilities
         shell: bash
         run: |
+          trivy_image="$(bash scripts/resolve-trivy-image.sh)"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
+            "$trivy_image" \
             image --scanners vuln --pkg-types os --ignore-unfixed \
             --severity CRITICAL,HIGH --exit-code 1 --no-progress \
             --quiet --format json --output /tmp/runtime-scan.json \
@@ -277,7 +279,7 @@ jobs:
 
       - name: Upload platform digest
         if: github.event_name != 'pull_request' && !inputs.validate_only
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: container-digest-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
@@ -301,7 +303,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -309,14 +311,14 @@ jobs:
 
       - name: Log in to Docker Hub
         if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_dockerhub_validation)) && !inputs.validate_only
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Download verified platform digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: container-digest-*
           path: ${{ runner.temp }}/digests
@@ -449,14 +451,14 @@ jobs:
           fi
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}

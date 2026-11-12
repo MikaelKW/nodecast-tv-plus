@@ -113,6 +113,12 @@ class App {
             homeLayout?.classList.add('sidebar-collapsed');
         }
 
+        // Desktop sidebar width (drag the edge, double-click to reset)
+        window.ChannelSidebarResizer?.attach({
+            sidebar: channelSidebar,
+            handle: document.getElementById('channel-sidebar-resizer')
+        });
+
         // Navigation handling
         document.querySelectorAll('.nav-link').forEach(link => {
             link.addEventListener('click', (e) => {

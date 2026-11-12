@@ -8,6 +8,8 @@ class HlsAudioRecovery {
         const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
         this.chromium = options.chromium ?? /(?:Chrome|Chromium|Edg)\//.test(userAgent);
         this.now = options.now || (() => Date.now());
+        this.setTimer = options.setTimer || ((action, delay) => setTimeout(action, delay));
+        this.clearTimer = options.clearTimer || (handle => clearTimeout(handle));
         this.beforeRecovery = options.beforeRecovery;
         this.lastCC = null;
         this.lastRecovery = -Infinity;
@@ -16,17 +18,18 @@ class HlsAudioRecovery {
         this.disposed = false;
 
         this.onFragment = (event, data) => {
-            if (!this.active() || !data?.frag || data.frag.sn === 'initSegment') return;
+            if (!this.active() || !data?.frag || data.frag.sn === 'initSegment' ||
+                (data.frag.type && data.frag.type !== 'main')) return;
             const cc = data.frag.cc;
             if (!Number.isInteger(cc) || cc === this.lastCC) return;
             const previous = this.lastCC;
             this.lastCC = cc;
-            if (previous === null || !this.chromium) return;
+            if (previous === null || !this.chromium || this.video.seeking || this.onAttached) return;
             this.pendingBoundary = true;
             this.onPlaying();
         };
         this.onPlaying = () => {
-            if (!this.active() || !this.pendingBoundary || this.video.paused) return;
+            if (!this.active() || !this.pendingBoundary || this.video.paused || this.video.ended) return;
             this.pendingBoundary = false;
             this.requestRecovery('audio discontinuity');
         };
@@ -47,44 +50,66 @@ class HlsAudioRecovery {
         return !this.disposed && this.isCurrent();
     }
 
-    requestRecovery(reason) {
+    requestMediaError(data, mediaErrorType) {
+        // hls.js already handles ordinary stalls and buffer-hole nudges.
+        return data.type === mediaErrorType && (data.fatal || data.details === 'bufferAppendError') &&
+            this.requestRecovery('media error', { retryAfterCooldown: Boolean(data.fatal) });
+    }
+
+    togglePendingPlayback() {
+        if (!this.active() || !this.onAttached) return false;
+        this.resumeAfterAttach = !this.resumeAfterAttach;
+        return true;
+    }
+
+    requestRecovery(reason, { retryAfterCooldown = false } = {}) {
         if (!this.active()) return false;
         if (this.timer !== undefined || this.onAttached) return true;
         const now = this.now();
         this.attempts = this.attempts.filter(time => now - time < 30000);
-        if (now - this.lastRecovery < 2000 || this.attempts.length >= 3) return false;
+        if (this.attempts.length >= 3) return false;
+        const delay = Math.max(0, 2000 - (now - this.lastRecovery));
+        if (delay && !retryAfterCooldown) return false;
 
         // Let HLS finish dispatching the fragment/error event before detaching its media.
-        this.timer = setTimeout(() => {
+        this.timer = this.setTimer(() => {
             this.timer = undefined;
-            if (!this.active()) return;
+            if (!this.active() || this.video.ended) return;
             const position = this.video.currentTime;
-            const resume = !this.video.paused && !this.video.ended;
+            this.resumeAfterAttach = !this.video.paused;
             const restoreCaptions = this.beforeRecovery?.();
             this.previousStartPosition = this.hls.config.startPosition;
             if (Number.isFinite(position) && position >= 0) this.hls.config.startPosition = position;
             this.lastRecovery = this.now();
             this.attempts.push(this.lastRecovery);
-            this.onAttached = () => {
-                if (!this.active() || !this.onAttached) return;
-                this.hls.off(this.events.MEDIA_ATTACHED, this.onAttached);
-                this.onAttached = null;
-                this.hls.config.startPosition = this.previousStartPosition;
+            const onAttached = () => {
+                if (this.onAttached !== onAttached) return;
+                const resume = this.resumeAfterAttach;
+                this.cancelRecovery();
                 if (!this.active()) return;
                 restoreCaptions?.();
                 if (resume) this.video.play().catch(() => {});
                 else this.video.pause();
             };
-            this.hls.on(this.events.MEDIA_ATTACHED, this.onAttached);
+            this.onAttached = onAttached;
+            this.hls.on(this.events.MEDIA_ATTACHED, onAttached);
+            this.attachTimer = this.setTimer(() => this.cancelRecovery(), 5000);
             console.info(`[HLS] Refreshing media decoder: ${reason}`);
-            this.hls.recoverMediaError();
-        }, 0);
+            try {
+                this.hls.recoverMediaError();
+            } catch (error) {
+                this.cancelRecovery();
+                console.warn('[HLS] Media decoder could not be refreshed:', error.name);
+            }
+        }, delay);
         return true;
     }
 
     cancelRecovery() {
-        clearTimeout(this.timer);
+        this.clearTimer(this.timer);
         this.timer = undefined;
+        this.clearTimer(this.attachTimer);
+        this.attachTimer = undefined;
         if (this.onAttached) {
             this.hls.off(this.events.MEDIA_ATTACHED, this.onAttached);
             this.hls.config.startPosition = this.previousStartPosition;
