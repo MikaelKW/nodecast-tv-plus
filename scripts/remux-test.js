@@ -263,7 +263,8 @@ function loadClientClass(file, className, Hls, dependencies = []) {
 
 function createLivePlayer(Hls, video) {
     const VideoPlayer = loadClientClass('components/VideoPlayer.js', 'VideoPlayer', Hls, [
-        'components/CaptionTracks.js'
+        'components/CaptionTracks.js',
+        'components/HlsAudioRecovery.js'
     ]);
     const player = Object.create(VideoPlayer.prototype);
     Object.assign(player, {
@@ -278,7 +279,9 @@ function createLivePlayer(Hls, video) {
 }
 
 function createWatchPage(Hls, video) {
-    const WatchPage = loadClientClass('pages/WatchPage.js', 'WatchPage', Hls);
+    const WatchPage = loadClientClass('pages/WatchPage.js', 'WatchPage', Hls, [
+        'components/HlsAudioRecovery.js'
+    ]);
     const watch = Object.create(WatchPage.prototype);
     Object.assign(watch, {
         _diagnosticPlayId: 1,
