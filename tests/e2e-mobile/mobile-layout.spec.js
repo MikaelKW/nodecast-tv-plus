@@ -84,6 +84,9 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await page.setViewportSize({ width: 874, height: 402 });
     await page.goto('/login.html');
     await expect(page.locator('#setup-message')).toHaveClass(/show/);
+    await expect(page.locator('#username')).toHaveAttribute('autocapitalize', 'none');
+    await expect(page.locator('#username')).toHaveAttribute('autocorrect', 'off');
+    await expect(page.locator('#username')).toHaveAttribute('spellcheck', 'false');
     const loginLayout = await page.evaluate(() => {
         window.scrollTo(0, document.documentElement.scrollHeight);
         return {
@@ -298,12 +301,15 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     expect(themeLayout.cards.every(card => (
         card.left >= 0 && card.right <= themeLayout.viewportWidth + 1 && card.width > 0
     ))).toBe(true);
-    await page.locator('input[name="theme-preference"][value="light"]').check();
+    await page.locator('label.theme-option:has(input[value="light"])').click();
+    await expect(page.locator('input[name="theme-preference"][value="light"]')).toBeChecked();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.locator('input[name="theme-preference"][value="system"]').check();
+    await page.locator('label.theme-option:has(input[value="system"])').click();
+    await expect(page.locator('input[name="theme-preference"][value="system"]')).toBeChecked();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await page.locator('input[name="theme-preference"][value="dark"]').check();
+    await page.locator('label.theme-option:has(input[value="dark"])').click();
+    await expect(page.locator('input[name="theme-preference"][value="dark"]')).toBeChecked();
     await scrollToBottom(page, '.settings-container');
     await expectInsideScroller(page, '.interface-settings-actions', '.settings-container');
 
@@ -381,6 +387,50 @@ test('mobile Safari can reach page content in portrait and landscape', async ({ 
     await expectFinalCardReachable(page, '#movies-grid', '.movie-card');
     await page.evaluate(() => window.app.navigateTo('series'));
     await expectFinalCardReachable(page, '#series-grid', '.series-card');
+
+    await page.evaluate(() => {
+        window.app.navigateTo('watch');
+        window.app.pages.watch.showOverlay();
+    });
+    for (const viewport of [{ width: 402, height: 874 }, { width: 874, height: 320 }, { width: 874, height: 402 }]) {
+        await page.setViewportSize(viewport);
+        const layout = await page.locator('.watch-video-section').evaluate(section => {
+            const bounds = section.getBoundingClientRect();
+            const controls = section.querySelector('#watch-fullscreen').getBoundingClientRect();
+            return { top: bounds.top, bottom: bounds.bottom, controlsTop: controls.top, controlsBottom: controls.bottom,
+                viewportBottom: window.visualViewport.height + window.visualViewport.offsetTop };
+        });
+        expect(layout.bottom).toBeLessThanOrEqual(layout.viewportBottom + 1);
+        expect(layout.controlsTop).toBeGreaterThanOrEqual(layout.top);
+        expect(layout.controlsBottom).toBeLessThanOrEqual(layout.viewportBottom + 1);
+    }
+
+    // Some iPhone browsers expose the methods even though element fullscreen is disabled.
+    // The Watch control should enter native video fullscreen and restore inline captions on exit.
+    const watchFullscreen = await page.evaluate(() => {
+        const watch = window.app.pages.watch;
+        const section = document.querySelector('.watch-video-section');
+        Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false });
+        Object.defineProperty(document, 'webkitFullscreenEnabled', { configurable: true, value: false });
+        let elementCalls = 0, nativeCalls = 0;
+        Object.defineProperty(section, 'requestFullscreen', { configurable: true, value: async () => { elementCalls++; } });
+        Object.defineProperty(section, 'webkitRequestFullscreen', { configurable: true, value: () => { elementCalls++; } });
+        Object.defineProperty(watch.video, 'webkitEnterFullscreen', { configurable: true, value: () => { nativeCalls++; } });
+        const track = watch.video.addTextTrack('subtitles', 'Fullscreen test', 'en');
+        watch.setActiveSubtitleTrack(track);
+        const inlineMode = track.mode;
+        document.getElementById('watch-fullscreen').click();
+        const fullscreenMode = track.mode;
+        watch.video.dispatchEvent(new Event('webkitendfullscreen'));
+        const restoredMode = track.mode;
+        watch.setActiveSubtitleTrack(null);
+        delete document.fullscreenEnabled;
+        delete document.webkitFullscreenEnabled;
+        return { elementCalls, nativeCalls, inlineMode, fullscreenMode, restoredMode };
+    });
+    expect(watchFullscreen).toEqual({
+        elementCalls: 0, nativeCalls: 1, inlineMode: 'hidden', fullscreenMode: 'showing', restoredMode: 'hidden'
+    });
 
     // iPhone Safari does not expose the standard element fullscreen API for
     // the Live TV container. The custom control must fall back to native
