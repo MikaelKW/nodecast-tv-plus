@@ -82,7 +82,6 @@ class WatchPage {
         this.browserPlaybackRenewalTimer = null;
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
         this.sourceUrl = null;
         this.playbackQuality = 'auto';
         this.qualityChanging = false;
@@ -301,7 +300,6 @@ class WatchPage {
         });
         this.video?.addEventListener('waiting', () => this.showLoading());
         this.video?.addEventListener('canplay', () => {
-            this.hlsMediaRecoveryCount = 0;
             this.hideLoading();
             this.scheduleSelectedSubtitleRestore();
         });
@@ -1164,10 +1162,11 @@ class WatchPage {
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
 
+        this.audioRecovery?.dispose();
+        this.audioRecovery = null;
         if (this.hls) {
             this.hls.destroy();
             this.hls = null;
@@ -1207,6 +1206,30 @@ class WatchPage {
         });
 
         const activeHls = this.hls;
+        this.audioRecovery = new HlsAudioRecovery(activeHls, this.video, Hls.Events,
+            () => this.hls === activeHls && this._diagnosticPlayId === playId, {
+                beforeRecovery: () => {
+                    const selected = this.activeSubtitleTrack;
+                    const mode = selected?.mode;
+                    const cues = Array.from(selected?.cues || []);
+                    return () => {
+                        if (this.activeSubtitleTrack !== selected) return;
+                        if (selected) {
+                            selected.mode = 'hidden';
+                            const key = cue => JSON.stringify([cue.id, cue.startTime, cue.endTime, cue.text]);
+                            const present = new Set(Array.from(selected.cues || [], key));
+                            for (const cue of cues) {
+                                const id = key(cue);
+                                if (present.has(id)) continue;
+                                selected.addCue(cue);
+                                present.add(id);
+                            }
+                            selected.mode = mode;
+                        }
+                        this.scheduleSelectedSubtitleRestore();
+                    };
+                }
+            });
 
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
@@ -1286,21 +1309,8 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
-            if (!data.fatal || activeHls !== this.hls) return;
-
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                this.hlsMediaRecoveryCount += 1;
-                console.warn(`[WatchPage] Recovering from HLS media error (${this.hlsMediaRecoveryCount}/2):`, data.details);
-                if (this.hlsMediaRecoveryCount === 1) {
-                    activeHls.recoverMediaError();
-                    return;
-                }
-                if (this.hlsMediaRecoveryCount === 2) {
-                    activeHls.swapAudioCodec();
-                    activeHls.recoverMediaError();
-                    return;
-                }
-            }
+            if (activeHls !== this.hls || this._diagnosticPlayId !== playId) return;
+            if (this.audioRecovery.requestMediaError(data, Hls.ErrorTypes.MEDIA_ERROR) || !data.fatal) return;
 
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                 this.hlsRecoveryCount += 1;
@@ -1358,12 +1368,13 @@ class WatchPage {
     }
 
     stop({ saveHistory = true } = {}) {
+        this.audioRecovery?.dispose();
+        this.audioRecovery = null;
         this.finishBrowserPlayback('browser_stopped');
         this._diagnosticPlayId += 1;
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
 
         // Stop history tracking and save final progress
         this.stopHistoryTracking();
@@ -1410,6 +1421,7 @@ class WatchPage {
     // === Playback Controls ===
 
     togglePlay() {
+        if (this.audioRecovery?.togglePendingPlayback()) return;
         if (this.video.paused) {
             this.video.play().catch(console.error);
         } else {
