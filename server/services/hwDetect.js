@@ -9,7 +9,7 @@
  * Results are cached at startup and exposed via API.
  */
 
-const { execSync, exec } = require('child_process');
+const { execSync, exec, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -150,8 +150,24 @@ async function detectVAAPI() {
  * Detect Intel QuickSync support
  * Checks if FFmpeg can use QSV
  */
-async function detectQuickSync() {
+async function detectQuickSync(ffmpegPath = 'ffmpeg') {
     try {
+        if (os.platform() === 'linux') {
+            const device = findIntelRenderDevice();
+            if (!device) return { available: false, reason: 'No Intel GPU found' };
+            fs.accessSync(device, fs.constants.R_OK | fs.constants.W_OK);
+            const usable = await new Promise(resolve => {
+                execFile(ffmpegPath, ['-hide_banner', '-loglevel', 'error',
+                    '-init_hw_device', `qsv=probe:hw,child_device=${device},child_device_type=vaapi`,
+                    '-filter_hw_device', 'probe', '-f', 'lavfi', '-i', 'color=s=64x64:r=1',
+                    '-vf', 'format=nv12,hwupload=extra_hw_frames=16', '-c:v', 'h264_qsv',
+                    '-frames:v', '1', '-f', 'null', '-'],
+                { timeout: 5000, killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 256 * 1024 }, error => resolve(!error));
+            });
+            return usable
+                ? { available: true, device, encoder: 'h264_qsv', decoder: 'h264_qsv' }
+                : { available: false, reason: 'QSV encode test failed' };
+        }
         // Check if Intel GPU exists
         let hasIntelGpu = false;
 
@@ -237,7 +253,7 @@ async function detectAMF() {
  * Detect all hardware capabilities
  * Results are cached for performance
  */
-async function detect() {
+async function detect(ffmpegPath = 'ffmpeg') {
     if (hwCapabilities !== null) {
         return hwCapabilities;
     }
@@ -247,7 +263,7 @@ async function detect() {
     const [nvidia, vaapi, qsv, amf] = await Promise.all([
         detectNvidia(),
         detectVAAPI(),
-        detectQuickSync(),
+        detectQuickSync(ffmpegPath),
         detectAMF()
     ]);
 
@@ -288,9 +304,9 @@ function getCapabilities() {
 /**
  * Force re-detection (clears cache)
  */
-async function refresh() {
+async function refresh(ffmpegPath = 'ffmpeg') {
     hwCapabilities = null;
-    return detect();
+    return detect(ffmpegPath);
 }
 
 module.exports = {
