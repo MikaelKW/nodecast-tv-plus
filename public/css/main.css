@@ -4261,8 +4261,18 @@ kbd {
   /* fallback */
   height: calc(100dvh - var(--navbar-height));
   /* dynamic viewport for modern browsers */
-  min-height: 400px;
+  min-height: 0;
   background: #000;
+}
+
+.watch-video-section:fullscreen {
+  width: 100%;
+  height: 100%;
+}
+
+.watch-video-section:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
 }
 
 #watch-video {
