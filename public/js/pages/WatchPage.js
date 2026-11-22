@@ -174,15 +174,6 @@ class WatchPage {
             window.addEventListener('resize', updateIosUiBottom);
         }
 
-        // iOS: use custom --vh unit to avoid 100vh issues with dynamic toolbar
-        const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
-        const watchVideoSection = document.querySelector('.watch-video-section');
-        if (isIOS && watchVideoSection) {
-            const vh = window.innerHeight * 0.01;
-            document.documentElement.style.setProperty('--vh', `${vh}px`);
-            watchVideoSection.style.height = 'calc(var(--vh) * 100)';
-        }
-
         // Apply safe area + iOS toolbar padding to overlay
         if (this.overlay) {
             this.overlay.style.paddingBottom = 'calc(env(safe-area-inset-bottom, 0px) + var(--ios-ui-bottom, 0px) + 12px)';
@@ -1593,9 +1584,11 @@ class WatchPage {
                 document.webkitExitFullscreen();
             }
         } else {
-            if (container?.requestFullscreen) {
-                container.requestFullscreen();
-            } else if (container?.webkitRequestFullscreen) {
+            if (document.fullscreenEnabled !== false &&
+                (document.fullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && container?.requestFullscreen) {
+                container.requestFullscreen().catch(error => console.warn('[WatchPage] Fullscreen unavailable:', error.name));
+            } else if (document.webkitFullscreenEnabled !== false &&
+                (document.webkitFullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && container?.webkitRequestFullscreen) {
                 container.webkitRequestFullscreen();
             } else if (this.video?.webkitEnterFullscreen) {
                 // iOS Safari: use native video fullscreen
@@ -1604,7 +1597,7 @@ class WatchPage {
                     this.video.webkitEnterFullscreen();
                 } catch (error) {
                     this.setNativeSubtitleContext('ios-fullscreen', false);
-                    throw error;
+                    console.warn('[WatchPage] Native fullscreen unavailable:', error.name);
                 }
             }
         }
