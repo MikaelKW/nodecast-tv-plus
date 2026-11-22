@@ -4,9 +4,32 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.7.2] - Unreleased
+
+This maintenance release improves iPhone and iPad playback compatibility and includes dependency updates.
+
+### Fixed
+
+- Use the compatible HLS remux session for channels that require remuxing on iPhone and iPad, including iPadOS desktop browsing. Play the generated playlist natively when HLS.js is unsupported, while retaining the existing HLS.js path on supported browsers and the direct remux path on macOS Safari ([#520]).
+
+### Changed
+
+- Update dependencies while retaining the existing protected application, browser, migration and container validation paths.
+- Extend migration coverage to the published Plus v2.7.1 baseline while retaining earlier supported baselines.
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.7.1. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required.
+- To roll back, stop the upgraded container, restore the pre-upgrade data backup, and recreate the container with 2.7.1 and the original deployment secrets.
+
 ## [2.7.1] - 2026-10-16
 
 This maintenance release improves administrator-account safety and Live TV catalogue refresh reliability, and includes dependency updates.
+
+### Security
+
+- Update the transitive `proxy-addr` dependency from `2.0.7` to `2.0.8`, fixing [CVE-2026-90711](https://github.com/advisories/GHSA-jqcg-44mw-7w3h). Under certain IPv4-mapped IPv6 trust-subnet configurations, the dependency could treat untrusted clients as trusted proxies and accept spoofed client-IP information.
 
 ### Fixed
 
@@ -15,7 +38,6 @@ This maintenance release improves administrator-account safety and Live TV catal
 
 ### Changed
 
-- Update dependencies while retaining the existing protected validation paths.
 - Extend migration coverage to the published Plus v2.7.0 baseline while retaining v2.6.2 and supported upstream baselines.
 
 ### Upgrade notes
@@ -620,3 +642,4 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#361]: https://github.com/MikaelKW/nodecast-tv-plus/issues/361
 [#498]: https://github.com/MikaelKW/nodecast-tv-plus/pull/498
 [#500]: https://github.com/MikaelKW/nodecast-tv-plus/pull/500
+[#520]: https://github.com/MikaelKW/nodecast-tv-plus/pull/520

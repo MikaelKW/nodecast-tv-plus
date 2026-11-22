@@ -200,6 +200,7 @@ async function testWatchPlaybackReplacement() {
     let fetchHandler = async () => ({ ok: true, json: async () => ({}) });
     const context = {
         window: {},
+        AbortController,
         console: { log() {}, warn() {}, error() {} },
         NodeCastUrl: {
             resolve: value => value,
