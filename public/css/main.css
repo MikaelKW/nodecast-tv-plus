@@ -536,21 +536,14 @@ h4 {
 }
 
 .sidebar-collapse-btn {
-  display: none;
-  /* Hidden on mobile */
+  display: flex;
+  /* Closes the mobile drawer and collapses the desktop sidebar. */
   flex-shrink: 0;
   padding: var(--space-xs);
 }
 
 .sidebar-collapse-btn .icon {
   transition: transform 0.2s ease;
-}
-
-/* Desktop collapse button visibility */
-@media (min-width: 769px) {
-  .sidebar-collapse-btn {
-    display: flex;
-  }
 }
 
 /* A saved desktop collapse must not hide the mobile slide-out drawer. */
