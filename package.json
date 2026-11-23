@@ -29,7 +29,7 @@
         "test:auth": "node scripts/auth-username-test.js",
         "test:users": "node scripts/user-management-test.js",
         "test:db-concurrency": "node scripts/db-concurrency-test.js",
-        "test:diagnostics": "node scripts/diagnostic-events-test.js",
+        "test:diagnostics": "node scripts/diagnostic-events-test.js && node scripts/watch-probe-test.js",
         "test:health": "node scripts/health-check-test.js",
         "test:proxy": "node scripts/proxy-stream-test.js",
         "test:m3u-media-access": "node scripts/m3u-media-access-test.js",
