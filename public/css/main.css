@@ -536,8 +536,8 @@ h4 {
 }
 
 .sidebar-collapse-btn {
-  display: none;
-  /* Hidden on mobile */
+  display: flex;
+  /* Closes the mobile drawer and collapses the desktop sidebar. */
   flex-shrink: 0;
   padding: var(--space-xs);
 }
@@ -546,25 +546,20 @@ h4 {
   transition: transform 0.2s ease;
 }
 
-/* Desktop collapse button visibility */
+/* A saved desktop collapse must not hide the mobile slide-out drawer. */
 @media (min-width: 769px) {
-  .sidebar-collapse-btn {
-    display: flex;
+  .channel-sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    border-right: none;
   }
-}
 
-/* Collapsed sidebar state (desktop only) */
-.channel-sidebar.collapsed {
-  width: 0;
-  min-width: 0;
-  overflow: hidden;
-  border-right: none;
-}
-
-.channel-sidebar.collapsed .sidebar-header,
-.channel-sidebar.collapsed .channel-list {
-  opacity: 0;
-  visibility: hidden;
+  .channel-sidebar.collapsed .sidebar-header,
+  .channel-sidebar.collapsed .channel-list {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
 
 /* Expand button when sidebar is collapsed */
