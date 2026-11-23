@@ -202,6 +202,10 @@ router.get('/', mediaProcessLimit, async (req, res) => {
         return res.status(err.statusCode || 400).json({ error: err.message });
     }
 
+    // Authorization may finish after a superseded browser request disconnects.
+    // Such a request must not open a new provider connection.
+    if (res.destroyed) return;
+
     const ffprobePath = req.app.locals.ffprobePath;
     const cacheKey = `${validatedUrl}${ua ? `|${ua}` : ''}`;
 
