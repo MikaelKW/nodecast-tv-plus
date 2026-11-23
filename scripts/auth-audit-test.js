@@ -651,6 +651,18 @@ async function testServerFlow() {
         assert.equal(signOuts.length, 1, 'Only the authenticated sign-out is recorded.');
         assert.equal(signOuts[0].username, 'admin');
 
+        // Audit history contains personal data and is not part of redacted
+        // Diagnostics summaries or downloadable support snapshots.
+        for (const route of ['/api/diagnostics/summary', '/api/diagnostics/support-preview']) {
+            const diagnostic = await request(baseUrl, route, { jar: mfa });
+            assert.equal(diagnostic.response.status, 200);
+            const serialized = JSON.stringify(diagnostic.payload);
+            for (const value of [unknownEntry.username, unknownEntry.ip, unknownEntry.host, unknownEntry.userAgent]) {
+                assert.ok(value, 'The audit record must contain the personal-data test marker.');
+                assert.equal(serialized.includes(value), false, 'Audit details must remain outside Diagnostics.');
+            }
+        }
+
         // API filters and pagination.
         const failures = await readLog(baseUrl, mfa, '?outcome=failure&account=ghost');
         assert.equal(failures.total, 1);

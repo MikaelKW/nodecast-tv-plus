@@ -176,3 +176,36 @@ test('retention settings load and save', async ({ page }) => {
         authLogRetentionDays: 30, authLogMaxEntries: 50000
     });
 });
+
+test('an old retention load cannot replace the policy shown after reopening', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(async () => {
+        const panel = window.panel;
+        panel.api.settings.get = () => new Promise(resolve => { window.resolveOldRetention = resolve; });
+        const oldLoad = panel.loadRetention();
+        panel.hide();
+        panel.api.settings.get = async () => ({ authLogRetentionDays: 365, authLogMaxEntries: 75000 });
+        panel.show();
+        await panel.loadRetention();
+        window.resolveOldRetention({ authLogRetentionDays: 1, authLogMaxEntries: 1000 });
+        await oldLoad;
+    });
+    await expect(page.locator('#auth-log-retention-days')).toHaveValue('365');
+    await expect(page.locator('#auth-log-max-entries')).toHaveValue('75000');
+});
+
+test('saving retention supersedes a pending policy load', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(async () => {
+        const panel = window.panel;
+        panel.api.settings.get = () => new Promise(resolve => { window.resolveOldRetention = resolve; });
+        const oldLoad = panel.loadRetention();
+        panel.retentionDays.value = '365';
+        panel.maxEntries.value = '75000';
+        await panel.saveRetention();
+        window.resolveOldRetention({ authLogRetentionDays: 1, authLogMaxEntries: 1000 });
+        await oldLoad;
+    });
+    await expect(page.locator('#auth-log-retention-days')).toHaveValue('365');
+    await expect(page.locator('#auth-log-max-entries')).toHaveValue('75000');
+});

@@ -46,6 +46,7 @@ class AuthLogPanel {
         this.pageSize = 25;
         this.visible = false;
         this.generation = 0;
+        this.retentionGeneration = 0;
 
         this.form?.addEventListener('submit', event => {
             event.preventDefault();
@@ -85,6 +86,7 @@ class AuthLogPanel {
     hide() {
         this.visible = false;
         this.generation += 1;
+        this.retentionGeneration += 1;
     }
 
     goTo(page) {
@@ -313,28 +315,34 @@ class AuthLogPanel {
     }
 
     async loadRetention() {
+        const generation = ++this.retentionGeneration;
+        if (this.retentionStatus) this.retentionStatus.textContent = '';
         try {
             const settings = await this.api.settings.get();
-            if (!this.visible) return;
+            if (!this.visible || generation !== this.retentionGeneration) return;
             if (this.retentionDays) this.retentionDays.value = settings.authLogRetentionDays ?? 90;
             if (this.maxEntries) this.maxEntries.value = settings.authLogMaxEntries ?? 50000;
         } catch {
+            if (!this.visible || generation !== this.retentionGeneration) return;
             if (this.retentionStatus) this.retentionStatus.textContent = 'Retention settings could not be loaded.';
         }
     }
 
     async saveRetention() {
+        const generation = ++this.retentionGeneration;
         if (this.retentionStatus) this.retentionStatus.textContent = 'Saving…';
         try {
             const saved = await this.api.settings.update({
                 authLogRetentionDays: Number(this.retentionDays?.value),
                 authLogMaxEntries: Number(this.maxEntries?.value)
             });
+            if (!this.visible || generation !== this.retentionGeneration) return;
             if (this.retentionDays) this.retentionDays.value = saved.authLogRetentionDays;
             if (this.maxEntries) this.maxEntries.value = saved.authLogMaxEntries;
             if (this.retentionStatus) this.retentionStatus.textContent = 'Retention saved.';
             this.load();
         } catch (error) {
+            if (!this.visible || generation !== this.retentionGeneration) return;
             if (this.retentionStatus) this.retentionStatus.textContent = `Could not save: ${error.message}`;
         }
     }

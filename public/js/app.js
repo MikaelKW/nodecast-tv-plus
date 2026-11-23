@@ -90,12 +90,17 @@ class App {
             });
         }
 
-        // Desktop sidebar collapse toggle
+        // The chevron closes the mobile drawer or collapses the desktop sidebar.
         const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
         const sidebarExpandBtn = document.getElementById('sidebar-expand-btn');
         const homeLayout = document.querySelector('.home-layout');
 
         const toggleSidebarCollapse = () => {
+            if (window.matchMedia('(max-width: 768px)').matches) {
+                channelSidebar?.classList.remove('active');
+                channelOverlay?.classList.remove('active');
+                return;
+            }
             channelSidebar?.classList.toggle('collapsed');
             homeLayout?.classList.toggle('sidebar-collapsed');
 
@@ -112,6 +117,12 @@ class App {
             channelSidebar?.classList.add('collapsed');
             homeLayout?.classList.add('sidebar-collapsed');
         }
+
+        // Desktop sidebar width (drag the edge, double-click to reset)
+        window.ChannelSidebarResizer?.attach({
+            sidebar: channelSidebar,
+            handle: document.getElementById('channel-sidebar-resizer')
+        });
 
         // Navigation handling
         document.querySelectorAll('.nav-link').forEach(link => {
