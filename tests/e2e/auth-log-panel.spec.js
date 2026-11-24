@@ -251,3 +251,23 @@ test('date filters fit the other fields without horizontal overflow on mobile', 
         expect(overflow).toBeLessThanOrEqual(1);
     }
 });
+
+test('grouped failures show counts and time ranges without inventing an account', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(() => window.panel.render({ total: 1, page: 1, pages: 1, pageSize: 25, entries: [{
+        id: 40, at: '2026-11-24T12:00:30Z', event: 'failure_summary', outcome: 'failure', method: null,
+        userId: null, username: null, ip: null, peerIp: null, forwardedFor: [], host: null, userAgent: null,
+        reasonText: '1240 additional ordinary failures were grouped.', occurrences: 1240, retentionGroup: 'ordinary',
+        firstAt: '2026-11-24T12:00:01Z', lastAt: '2026-11-24T12:00:30Z',
+        reasonCounts: { rate_limited: 1240, '<img src=x onerror="window.__summaryXss=1">': 0 }
+    }] }));
+    await expect(page.locator('.auth-log-row')).toContainText('Grouped failures');
+    await expect(page.locator('.auth-log-row')).toContainText('1240 additional ordinary failures');
+    await expect(page.locator('.auth-log-row [data-auth-log-filter]')).toHaveCount(0);
+    await page.locator('.auth-log-toggle').click();
+    await expect(page.locator('.auth-log-details')).toContainText('1240');
+    await expect(page.locator('.auth-log-details')).toContainText('2026-11-24T12:00:01Z');
+    await expect(page.locator('.auth-log-details')).toContainText('rate_limited: 1240');
+    await expect(page.locator('.auth-log-details img')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__summaryXss)).toBeUndefined();
+});

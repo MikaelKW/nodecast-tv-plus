@@ -204,6 +204,9 @@ async function shutdown(signal) {
     shuttingDown = true;
     applicationReady = false;
     releaseUpdateService.stop();
+    const authAudit = require('./services/authAudit');
+    authAudit.stopMaintenance();
+    authAudit.flushPending();
     console.log(`${signal} received, shutting down...`);
 
     for (const { name, plugin } of loadedPlugins) {
@@ -226,8 +229,9 @@ async function shutdown(signal) {
     forceExitTimer.unref();
 
     server.close(error => {
+        const flushed = authAudit.shutdown();
         clearTimeout(forceExitTimer);
-        process.exit(error ? 1 : 0);
+        process.exit(error || !flushed ? 1 : 0);
     });
 }
 

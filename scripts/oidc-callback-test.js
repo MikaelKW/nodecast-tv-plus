@@ -449,8 +449,10 @@ async function run() {
             });
             assert.equal(recovered.response.status, 200);
 
-            // The administrator sign-in log records every step.
-            const entries = await readLog(baseUrl, jar);
+            // Normal shutdown persists grouped counts without waiting for another callback.
+            await stopServer(server.child);
+            server = await startServer(dataDirectory, secrets, provider);
+            const entries = await readLog(server.baseUrl, jar);
             const sso = entries.filter(entry => entry.method?.startsWith('sso'));
             const required = sso.filter(entry => entry.outcome === 'mfa_required');
             assert.equal(required.length, 2);
@@ -478,7 +480,9 @@ async function run() {
             assert.equal(viewerSuccess[0].reason, null);
 
             const failures = sso.filter(entry => entry.outcome === 'failure' && entry.method === 'sso');
-            const reasons = failures.map(entry => entry.reason).sort();
+            const groupedReasons = entries.filter(entry => entry.event === 'failure_summary' && entry.retentionGroup === 'ordinary')
+                .flatMap(entry => Object.entries(entry.reasonCounts).flatMap(([reason, count]) => Array(count).fill(reason)));
+            const reasons = [...failures.map(entry => entry.reason), ...groupedReasons].sort();
             assert.deepEqual(reasons, [
                 'server_error', 'server_error', 'server_error',
                 'sso_failed', 'sso_failed', 'sso_failed', 'sso_failed', 'sso_failed',

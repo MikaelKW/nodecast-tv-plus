@@ -79,6 +79,8 @@ router.post('/verify', async (req, res) => {
             event: 'sign_in',
             method: challenge ? `${firstFactor}+${isRecovery ? 'recovery_code' : 'totp'}` : null,
             flowId: challenge?.flowId || null,
+            verifiedChallenge: Boolean(challenge?.challengeId),
+            challengeKey: challenge?.challengeId || null,
             context,
             ...entry
         });
@@ -88,7 +90,7 @@ router.post('/verify', async (req, res) => {
     // metadata to attribute the failure to the account and sign-in flow.
     const stored = req.session?.twoFactorChallenge;
     const storedMetadata = stored && typeof stored === 'object'
-        ? { userId: stored.userId, firstFactor: stored.firstFactor, flowId: stored.flowId }
+        ? { userId: stored.userId, firstFactor: stored.firstFactor, flowId: stored.flowId, challengeId: stored.challengeId }
         : null;
 
     try {

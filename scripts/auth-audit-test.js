@@ -181,9 +181,9 @@ async function testRetention() {
     const settings = { authLogRetentionDays: 7, authLogMaxEntries: 1000 };
     const { audit, advance } = createMemoryAudit({ settings });
     const day = 24 * 60 * 60 * 1000;
-    audit.record({ event: 'sign_in', outcome: 'success', username: 'old' });
+    audit.record({ event: 'sign_in', outcome: 'success', user: { id: 1, username: 'old' } });
     advance(8 * day);
-    audit.record({ event: 'sign_in', outcome: 'success', username: 'recent' });
+    audit.record({ event: 'sign_in', outcome: 'success', user: { id: 1, username: 'recent' } });
     const result = await audit.prune();
     assert.equal(result.expired, 1);
     assert.deepEqual(audit.query().entries.map(entry => entry.username), ['recent']);
@@ -191,10 +191,11 @@ async function testRetention() {
     // Beyond the maximum, the oldest entries are removed.
     for (let index = 0; index < 1005; index += 1) {
         audit.record({ event: 'sign_in', outcome: 'failure', username: `user${index}` });
+        advance(authAudit.FAILURE_WINDOW_MS);
     }
     await audit.prune();
     const remaining = audit.query({ pageSize: 1 });
-    assert.equal(remaining.total, 1000);
+    assert.equal(remaining.total, 1 + authAudit.retentionAllowances(1000).ordinary);
     assert.equal(remaining.entries[0].username, 'user1004');
 
     // When the saved policy cannot be read, pruning is skipped rather than
@@ -319,13 +320,14 @@ async function testExpiredChallengeAudit() {
     };
 
     const recorded = [];
+    const memory = createMemoryAudit();
     const flowId = '6f1c2c1e-6c1d-4c6e-9d6a-2b1f3c4d5e6f';
     stub('../server/db', { users: { getById: async id => (id === 7 ? { id: 7, username: 'steven' } : null) } });
     stub('../server/auth', { requireAuth: (req, res, next) => next(), requireAdmin: (req, res, next) => next() });
     stub('../server/services/totpService', { isAvailable: () => true });
     stub('../server/services/authAudit', {
         contextFromRequest: () => ({ ip: '203.0.113.20' }),
-        record: entry => recorded.push(entry)
+        record: entry => { recorded.push(entry); return memory.audit.record(entry); }
     });
     fresh('../server/services/twoFactorAuth');
     fresh('../server/routes/totp');
@@ -334,15 +336,16 @@ async function testExpiredChallengeAudit() {
     try {
         const app = express();
         app.use(express.json());
+        const session = {
+            twoFactorChallenge: {
+                challengeId: 'expired', userId: 7, expiresAt: Date.now() - 1000,
+                firstFactor: 'sso', flowId
+            },
+            regenerate(callback) { callback(); },
+            save(callback) { callback(); }
+        };
         app.use((req, res, next) => {
-            req.session = {
-                twoFactorChallenge: {
-                    challengeId: 'expired', userId: 7, expiresAt: Date.now() - 1000,
-                    firstFactor: 'sso', flowId
-                },
-                regenerate(callback) { callback(); },
-                save(callback) { callback(); }
-            };
+            req.session = session;
             next();
         });
         app.use('/2fa', require('../server/routes/totp'));
@@ -360,6 +363,15 @@ async function testExpiredChallengeAudit() {
         assert.equal(recorded[0].user.username, 'steven');
         assert.equal(recorded[0].flowId, flowId);
         assert.equal(recorded[0].method, 'sso+totp');
+        assert.equal(recorded[0].verifiedChallenge, true);
+        assert.equal(memory.audit.query().entries[0].retentionGroup, 'mfa');
+        const repeated = await fetch(`http://127.0.0.1:${server.address().port}/2fa/verify`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        });
+        assert.equal(repeated.status, 401);
+        assert.equal(recorded.length, 2);
+        assert.equal(recorded[1].verifiedChallenge, false);
+        assert.equal(memory.audit.query().entries[0].retentionGroup, 'ordinary');
         assert.equal(JSON.stringify(recorded).includes('123456'), false);
     } finally {
         await new Promise(resolve => (server ? server.close(resolve) : resolve()));
@@ -541,11 +553,13 @@ async function testServerFlow() {
         // Rate limiting is unchanged and its rejections are recorded.
         for (let attempt = 0; attempt < 5; attempt += 1) {
             await request(baseUrl, '/api/auth/login', {
-                method: 'POST', body: { username: 'target', password: wrongPassword }
+                method: 'POST', body: { username: 'target', password: wrongPassword },
+                headers: { 'X-Forwarded-For': '203.0.113.21' }
             });
         }
         const limited = await request(baseUrl, '/api/auth/login', {
-            method: 'POST', body: { username: 'target', password: wrongPassword }
+            method: 'POST', body: { username: 'target', password: wrongPassword },
+            headers: { 'X-Forwarded-For': '203.0.113.22' }
         });
         assert.equal(limited.response.status, 429);
 
@@ -666,7 +680,7 @@ async function testServerFlow() {
         // API filters and pagination.
         const failures = await readLog(baseUrl, mfa, '?outcome=failure&account=ghost');
         assert.equal(failures.total, 1);
-        assert.equal((await readLog(baseUrl, mfa, '?ip=203.0.113.')).total, 1);
+        assert.equal((await readLog(baseUrl, mfa, '?ip=203.0.113.7')).total, 1);
         const paged = await readLog(baseUrl, mfa, '?pageSize=2&page=2');
         assert.equal(paged.entries.length, 2);
         assert.equal(paged.page, 2);
@@ -854,6 +868,100 @@ async function testPlayerSaveKeepsRetention() {
     }
 }
 
+async function testSummaryShutdownAndRestart() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-audit-shutdown-'));
+    const secrets = Object.fromEntries(['jwt', 'session', 'totp'].map(key => [key, crypto.randomBytes(48).toString('hex')]));
+    const password = crypto.randomBytes(32).toString('base64url');
+    let server;
+    const readSummaryCount = () => {
+        const database = new Database(path.join(directory, 'content.db'));
+        try { return database.prepare("SELECT COALESCE(SUM(occurrences),0) total FROM auth_events WHERE event='failure_summary'").get().total; }
+        finally { database.close(); }
+    };
+    const attempts = async count => {
+        for (let i = 0; i < count; i++) {
+            const result = await request(server.baseUrl, '/api/auth/login', {
+                method: 'POST', body: { username: 'shutdown-unknown', password: 'synthetic-invalid-value' }
+            });
+            assert.equal(result.response.status, i < 5 ? 401 : 429);
+        }
+    };
+    try {
+        server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        const jar = new CookieJar();
+        const setup = await request(server.baseUrl, '/api/auth/setup', { method: 'POST', jar,
+            body: { username: 'shutdown-admin', password, passwordConfirmation: password } });
+        assert.equal(setup.response.status, 201);
+        await attempts(20);
+        assert.equal(readSummaryCount(), 0, 'Counts are pending before the first periodic flush.');
+        const closingAt = Date.now();
+        await stopServer(server.child);
+        assert.equal(server.child.exitCode, 0, 'The normal application stop routine completed successfully.');
+        assert.ok(Date.now() - closingAt < 8000, 'Summary flush completes within the normal container stop timeout.');
+        assert.equal(readSummaryCount(), 15, 'SIGTERM flushes counts even without another request.');
+
+        server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        const persisted = await readLog(server.baseUrl, jar, '?event=failure_summary');
+        assert.equal(persisted.entries[0].occurrences, 15, 'Saved summary counts survive restart.');
+        await attempts(8);
+        assert.equal(readSummaryCount(), 15);
+        const exited = new Promise(resolve => server.child.once('exit', resolve));
+        server.child.kill('SIGKILL');
+        await exited;
+        assert.equal(server.child.signalCode, 'SIGKILL');
+        assert.equal(readSummaryCount(), 15, 'An abrupt stop loses only pending counts, not previously saved summaries.');
+        server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        assert.equal((await readLog(server.baseUrl, jar, '?event=failure_summary')).entries[0].occurrences, 15);
+    } finally {
+        await stopServer(server?.child);
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
+async function testHttpFloodPreservesActivity() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-audit-burst-'));
+    const secrets = Object.fromEntries(['jwt', 'session', 'totp'].map(key => [key, crypto.randomBytes(48).toString('hex')]));
+    const password = crypto.randomBytes(32).toString('base64url');
+    let server;
+    try {
+        server = await startServer(directory, secrets);
+        const jar = new CookieJar();
+        const setup = await request(server.baseUrl, '/api/auth/setup', { method: 'POST', jar,
+            body: { username: 'burst-admin', password, passwordConfirmation: password } });
+        assert.equal(setup.response.status, 201);
+        assert.equal((await request(server.baseUrl, '/api/auth/login', { method: 'POST', jar,
+            body: { username: 'burst-admin', password } })).response.status, 200);
+        assert.equal((await request(server.baseUrl, '/api/settings', { method: 'PUT', jar,
+            body: { authLogMaxEntries: 1000 } })).response.status, 200);
+        for (let i = 0; i < 1120; i++) {
+            const attempt = await request(server.baseUrl, '/api/auth/login', { method: 'POST',
+                body: { username: `changing-attempt-${i}`, password: 'synthetic-invalid-value' },
+                headers: { 'X-Forwarded-For': `2001:db8::${i.toString(16)}` } });
+            assert.equal(attempt.response.status, i < 25 ? 401 : 429);
+        }
+        for (let i = 0; i < 20; i++) {
+            assert.equal((await request(server.baseUrl, '/api/auth/2fa/verify', { method: 'POST', body: {} })).response.status, 401);
+        }
+        assert.equal((await readLog(server.baseUrl, jar, '?outcome=success')).total, 2);
+        const stoppedAt = Date.now();
+        await stopServer(server.child);
+        assert.equal(server.child.exitCode, 0);
+        assert.ok(Date.now() - stoppedAt < 8000);
+        const database = new Database(path.join(directory, 'content.db'));
+        try {
+            assert.equal(database.prepare("SELECT COUNT(*) n FROM auth_events WHERE category='activity'").get().n, 2);
+            assert.equal(database.prepare("SELECT COUNT(*) n FROM auth_events WHERE category='ordinary'").get().n, authAudit.FAILURE_LIMITS.ordinary);
+            assert.equal(database.prepare("SELECT COUNT(*) n FROM auth_events WHERE category='mfa'").get().n, 0,
+                'Unchallenged requests do not receive protected 2FA treatment.');
+            const summary = database.prepare("SELECT SUM(occurrences) n FROM auth_events WHERE category='ordinary_summary'").get();
+            assert.equal(summary.n, 1140 - authAudit.FAILURE_LIMITS.ordinary);
+        } finally { database.close(); }
+    } finally {
+        await stopServer(server?.child);
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
 async function run() {
     testDescribeClient();
     testNormalizeIp();
@@ -864,6 +972,8 @@ async function run() {
     await testStrictSettingsReader();
     testContextFromRequest();
     await testExpiredChallengeAudit();
+    await testSummaryShutdownAndRestart();
+    await testHttpFloodPreservesActivity();
     await testPlayerSaveKeepsRetention();
     await testServerFlow();
     console.log('Authentication audit log tests passed.');

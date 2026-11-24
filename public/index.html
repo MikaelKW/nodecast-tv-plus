@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-    <link rel="stylesheet" href="css/main.css?v=31">
+    <link rel="stylesheet" href="css/main.css?v=32">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@800&display=swap"
@@ -1128,8 +1128,9 @@
           <div id="tab-logs" class="tab-content">
             <div class="settings-section">
               <h3>Sign-in activity</h3>
-              <p class="hint">Successful and failed sign-ins, sign-outs and two-factor steps. Passwords, codes, cookies
-                and tokens are never recorded. Times are shown in your local time zone; select an entry for details.</p>
+              <p class="hint">Successful and failed sign-ins, sign-outs and two-factor steps. Password and verification-code
+                fields, cookies and tokens are excluded. Attempted usernames may contain sensitive information.
+                Times are shown in your local time zone; select an entry for details.</p>
 
               <form id="auth-log-filters" class="auth-log-filters">
                 <div class="form-group">
@@ -1166,6 +1167,7 @@
                     <option value="sign_in">Sign-in</option>
                     <option value="sign_out">Sign-out</option>
                     <option value="setup">Initial setup</option>
+                    <option value="failure_summary">Grouped failures</option>
                   </select>
                 </div>
                 <div class="auth-log-filter-actions">
@@ -1220,7 +1222,8 @@
                 <div class="setting-item">
                   <div class="setting-info" style="flex: 1;">
                     <label class="setting-label" for="auth-log-max-entries">Maximum entries</label>
-                    <span class="setting-hint">The oldest entries are removed beyond this limit. 1,000–1,000,000.</span>
+                    <span class="setting-hint">Shared allowances: 70% activity, 15% challenged two-factor failures,
+                      15% ordinary failures. Each failure allowance reserves space for summaries. 1,000–1,000,000.</span>
                   </div>
                   <input type="number" id="auth-log-max-entries" class="form-input auth-log-number" min="1000"
                     max="1000000" step="1000" required>
@@ -1713,7 +1716,7 @@
   <script src="js/pages/MoviesPage.js?v=6"></script>
   <script src="js/pages/SeriesPage.js?v=3"></script>
   <script src="js/components/DiagnosticsPanel.js?v=4"></script>
-  <script src="js/components/AuthLogPanel.js?v=1"></script>
+  <script src="js/components/AuthLogPanel.js?v=2"></script>
   <script src="js/pages/Settings.js?v=13"></script>
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>

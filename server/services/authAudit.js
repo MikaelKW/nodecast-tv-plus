@@ -12,7 +12,7 @@ const { randomUUID } = require('node:crypto');
  * not block or alter authentication.
  */
 
-const EVENTS = Object.freeze(['sign_in', 'sign_out', 'setup']);
+const EVENTS = Object.freeze(['sign_in', 'sign_out', 'setup', 'failure_summary']);
 
 const OUTCOMES = Object.freeze(['success', 'failure', 'mfa_required']);
 
@@ -53,6 +53,21 @@ const DEFAULT_PAGE_SIZE = 25;
 const PRUNE_EVERY_INSERTS = 200;
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const FAILURE_WINDOW_MS = 60 * 1000;
+const SUMMARY_FLUSH_MS = 30 * 1000;
+const FAILURE_LIMITS = Object.freeze({ ordinary: 60, mfa: 30 });
+const FAILURE_SOURCE_LIMIT = 5;
+const FAILURE_SOURCE_KEYS = 128;
+
+function retentionAllowances(maxEntries) {
+    const activity = Math.floor(maxEntries * 0.7);
+    const mfa = Math.floor(maxEntries * 0.15);
+    const ordinary = maxEntries - activity - mfa;
+    const mfaSummary = Math.max(1, Math.floor(mfa * 0.1));
+    const ordinarySummary = Math.max(1, Math.floor(ordinary * 0.1));
+    return { activity, mfa: mfa - mfaSummary, mfa_summary: mfaSummary,
+        ordinary: ordinary - ordinarySummary, ordinary_summary: ordinarySummary };
+}
 
 const LIMITS = Object.freeze({
     username: 128,
@@ -223,14 +238,27 @@ function createAuthAudit({
     getSettings = async () => ({}),
     now = Date.now,
     createId = randomUUID,
-    logger = console
+    logger = console,
+    timers = { setInterval, clearInterval }
 } = {}) {
     let schemaReady = false;
     let insertsSincePrune = 0;
     let lastPruneAt = 0;
     let pruning = null;
     let maintenanceTimer = null;
+    let summaryTimer = null;
+    let lastWarningAt = -Infinity;
+    const failureWindow = { start: null, ordinary: 0, mfa: 0 };
+    const sources = { ordinary: new Map(), mfa: new Map() };
+    const pending = { ordinary: null, mfa: null };
     const preparedDatabases = new WeakSet();
+
+    function warn(message, error) {
+        const at = now();
+        if (at - lastWarningAt < FAILURE_WINDOW_MS && at >= lastWarningAt) return;
+        lastWarningAt = at;
+        logger?.warn?.(message, error.message);
+    }
 
     function db() {
         const database = getDb();
@@ -268,6 +296,83 @@ function createAuthAudit({
             CREATE INDEX IF NOT EXISTS idx_auth_events_username ON auth_events(username COLLATE NOCASE, created_at);
             CREATE INDEX IF NOT EXISTS idx_auth_events_outcome ON auth_events(outcome, created_at);
         `);
+        const columns = new Set(database.prepare('PRAGMA table_info(auth_events)').all().map(column => column.name));
+        database.transaction(() => {
+            for (const [name, definition] of Object.entries({
+                category: "TEXT NOT NULL DEFAULT 'ordinary'", occurrences: 'INTEGER NOT NULL DEFAULT 1',
+                first_at: 'INTEGER', last_at: 'INTEGER', reason_counts: 'TEXT'
+            })) {
+                if (!columns.has(name)) database.exec(`ALTER TABLE auth_events ADD COLUMN ${name} ${definition}`);
+            }
+            if (!columns.has('category')) {
+                database.exec(`UPDATE auth_events SET category = 'activity'
+                    WHERE outcome IN ('success', 'mfa_required') AND user_id IS NOT NULL;
+                    UPDATE auth_events SET category = 'mfa' WHERE outcome = 'failure' AND user_id IS NOT NULL
+                    AND flow_id IS NOT NULL AND method IN ('password+totp','password+recovery_code','sso+totp','sso+recovery_code');`);
+            }
+            database.exec('CREATE INDEX IF NOT EXISTS idx_auth_events_category_id ON auth_events(category, id)');
+        })();
+    }
+
+    function trimCategory(database, category, settings) {
+        const limit = retentionAllowances(settings.authLogMaxEntries)[category];
+        return database.prepare(`DELETE FROM auth_events WHERE category = ? AND id <= (
+            SELECT id FROM auth_events WHERE category = ? ORDER BY id DESC LIMIT 1 OFFSET ?
+        )`).run(category, category, limit).changes;
+    }
+
+    // Only two fixed-size pending counters exist, independent of account/IP cardinality.
+    function flushPending() {
+        let saved = true;
+        for (const group of ['ordinary', 'mfa']) {
+            const summary = pending[group];
+            if (!summary) continue;
+            try {
+                const database = db();
+                database.transaction(() => {
+                    database.prepare(`INSERT INTO auth_events
+                        (created_at,event,outcome,category,occurrences,first_at,last_at,reason_counts)
+                        VALUES (?, 'failure_summary', 'failure', ?, ?, ?, ?, ?)`)
+                        .run(summary.last, `${group}_summary`, summary.count, summary.first, summary.last, JSON.stringify(summary.reasons));
+                })();
+                pending[group] = null;
+                noteInsert();
+            } catch (error) {
+                saved = false;
+                warn('[AuthAudit] Could not save grouped authentication events:', error);
+            }
+        }
+        return saved;
+    }
+
+    function admitFailure(group, key, reason, at) {
+        if (failureWindow.start === null || at - failureWindow.start >= FAILURE_WINDOW_MS || at < failureWindow.start) {
+            flushPending();
+            failureWindow.start = at;
+            failureWindow.ordinary = 0;
+            failureWindow.mfa = 0;
+            sources.ordinary.clear();
+            sources.mfa.clear();
+        }
+        const sourceCount = sources[group].get(key) || 0;
+        if (failureWindow[group] < FAILURE_LIMITS[group] && sourceCount < FAILURE_SOURCE_LIMIT
+            && (sources[group].has(key) || sources[group].size < FAILURE_SOURCE_KEYS)) {
+            failureWindow[group] += 1;
+            sources[group].set(key, sourceCount + 1);
+            return true;
+        }
+        const summary = pending[group] || { count: 0, first: at, last: at, reasons: {} };
+        summary.count = Math.min(Number.MAX_SAFE_INTEGER, summary.count + 1);
+        summary.last = at;
+        const code = reason || 'unspecified';
+        summary.reasons[code] = Math.min(Number.MAX_SAFE_INTEGER, (summary.reasons[code] || 0) + 1);
+        pending[group] = summary;
+        return false;
+    }
+
+    function noteInsert() {
+        insertsSincePrune += 1;
+        if (insertsSincePrune >= PRUNE_EVERY_INSERTS || now() - lastPruneAt >= PRUNE_INTERVAL_MS) void prune();
     }
 
     function createFlowId() {
@@ -280,7 +385,7 @@ function createAuthAudit({
 
     /**
      * Record one entry. Accepts only the documented fields; anything else is
-     * ignored. Returns true when the entry was stored.
+     * ignored. Returns true when stored individually or accepted for a summary.
      */
     function record({
         event,
@@ -290,16 +395,28 @@ function createAuthAudit({
         user = null,
         username = null,
         flowId = null,
+        verifiedChallenge = false,
+        challengeKey = null,
         context = {}
     } = {}) {
         try {
-            if (!EVENTS.includes(event) || !OUTCOMES.includes(outcome)) return false;
+            if (!EVENTS.includes(event) || event === 'failure_summary' || !OUTCOMES.includes(outcome)) return false;
             if (method !== null && !METHODS.includes(method)) return false;
             if (reason !== null && !Object.hasOwn(REASONS, reason)) return false;
 
             const userId = user?.id !== null && user?.id !== undefined && Number.isSafeInteger(Number(user.id))
                 ? Number(user.id)
                 : null;
+            const at = now();
+            const protectedChallenge = verifiedChallenge === true && userId > 0
+                && typeof challengeKey === 'string' && challengeKey.length > 0 && challengeKey.length <= 128;
+            const category = (outcome === 'success' || outcome === 'mfa_required') && userId > 0
+                ? 'activity' : protectedChallenge && outcome === 'failure' ? 'mfa' : 'ordinary';
+            if (outcome === 'failure') {
+                const key = category === 'mfa' ? `${userId}:${challengeKey}`
+                    : normalizeIp(context.ip) || normalizeIp(context.peerIp) || 'unknown';
+                if (!admitFailure(category, key, reason, at)) return true;
+            }
             const forwardedFor = (Array.isArray(context.forwardedFor) ? context.forwardedFor : [])
                 .slice(0, LIMITS.forwardedFor)
                 .map(normalizeIp)
@@ -308,10 +425,10 @@ function createAuthAudit({
             db().prepare(`
                 INSERT INTO auth_events (
                     created_at, event, outcome, method, reason, user_id, username,
-                    ip, peer_ip, forwarded_for, host, user_agent, flow_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ip, peer_ip, forwarded_for, host, user_agent, flow_id, category
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-                now(),
+                at,
                 event,
                 outcome,
                 method,
@@ -323,16 +440,13 @@ function createAuthAudit({
                 forwardedFor.length ? JSON.stringify(forwardedFor) : null,
                 cleanText(context.host, LIMITS.host),
                 cleanText(context.userAgent, LIMITS.userAgent),
-                typeof flowId === 'string' && /^[0-9a-f-]{36}$/i.test(flowId) ? flowId : null
+                typeof flowId === 'string' && /^[0-9a-f-]{36}$/i.test(flowId) ? flowId : null,
+                category
             );
-
-            insertsSincePrune += 1;
-            if (insertsSincePrune >= PRUNE_EVERY_INSERTS || now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
-                void prune();
-            }
+            noteInsert();
             return true;
         } catch (error) {
-            logger?.warn?.('[AuthAudit] Could not record an authentication event:', error.message);
+            warn('[AuthAudit] Could not record an authentication event:', error);
             return false;
         }
     }
@@ -351,19 +465,17 @@ function createAuthAudit({
         lastPruneAt = now();
         pruning = (async () => {
             try {
-                const { authLogRetentionDays, authLogMaxEntries } = normalizeRetentionSettings(await getSettings());
+                const settings = normalizeRetentionSettings(await getSettings());
                 const database = db();
                 const expired = database.prepare('DELETE FROM auth_events WHERE created_at < ?')
-                    .run(now() - authLogRetentionDays * DAY_MS).changes;
-                const overflow = database.prepare(`
-                    DELETE FROM auth_events
-                    WHERE id <= (
-                        SELECT id FROM auth_events ORDER BY id DESC LIMIT 1 OFFSET ?
-                    )
-                `).run(authLogMaxEntries).changes;
+                    .run(now() - settings.authLogRetentionDays * DAY_MS).changes;
+                let overflow = 0;
+                for (const category of Object.keys(retentionAllowances(settings.authLogMaxEntries))) {
+                    overflow += trimCategory(database, category, settings);
+                }
                 return { expired, overflow };
             } catch (error) {
-                logger?.warn?.('[AuthAudit] Could not prune authentication events:', error.message);
+                warn('[AuthAudit] Could not prune authentication events:', error);
                 return { expired: 0, overflow: 0 };
             } finally {
                 pruning = null;
@@ -375,13 +487,22 @@ function createAuthAudit({
     function startMaintenance(intervalMs = PRUNE_INTERVAL_MS) {
         stopMaintenance();
         void prune();
-        maintenanceTimer = setInterval(() => void prune(), intervalMs);
+        maintenanceTimer = timers.setInterval(() => void prune(), intervalMs);
         maintenanceTimer.unref?.();
+        summaryTimer = timers.setInterval(flushPending, SUMMARY_FLUSH_MS);
+        summaryTimer.unref?.();
     }
 
     function stopMaintenance() {
-        if (maintenanceTimer) clearInterval(maintenanceTimer);
+        if (maintenanceTimer) timers.clearInterval(maintenanceTimer);
+        if (summaryTimer) timers.clearInterval(summaryTimer);
         maintenanceTimer = null;
+        summaryTimer = null;
+    }
+
+    function shutdown() {
+        stopMaintenance();
+        return flushPending();
     }
 
     function toPublicEntry(row) {
@@ -391,6 +512,10 @@ function createAuthAudit({
         } catch {
             forwardedFor = [];
         }
+        const summary = row.event === 'failure_summary';
+        let reasonCounts = {};
+        try { reasonCounts = row.reason_counts ? JSON.parse(row.reason_counts) : {}; } catch {}
+        const retentionGroup = row.category.replace(/_summary$/, '');
         return {
             id: row.id,
             at: new Date(row.created_at).toISOString(),
@@ -398,7 +523,13 @@ function createAuthAudit({
             outcome: row.outcome,
             method: row.method,
             reason: row.reason,
-            reasonText: row.reason ? REASONS[row.reason] || null : null,
+            reasonText: summary ? `${row.occurrences} additional ${retentionGroup === 'mfa' ? 'challenged two-factor' : 'ordinary'} failures were grouped.`
+                : row.reason ? REASONS[row.reason] || null : null,
+            retentionGroup,
+            occurrences: row.occurrences,
+            firstAt: new Date(row.first_at ?? row.created_at).toISOString(),
+            lastAt: new Date(row.last_at ?? row.created_at).toISOString(),
+            reasonCounts,
             userId: row.user_id,
             username: row.username,
             ip: row.ip,
@@ -485,7 +616,9 @@ function createAuthAudit({
         prune,
         query,
         startMaintenance,
-        stopMaintenance
+        stopMaintenance,
+        flushPending,
+        shutdown
     });
 }
 
@@ -515,6 +648,12 @@ module.exports = {
     MIN_MAX_ENTRIES,
     MAX_MAX_ENTRIES,
     MAX_PAGE_SIZE,
+    FAILURE_WINDOW_MS,
+    SUMMARY_FLUSH_MS,
+    FAILURE_LIMITS,
+    FAILURE_SOURCE_LIMIT,
+    FAILURE_SOURCE_KEYS,
+    retentionAllowances,
     createAuthAudit,
     contextFromRequest,
     describeClient,
@@ -527,5 +666,7 @@ module.exports = {
     prune: () => getDefault().prune(),
     query: filters => getDefault().query(filters),
     startMaintenance: intervalMs => getDefault().startMaintenance(intervalMs),
-    stopMaintenance: () => getDefault().stopMaintenance()
+    stopMaintenance: () => getDefault().stopMaintenance(),
+    flushPending: () => getDefault().flushPending(),
+    shutdown: () => getDefault().shutdown()
 };
