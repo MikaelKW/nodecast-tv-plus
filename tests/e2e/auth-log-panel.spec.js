@@ -235,12 +235,17 @@ test('date filters fit the other fields without horizontal overflow on mobile', 
             await input.fill('');
             const empty = await input.boundingBox();
             expect(Math.abs(empty.width - account.width)).toBeLessThanOrEqual(1);
+            expect(Math.abs(empty.height - account.height)).toBeLessThanOrEqual(4);
+            expect(empty.height).toBeGreaterThanOrEqual(24);
             await input.fill('2026-11-24T22:15');
             const filled = await input.boundingBox();
             expect(Math.abs(filled.width - account.width)).toBeLessThanOrEqual(1);
             expect(filled.height).toBe(empty.height);
             expect(filled.x + filled.width).toBeLessThanOrEqual(viewport.width);
             await expect(input).toHaveValue('2026-11-24T22:15');
+            await input.fill('');
+            const cleared = await input.boundingBox();
+            expect(cleared.height).toBe(filled.height);
         }
         const overflow = await page.locator('.auth-log-filters').evaluate(form => form.scrollWidth - form.clientWidth);
         expect(overflow).toBeLessThanOrEqual(1);

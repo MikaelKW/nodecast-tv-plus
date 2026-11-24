@@ -1519,9 +1519,11 @@ video::cue {
 }
 
 .auth-log-filters input[type="datetime-local"] {
+  --auth-log-date-padding: var(--space-sm);
   -webkit-appearance: none;
   appearance: none;
   max-width: 100%;
+  height: calc(1.25em + 2 * var(--auth-log-date-padding) + 2px);
 }
 
 .auth-log-filter-actions {
@@ -3775,6 +3777,10 @@ kbd {
   .form-input {
     font-size: 0.875rem;
     padding: var(--space-xs) var(--space-sm);
+  }
+
+  .auth-log-filters input[type="datetime-local"] {
+    --auth-log-date-padding: var(--space-xs);
   }
 
   /* Keep shortcut help consistent when the phone rotates or uses a keyboard. */
