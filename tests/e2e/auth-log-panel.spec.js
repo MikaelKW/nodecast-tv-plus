@@ -37,7 +37,7 @@ function entry(overrides) {
 async function openPanel(page) {
     await page.route('**/auth-log-harness', route => route.fulfill({
         contentType: 'text/html',
-        body: `<!doctype html><html><body>${logsTab}</body></html>`
+        body: `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${logsTab}</body></html>`
     }));
     await page.goto('/auth-log-harness');
     await page.addStyleTag({ path: path.join(__dirname, '../../public/css/main.css') });
@@ -208,4 +208,17 @@ test('saving retention supersedes a pending policy load', async ({ page }) => {
     });
     await expect(page.locator('#auth-log-retention-days')).toHaveValue('365');
     await expect(page.locator('#auth-log-max-entries')).toHaveValue('75000');
+});
+
+test('retention number inputs stay compact in mobile portrait and landscape', async ({ page }) => {
+    await openPanel(page);
+    for (const viewport of [{ width: 402, height: 874 }, { width: 874, height: 402 }]) {
+        await page.setViewportSize(viewport);
+        for (const selector of ['#auth-log-retention-days', '#auth-log-max-entries']) {
+            const bounds = await page.locator(selector).boundingBox();
+            expect(bounds.height).toBeGreaterThanOrEqual(28);
+            expect(bounds.height).toBeLessThanOrEqual(52);
+            expect(bounds.width).toBeLessThanOrEqual(180);
+        }
+    }
 });

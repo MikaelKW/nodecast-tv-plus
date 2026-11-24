@@ -1706,9 +1706,10 @@ video::cue {
 }
 
 .auth-log-retention .form-input.auth-log-number {
-  flex: 0 0 10rem;
+  flex: 0 1 auto;
   width: 10rem;
   max-width: 100%;
+  min-height: 2.25rem;
 }
 
 @media (max-width: 760px) {
