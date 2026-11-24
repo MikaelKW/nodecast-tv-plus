@@ -962,6 +962,113 @@ async function testHttpFloodPreservesActivity() {
     }
 }
 
+async function testForcedShutdownFinalFlush() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-audit-force-stop-'));
+    const secrets = Object.fromEntries(['jwt', 'session', 'totp'].map(key => [key, crypto.randomBytes(48).toString('hex')]));
+    const sockets = [];
+    let server;
+    try {
+        server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        for (let i = 0; i < 5; i++) {
+            assert.equal((await request(server.baseUrl, '/api/auth/login', { method: 'POST',
+                body: { username: 'force-stop-unknown', password: 'synthetic-invalid-value' } })).response.status, 401);
+        }
+        const port = new URL(server.baseUrl).port;
+        const connect = () => new Promise((resolve, reject) => {
+            const socket = net.connect({ host: '127.0.0.1', port }, () => resolve(socket));
+            socket.on('error', reject);
+            sockets.push(socket);
+        });
+        // One incomplete body keeps server.close() waiting. A second accepted
+        // request finishes after the initial flush and creates a pending count.
+        const hold = await connect();
+        hold.write(`POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\nConnection: close\r\n\r\n{`);
+        const completing = await connect();
+        const body = JSON.stringify({ username: 'force-stop-unknown', password: 'synthetic-invalid-value' });
+        completing.write(`POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body.slice(0, -1)}`);
+        let responseText = '';
+        completing.on('data', bytes => { responseText += bytes.toString(); });
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const closing = new Promise(resolve => {
+            const observe = bytes => {
+                if (bytes.toString().includes('SIGTERM received, shutting down')) {
+                    server.child.stdout.off('data', observe);
+                    resolve();
+                }
+            };
+            server.child.stdout.on('data', observe);
+        });
+        const exited = new Promise(resolve => server.child.once('exit', resolve));
+        const started = Date.now();
+        server.child.kill('SIGTERM');
+        await Promise.race([closing, new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown did not begin')), 3000))]);
+        completing.write(body.slice(-1));
+        await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('Forced shutdown did not finish')), 13000))]);
+        assert.equal(server.child.exitCode, 1, 'The held request exercises the internal forced-exit path.');
+        assert.ok(Date.now() - started >= 9000);
+        assert.match(responseText, /429 Too Many Requests/);
+        const database = new Database(path.join(directory, 'content.db'));
+        try {
+            assert.equal(database.prepare("SELECT SUM(occurrences) n FROM auth_events WHERE event='failure_summary'").get().n, 1,
+                'The final forced-exit save preserves a count created after the initial shutdown flush.');
+        } finally { database.close(); }
+    } finally {
+        for (const socket of sockets) socket.destroy();
+        await stopServer(server?.child);
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
+async function testViewerActivityRemainsBounded() {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-audit-viewer-'));
+    const secrets = Object.fromEntries(['jwt', 'session', 'totp'].map(key => [key, crypto.randomBytes(48).toString('hex')]));
+    const adminPassword = crypto.randomBytes(32).toString('base64url');
+    const viewerPassword = crypto.randomBytes(32).toString('base64url');
+    let server;
+    try {
+        server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        const admin = new CookieJar();
+        const setup = await request(server.baseUrl, '/api/auth/setup', { method: 'POST', jar: admin,
+            body: { username: 'quiet-admin', password: adminPassword, passwordConfirmation: adminPassword } });
+        assert.equal(setup.response.status, 201);
+        await request(server.baseUrl, '/api/settings', { method: 'PUT', jar: admin, body: { authLogMaxEntries: 1000 } });
+        const created = await request(server.baseUrl, '/api/auth/users', { method: 'POST', jar: admin,
+            body: { username: 'active-viewer', password: viewerPassword, passwordConfirmation: viewerPassword, role: 'viewer' } });
+        assert.equal(created.response.status, 201);
+        const viewer = new CookieJar();
+        const login = await request(server.baseUrl, '/api/auth/login', { method: 'POST', jar: viewer,
+            body: { username: 'active-viewer', password: viewerPassword } });
+        assert.equal(login.payload.user.role, 'viewer');
+        const credential = viewer.header();
+        for (let i = 0; i < 810; i++) {
+            assert.equal((await request(server.baseUrl, '/api/auth/logout', { method: 'POST', body: {},
+                headers: { Cookie: credential } })).response.status, 200);
+        }
+        for (let i = 0; i < 8; i++) {
+            assert.equal((await request(server.baseUrl, '/api/auth/login', { method: 'POST',
+                body: { username: 'active-viewer', password: viewerPassword } })).response.status, 200);
+        }
+        await stopServer(server.child);
+        assert.equal(server.child.exitCode, 0);
+        const database = new Database(path.join(directory, 'content.db'));
+        try {
+            assert.equal(database.prepare('SELECT COUNT(*) n FROM auth_events WHERE user_id=?').get(setup.payload.user.id).n, 1,
+                'Repeated Viewer activity leaves the quiet administrator record intact.');
+            const rows = database.prepare('SELECT event,summary_event,outcome,occurrences FROM auth_events WHERE user_id=?').all(login.payload.user.id);
+            assert.equal(rows.reduce((sum, row) => sum + row.occurrences, 0), 819);
+            assert.ok(rows.filter(row => row.event !== 'activity_summary').length <= 2 * authAudit.ACTIVITY_ACCOUNT_LIMIT);
+            assert.equal(rows.filter(row => row.event === 'sign_out' || row.summary_event === 'sign_out')
+                .reduce((sum, row) => sum + row.occurrences, 0), 810);
+            assert.equal(rows.filter(row => row.event === 'sign_in' || row.summary_event === 'sign_in')
+                .reduce((sum, row) => sum + row.occurrences, 0), 9);
+            assert.ok(rows.filter(row => row.event === 'activity_summary').every(row => row.outcome === 'success'));
+        } finally { database.close(); }
+    } finally {
+        await stopServer(server?.child);
+        await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+    }
+}
+
 async function run() {
     testDescribeClient();
     testNormalizeIp();
@@ -974,6 +1081,8 @@ async function run() {
     await testExpiredChallengeAudit();
     await testSummaryShutdownAndRestart();
     await testHttpFloodPreservesActivity();
+    await testForcedShutdownFinalFlush();
+    await testViewerActivityRemainsBounded();
     await testPlayerSaveKeepsRetention();
     await testServerFlow();
     console.log('Authentication audit log tests passed.');

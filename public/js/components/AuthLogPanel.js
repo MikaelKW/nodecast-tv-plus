@@ -6,8 +6,8 @@
  */
 class AuthLogPanel {
     static LABELS = Object.freeze({
-        event: { sign_in: 'Sign-in', sign_out: 'Sign-out', setup: 'Initial setup', failure_summary: 'Grouped failures' },
-        outcome: { success: 'Succeeded', failure: 'Failed', mfa_required: 'Two-factor required' },
+        event: { sign_in: 'Sign-in', sign_out: 'Sign-out', setup: 'Initial setup', failure_summary: 'Grouped failures', activity_summary: 'Grouped activity' },
+        outcome: { success: 'Succeeded', failure: 'Failed', mfa_required: 'Two-factor required', summary: 'Mixed activity' },
         method: {
             password: 'Password',
             sso: 'Single sign-on',
@@ -265,6 +265,7 @@ class AuthLogPanel {
         row.append(this.cell(this.filterButton('account', entry.username)));
 
         const eventCell = this.cell(AuthLogPanel.label('event', entry.event));
+        if (entry.summaryEvent) eventCell.append(this.secondary(AuthLogPanel.label('event', entry.summaryEvent)));
         if (entry.method) eventCell.append(this.secondary(AuthLogPanel.label('method', entry.method)));
         row.append(eventCell);
 
@@ -302,13 +303,18 @@ class AuthLogPanel {
             ? `${entry.username || '—'} (ID ${entry.userId})`
             : entry.username);
         add('Reason', entry.reasonText || entry.reason);
-        if (entry.event === 'failure_summary') {
+        if (entry.event === 'failure_summary' || entry.event === 'activity_summary') {
             add('Grouped attempts', entry.occurrences);
             add('First attempt (UTC)', entry.firstAt);
             add('Last attempt (UTC)', entry.lastAt);
-            add('Evidence group', entry.retentionGroup === 'mfa' ? 'Challenged two-factor failures' : 'Ordinary failures');
+            add('Evidence group', entry.retentionGroup === 'activity' ? 'Protected activity'
+                : entry.retentionGroup === 'mfa' ? 'Challenged two-factor failures' : 'Ordinary failures');
             add('Reasons', Object.entries(entry.reasonCounts || {})
                 .map(([reason, count]) => `${reason}: ${count}`).join(' · '), { wide: true });
+            if (Object.keys(entry.activityCounts || {}).length) {
+                add('Activity counts', Object.entries(entry.activityCounts)
+                    .map(([kind, count]) => `${kind}: ${count}`).join(' · '), { wide: true });
+            }
         }
         add('Client IP', entry.ip, { hint: 'Resolved through the trusted proxy settings' });
         add('Received from', entry.peerIp, { hint: 'The address that connected to the server: a proxy or the client itself' });

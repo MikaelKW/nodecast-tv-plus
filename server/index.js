@@ -224,6 +224,7 @@ async function shutdown(signal) {
 
     const forceExitTimer = setTimeout(() => {
         console.error('Graceful shutdown timed out.');
+        authAudit.shutdown();
         process.exit(1);
     }, 10000);
     forceExitTimer.unref();

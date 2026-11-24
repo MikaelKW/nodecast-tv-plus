@@ -38,7 +38,7 @@
         "test:hls-audio-recovery": "node scripts/hls-audio-recovery-test.js",
         "test:xtream-fallback": "node scripts/xtream-format-fallback-test.js",
         "test:totp": "node scripts/totp-auth-test.js",
-        "test:auth-audit": "node scripts/auth-audit-test.js && node scripts/auth-audit-bounds-test.js",
+        "test:auth-audit": "node scripts/auth-audit-test.js && node scripts/auth-audit-bounds-test.js && node scripts/auth-audit-activity-test.js",
         "test:session-isolation": "node scripts/session-cookie-isolation-test.js",
         "test:performance": "node scripts/large-provider-performance-test.js",
         "test:favorite-channels": "node scripts/favorite-channels-test.js",

@@ -80,7 +80,7 @@ async function testIndependentRetentionAndExpiry() {
         for (let window = 0; window < 25; window++) {
             for (let i = 0; i < 80; i++) { f.audit.record(ordinary(i)); f.audit.record(mfa(i)); }
             f.audit.flushPending();
-            f.advance(service.FAILURE_WINDOW_MS);
+            f.advance(service.SUMMARY_PERIOD_MS);
         }
         await f.audit.prune();
         const counts = totals(f.database);
@@ -90,9 +90,13 @@ async function testIndependentRetentionAndExpiry() {
         for (const category of ['ordinary', 'mfa', 'ordinary_summary', 'mfa_summary']) {
             assert.equal(counts[category], allowances[category], `${category} has its own allowance.`);
         }
-        for (let i = 0; i < 710; i++) f.audit.record({ event: 'sign_out', outcome: 'success', user });
+        for (let i = 0; i < 710; i++) {
+            f.audit.record({ event: 'sign_out', outcome: 'success', user: { id: 8, username: 'busy-account' } });
+            f.advance(service.FAILURE_WINDOW_MS);
+        }
         await f.audit.prune();
         assert.equal(totals(f.database).activity, allowances.activity, 'Protected activity is bounded too.');
+        assert.equal(f.audit.query({ account: user.username, outcome: 'success' }).total, 1, 'The quiet account keeps its earlier record.');
         f.advance(91 * 24 * 60 * 60 * 1000);
         await f.audit.prune();
         assert.equal(f.audit.query().total, 0, 'Age expiry applies to every group and summary.');
@@ -120,9 +124,9 @@ async function testPerSourceWindowsAndTimers() {
         assert.equal(totals(f.database).ordinary, 10, 'Admission resets for the next window.');
         assert.equal(f.audit.shutdown(), true);
         assert.equal(f.timers.size, 0, 'Normal shutdown cancels both timers.');
-        assert.deepEqual(f.audit.query({ event: 'failure_summary' }).entries.map(entry => entry.occurrences).sort(), [3, 3, 7, 7]);
+        assert.deepEqual(f.audit.query({ event: 'failure_summary' }).entries.map(entry => entry.occurrences), [10, 10]);
         f.audit.shutdown();
-        assert.equal(f.audit.query({ event: 'failure_summary' }).total, 4, 'Shutdown does not duplicate a summary.');
+        assert.equal(f.audit.query({ event: 'failure_summary' }).total, 2, 'Shutdown does not duplicate a summary.');
     } finally { f.audit.stopMaintenance(); f.database.close(); }
 }
 

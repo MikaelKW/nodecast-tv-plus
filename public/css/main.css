@@ -1647,6 +1647,10 @@ video::cue {
   color: var(--color-warning, #f59e0b);
 }
 
+.auth-log-outcome-summary {
+  color: var(--color-text-secondary);
+}
+
 .auth-log-filter-link {
   background: none;
   border: none;

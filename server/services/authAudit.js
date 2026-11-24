@@ -8,13 +8,13 @@ const { randomUUID } = require('node:crypto');
  * Records sign-in attempts with their outcome and request context for
  * administrators. Only fixed codes and the listed context fields are stored:
  * callers cannot pass passwords, MFA codes, cookies, tokens or arbitrary
- * properties into an entry. Recording never throws, so a storage problem can
- * not block or alter authentication.
+ * properties into an entry. Storage errors are contained rather than replacing
+ * the authentication result. Attempted usernames may contain mistaken input.
  */
 
-const EVENTS = Object.freeze(['sign_in', 'sign_out', 'setup', 'failure_summary']);
+const EVENTS = Object.freeze(['sign_in', 'sign_out', 'setup', 'failure_summary', 'activity_summary']);
 
-const OUTCOMES = Object.freeze(['success', 'failure', 'mfa_required']);
+const OUTCOMES = Object.freeze(['success', 'failure', 'mfa_required', 'summary']);
 
 const METHODS = Object.freeze([
     'password',
@@ -58,6 +58,10 @@ const SUMMARY_FLUSH_MS = 30 * 1000;
 const FAILURE_LIMITS = Object.freeze({ ordinary: 60, mfa: 30 });
 const FAILURE_SOURCE_LIMIT = 5;
 const FAILURE_SOURCE_KEYS = 128;
+const ACTIVITY_LIMIT = 120;
+const ACTIVITY_ACCOUNT_LIMIT = 12;
+const ACTIVITY_PENDING_KEYS = 128;
+const SUMMARY_PERIOD_MS = 60 * 60 * 1000;
 
 function retentionAllowances(maxEntries) {
     const activity = Math.floor(maxEntries * 0.7);
@@ -247,17 +251,21 @@ function createAuthAudit({
     let pruning = null;
     let maintenanceTimer = null;
     let summaryTimer = null;
-    let lastWarningAt = -Infinity;
-    const failureWindow = { start: null, ordinary: 0, mfa: 0 };
-    const sources = { ordinary: new Map(), mfa: new Map() };
+    const lastWarningAt = { record: -Infinity, prune: -Infinity, summary: -Infinity };
+    let capacityFallbackWarned = false;
+    let lastFailedFlushAt = -Infinity;
+    const failureWindow = { start: null, ordinary: 0, mfa: 0, activity: 0 };
+    const sources = { ordinary: new Map(), mfa: new Map(), activity: new Map() };
     const pending = { ordinary: null, mfa: null };
+    const pendingActivity = new Map();
+    let pendingActivityOverflow = null;
     const preparedDatabases = new WeakSet();
 
-    function warn(message, error) {
+    function warn(kind, message, error) {
         const at = now();
-        if (at - lastWarningAt < FAILURE_WINDOW_MS && at >= lastWarningAt) return;
-        lastWarningAt = at;
-        logger?.warn?.(message, error.message);
+        if (at - lastWarningAt[kind] < FAILURE_WINDOW_MS && at >= lastWarningAt[kind]) return;
+        lastWarningAt[kind] = at;
+        try { logger?.warn?.(message, error.message); } catch {}
     }
 
     function db() {
@@ -300,7 +308,8 @@ function createAuthAudit({
         database.transaction(() => {
             for (const [name, definition] of Object.entries({
                 category: "TEXT NOT NULL DEFAULT 'ordinary'", occurrences: 'INTEGER NOT NULL DEFAULT 1',
-                first_at: 'INTEGER', last_at: 'INTEGER', reason_counts: 'TEXT'
+                first_at: 'INTEGER', last_at: 'INTEGER', reason_counts: 'TEXT',
+                summary_key: 'TEXT', summary_event: 'TEXT', activity_counts: 'TEXT'
             })) {
                 if (!columns.has(name)) database.exec(`ALTER TABLE auth_events ADD COLUMN ${name} ${definition}`);
             }
@@ -311,49 +320,123 @@ function createAuthAudit({
                     AND flow_id IS NOT NULL AND method IN ('password+totp','password+recovery_code','sso+totp','sso+recovery_code');`);
             }
             database.exec('CREATE INDEX IF NOT EXISTS idx_auth_events_category_id ON auth_events(category, id)');
+            database.exec(`CREATE INDEX IF NOT EXISTS idx_auth_events_account_created
+                ON auth_events(category, user_id, created_at DESC, id DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_events_summary_key ON auth_events(summary_key);`);
         })();
+    }
+
+    function trimActivity(database, limit) {
+        const counts = database.prepare("SELECT COUNT(*) n FROM auth_events WHERE category='activity' GROUP BY user_id").all();
+        const total = counts.reduce((sum, row) => sum + row.n, 0);
+        if (total <= limit) return 0;
+        // Water-filling is equivalent to trimming the busiest accounts first.
+        let low = 0;
+        let high = counts.reduce((maximum, row) => Math.max(maximum, row.n), 0);
+        while (low < high) {
+            const middle = Math.ceil((low + high) / 2);
+            const kept = counts.reduce((sum, row) => sum + Math.min(row.n, middle), 0);
+            if (kept <= limit) low = middle;
+            else high = middle - 1;
+        }
+        const extras = limit - counts.reduce((sum, row) => sum + Math.min(row.n, low), 0);
+        if (low === 0 && !capacityFallbackWarned) {
+            capacityFallbackWarned = true;
+            try { logger?.warn?.('[AuthAudit] Sign-in activity allowance is full of single-account entries; oldest records are now being replaced.'); } catch {}
+        }
+        return database.prepare(`WITH ranked AS MATERIALIZED (
+            SELECT id, created_at, ROW_NUMBER() OVER (
+                PARTITION BY user_id ORDER BY created_at DESC, id DESC
+            ) position FROM auth_events WHERE category='activity'
+        ), extra AS (
+            SELECT id FROM ranked WHERE position=? ORDER BY created_at DESC, id DESC LIMIT ?
+        ) DELETE FROM auth_events WHERE id IN (
+            SELECT id FROM ranked WHERE position>? AND id NOT IN (SELECT id FROM extra)
+        )`).run(low + 1, extras, low).changes;
     }
 
     function trimCategory(database, category, settings) {
         const limit = retentionAllowances(settings.authLogMaxEntries)[category];
+        if (category === 'activity') return trimActivity(database, limit);
         return database.prepare(`DELETE FROM auth_events WHERE category = ? AND id <= (
             SELECT id FROM auth_events WHERE category = ? ORDER BY id DESC LIMIT 1 OFFSET ?
         )`).run(category, category, limit).changes;
     }
 
-    // Only two fixed-size pending counters exist, independent of account/IP cardinality.
-    function flushPending() {
-        let saved = true;
-        for (const group of ['ordinary', 'mfa']) {
-            const summary = pending[group];
-            if (!summary) continue;
-            try {
-                const database = db();
-                database.transaction(() => {
-                    database.prepare(`INSERT INTO auth_events
-                        (created_at,event,outcome,category,occurrences,first_at,last_at,reason_counts)
-                        VALUES (?, 'failure_summary', 'failure', ?, ?, ?, ?, ?)`)
-                        .run(summary.last, `${group}_summary`, summary.count, summary.first, summary.last, JSON.stringify(summary.reasons));
-                })();
-                pending[group] = null;
-                noteInsert();
-            } catch (error) {
-                saved = false;
-                warn('[AuthAudit] Could not save grouped authentication events:', error);
-            }
+    function mergeCounts(before, added) {
+        let result = {};
+        try { result = before ? JSON.parse(before) : {}; } catch {}
+        for (const [key, count] of Object.entries(added || {})) {
+            result[key] = Math.min(Number.MAX_SAFE_INTEGER, (Number(result[key]) || 0) + count);
         }
-        return saved;
+        return JSON.stringify(result);
     }
 
-    function admitFailure(group, key, reason, at) {
+    function persistSummary(database, group, summary) {
+        const activity = group === 'activity';
+        const category = activity ? 'activity' : `${group}_summary`;
+        const outcome = activity ? summary.outcome || 'summary' : 'failure';
+        const key = JSON.stringify([category, Math.floor(summary.first / SUMMARY_PERIOD_MS), summary.userId || null,
+            summary.event || null, outcome, summary.method || null, summary.username || null]);
+        const existing = database.prepare('SELECT id,reason_counts,activity_counts FROM auth_events WHERE summary_key=?').get(key);
+        const reasons = mergeCounts(existing?.reason_counts, summary.reasons);
+        const activityCounts = mergeCounts(existing?.activity_counts, summary.activityCounts);
+        if (existing) {
+            database.prepare(`UPDATE auth_events SET occurrences=MIN(9007199254740991,occurrences+?),
+                first_at=MIN(first_at,?), last_at=MAX(last_at,?), created_at=MAX(created_at,?),
+                reason_counts=?,activity_counts=? WHERE id=?`)
+                .run(summary.count, summary.first, summary.last, summary.last, reasons, activityCounts, existing.id);
+            return 0;
+        }
+        database.prepare(`INSERT INTO auth_events
+            (created_at,event,outcome,category,occurrences,first_at,last_at,reason_counts,summary_key,
+                user_id,username,method,summary_event,activity_counts)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .run(summary.last, activity ? 'activity_summary' : 'failure_summary', outcome, category,
+                summary.count, summary.first, summary.last, reasons, key, summary.userId || null,
+                summary.username || null, summary.method || null, summary.event || null, activityCounts);
+        return 1;
+    }
+
+    // Fixed failure accumulators, bounded per-account activity, and one overflow counter.
+    function flushPending({ force = true } = {}) {
+        if (!force && now() >= lastFailedFlushAt && now() - lastFailedFlushAt < SUMMARY_FLUSH_MS) return false;
+        const batch = ['ordinary', 'mfa'].filter(group => pending[group]).map(group => [group, pending[group]]);
+        for (const summary of pendingActivity.values()) batch.push(['activity', summary]);
+        if (pendingActivityOverflow) batch.push(['activity', pendingActivityOverflow]);
+        if (!batch.length) return true;
+        try {
+            const database = db();
+            const inserted = database.transaction(() => batch.reduce((sum, [group, summary]) => sum + persistSummary(database, group, summary), 0))();
+            pending.ordinary = null;
+            pending.mfa = null;
+            pendingActivity.clear();
+            pendingActivityOverflow = null;
+            lastFailedFlushAt = -Infinity;
+            for (let i = 0; i < inserted; i++) noteInsert();
+            return true;
+        } catch (error) {
+            lastFailedFlushAt = now();
+            warn('summary', '[AuthAudit] Could not save grouped authentication events:', error);
+            return false;
+        }
+    }
+
+    function resetWindow(at) {
         if (failureWindow.start === null || at - failureWindow.start >= FAILURE_WINDOW_MS || at < failureWindow.start) {
-            flushPending();
+            flushPending({ force: false });
             failureWindow.start = at;
             failureWindow.ordinary = 0;
             failureWindow.mfa = 0;
+            failureWindow.activity = 0;
             sources.ordinary.clear();
             sources.mfa.clear();
+            sources.activity.clear();
         }
+    }
+
+    function admitFailure(group, key, reason, at) {
+        resetWindow(at);
         const sourceCount = sources[group].get(key) || 0;
         if (failureWindow[group] < FAILURE_LIMITS[group] && sourceCount < FAILURE_SOURCE_LIMIT
             && (sources[group].has(key) || sources[group].size < FAILURE_SOURCE_KEYS)) {
@@ -361,12 +444,48 @@ function createAuthAudit({
             sources[group].set(key, sourceCount + 1);
             return true;
         }
+        if (pending[group] && Math.floor(pending[group].first / SUMMARY_PERIOD_MS) !== Math.floor(at / SUMMARY_PERIOD_MS)) flushPending({ force: false });
         const summary = pending[group] || { count: 0, first: at, last: at, reasons: {} };
         summary.count = Math.min(Number.MAX_SAFE_INTEGER, summary.count + 1);
-        summary.last = at;
+        summary.first = Math.min(summary.first, at);
+        summary.last = Math.max(summary.last, at);
         const code = reason || 'unspecified';
         summary.reasons[code] = Math.min(Number.MAX_SAFE_INTEGER, (summary.reasons[code] || 0) + 1);
         pending[group] = summary;
+        return false;
+    }
+
+    function admitActivity(userId, event, outcome, method, username, at) {
+        resetWindow(at);
+        const count = sources.activity.get(userId) || 0;
+        if (failureWindow.activity < ACTIVITY_LIMIT && count < ACTIVITY_ACCOUNT_LIMIT
+            && (sources.activity.has(userId) || sources.activity.size < FAILURE_SOURCE_KEYS)) {
+            sources.activity.set(userId, count + 1);
+            failureWindow.activity += 1;
+            return true;
+        }
+        if (pendingActivityOverflow && Math.floor(pendingActivityOverflow.first / SUMMARY_PERIOD_MS) !== Math.floor(at / SUMMARY_PERIOD_MS)) flushPending({ force: false });
+        const key = JSON.stringify([userId, event, outcome, method, username]);
+        let summary = pendingActivity.get(key);
+        if (summary && Math.floor(summary.first / SUMMARY_PERIOD_MS) !== Math.floor(at / SUMMARY_PERIOD_MS)) {
+            flushPending({ force: false });
+            summary = pendingActivity.get(key);
+        }
+        if (summary || pendingActivity.size < ACTIVITY_PENDING_KEYS) {
+            summary ||= { count: 0, first: at, last: at, userId, event, outcome, method, username };
+            summary.count = Math.min(Number.MAX_SAFE_INTEGER, summary.count + 1);
+            summary.first = Math.min(summary.first, at);
+            summary.last = Math.max(summary.last, at);
+            pendingActivity.set(key, summary);
+        } else {
+            const overflow = pendingActivityOverflow || { count: 0, first: at, last: at, activityCounts: {} };
+            overflow.count = Math.min(Number.MAX_SAFE_INTEGER, overflow.count + 1);
+            overflow.first = Math.min(overflow.first, at);
+            overflow.last = Math.max(overflow.last, at);
+            const kind = `${event}:${outcome}:${method || 'unspecified'}`;
+            overflow.activityCounts[kind] = Math.min(Number.MAX_SAFE_INTEGER, (overflow.activityCounts[kind] || 0) + 1);
+            pendingActivityOverflow = overflow;
+        }
         return false;
     }
 
@@ -400,7 +519,7 @@ function createAuthAudit({
         context = {}
     } = {}) {
         try {
-            if (!EVENTS.includes(event) || event === 'failure_summary' || !OUTCOMES.includes(outcome)) return false;
+            if (!EVENTS.includes(event) || event.endsWith('_summary') || !OUTCOMES.includes(outcome) || outcome === 'summary') return false;
             if (method !== null && !METHODS.includes(method)) return false;
             if (reason !== null && !Object.hasOwn(REASONS, reason)) return false;
 
@@ -412,6 +531,8 @@ function createAuthAudit({
                 && typeof challengeKey === 'string' && challengeKey.length > 0 && challengeKey.length <= 128;
             const category = (outcome === 'success' || outcome === 'mfa_required') && userId > 0
                 ? 'activity' : protectedChallenge && outcome === 'failure' ? 'mfa' : 'ordinary';
+            const accountName = cleanText(user?.username ?? username, LIMITS.username);
+            if (category === 'activity' && !admitActivity(userId, event, outcome, method, accountName, at)) return true;
             if (outcome === 'failure') {
                 const key = category === 'mfa' ? `${userId}:${challengeKey}`
                     : normalizeIp(context.ip) || normalizeIp(context.peerIp) || 'unknown';
@@ -434,7 +555,7 @@ function createAuthAudit({
                 method,
                 reason,
                 userId,
-                cleanText(user?.username ?? username, LIMITS.username),
+                accountName,
                 normalizeIp(context.ip),
                 normalizeIp(context.peerIp),
                 forwardedFor.length ? JSON.stringify(forwardedFor) : null,
@@ -446,7 +567,7 @@ function createAuthAudit({
             noteInsert();
             return true;
         } catch (error) {
-            warn('[AuthAudit] Could not record an authentication event:', error);
+            warn('record', '[AuthAudit] Could not record an authentication event:', error);
             return false;
         }
     }
@@ -463,7 +584,7 @@ function createAuthAudit({
         if (pruning) return pruning;
         insertsSincePrune = 0;
         lastPruneAt = now();
-        pruning = (async () => {
+        pruning = Promise.resolve().then(async () => {
             try {
                 const settings = normalizeRetentionSettings(await getSettings());
                 const database = db();
@@ -475,12 +596,10 @@ function createAuthAudit({
                 }
                 return { expired, overflow };
             } catch (error) {
-                warn('[AuthAudit] Could not prune authentication events:', error);
+                warn('prune', '[AuthAudit] Could not prune authentication events:', error);
                 return { expired: 0, overflow: 0 };
-            } finally {
-                pruning = null;
             }
-        })();
+        }).finally(() => { pruning = null; });
         return pruning;
     }
 
@@ -512,10 +631,16 @@ function createAuthAudit({
         } catch {
             forwardedFor = [];
         }
-        const summary = row.event === 'failure_summary';
+        const summary = row.event.endsWith('_summary');
         let reasonCounts = {};
         try { reasonCounts = row.reason_counts ? JSON.parse(row.reason_counts) : {}; } catch {}
         const retentionGroup = row.category.replace(/_summary$/, '');
+        let activityCounts = {};
+        try { activityCounts = row.activity_counts ? JSON.parse(row.activity_counts) : {}; } catch {}
+        const activityLabel = row.summary_event === 'sign_out' ? 'authenticated sign-outs'
+            : row.summary_event === 'setup' ? 'initial setups'
+                : row.outcome === 'mfa_required' ? 'first-factor successes requiring two-factor verification'
+                    : row.summary_event === 'sign_in' ? 'completed sign-ins' : 'activity events';
         return {
             id: row.id,
             at: new Date(row.created_at).toISOString(),
@@ -523,13 +648,16 @@ function createAuthAudit({
             outcome: row.outcome,
             method: row.method,
             reason: row.reason,
-            reasonText: summary ? `${row.occurrences} additional ${retentionGroup === 'mfa' ? 'challenged two-factor' : 'ordinary'} failures were grouped.`
+            reasonText: row.event === 'activity_summary' ? `${row.occurrences} additional ${activityLabel} were grouped.`
+                : summary ? `${row.occurrences} additional ${retentionGroup === 'mfa' ? 'challenged two-factor' : 'ordinary'} failures were grouped.`
                 : row.reason ? REASONS[row.reason] || null : null,
             retentionGroup,
             occurrences: row.occurrences,
             firstAt: new Date(row.first_at ?? row.created_at).toISOString(),
             lastAt: new Date(row.last_at ?? row.created_at).toISOString(),
             reasonCounts,
+            summaryEvent: row.summary_event,
+            activityCounts,
             userId: row.user_id,
             username: row.username,
             ip: row.ip,
@@ -558,9 +686,10 @@ function createAuthAudit({
         }
         const to = parseTime(filters.to);
         if (to !== null) {
-            where.push('created_at <= ?');
+            where.push('COALESCE(first_at,created_at) <= ?');
             params.push(to);
         }
+        if (from !== null && to !== null && from > to) where.push('0');
 
         const account = cleanText(filters.account, LIMITS.username);
         if (account) {
@@ -579,8 +708,8 @@ function createAuthAudit({
             params.push(filters.outcome);
         }
         if (EVENTS.includes(filters.event)) {
-            where.push('event = ?');
-            params.push(filters.event);
+            where.push('(event = ? OR summary_event = ?)');
+            params.push(filters.event, filters.event);
         }
         if (METHODS.includes(filters.method)) {
             where.push('method = ?');
@@ -653,6 +782,10 @@ module.exports = {
     FAILURE_LIMITS,
     FAILURE_SOURCE_LIMIT,
     FAILURE_SOURCE_KEYS,
+    ACTIVITY_LIMIT,
+    ACTIVITY_ACCOUNT_LIMIT,
+    ACTIVITY_PENDING_KEYS,
+    SUMMARY_PERIOD_MS,
     retentionAllowances,
     createAuthAudit,
     contextFromRequest,
