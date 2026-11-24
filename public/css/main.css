@@ -1518,6 +1518,12 @@ video::cue {
   min-width: 0;
 }
 
+.auth-log-filters input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  max-width: 100%;
+}
+
 .auth-log-filter-actions {
   display: flex;
   flex-wrap: wrap;

@@ -222,3 +222,27 @@ test('retention number inputs stay compact in mobile portrait and landscape', as
         }
     }
 });
+
+test('date filters fit the other fields without horizontal overflow on mobile', async ({ page }) => {
+    await openPanel(page);
+    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 },
+        { width: 402, height: 874 }, { width: 844, height: 390 }, { width: 874, height: 402 }]) {
+        await page.setViewportSize(viewport);
+        const account = await page.locator('#auth-log-account').boundingBox();
+        for (const selector of ['#auth-log-from', '#auth-log-to']) {
+            const input = page.locator(selector);
+            await expect(input).toHaveCSS('appearance', 'none');
+            await input.fill('');
+            const empty = await input.boundingBox();
+            expect(Math.abs(empty.width - account.width)).toBeLessThanOrEqual(1);
+            await input.fill('2026-11-24T22:15');
+            const filled = await input.boundingBox();
+            expect(Math.abs(filled.width - account.width)).toBeLessThanOrEqual(1);
+            expect(filled.height).toBe(empty.height);
+            expect(filled.x + filled.width).toBeLessThanOrEqual(viewport.width);
+            await expect(input).toHaveValue('2026-11-24T22:15');
+        }
+        const overflow = await page.locator('.auth-log-filters').evaluate(form => form.scrollWidth - form.clientWidth);
+        expect(overflow).toBeLessThanOrEqual(1);
+    }
+});
