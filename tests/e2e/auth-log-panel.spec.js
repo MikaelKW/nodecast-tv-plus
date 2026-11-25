@@ -285,6 +285,8 @@ test('activity summaries distinguish incomplete factors from completed sign-ins'
     await expect(page.locator('.auth-log-row')).not.toContainText('Succeeded');
     await page.locator('.auth-log-toggle').click();
     await expect(page.locator('.auth-log-details')).toContainText('Protected activity');
+    await expect(page.locator('.auth-log-details dt')).toContainText(['Grouped events', 'First event (UTC)', 'Last event (UTC)']);
+    await expect(page.locator('.auth-log-details dt').filter({ hasText: /^Reasons$/ })).toHaveCount(0);
     await expect(page.locator('.auth-log-details')).toContainText('14');
     await expect(page.locator('.auth-log-details')).toContainText('2026-11-25T12:30:00Z');
     await page.evaluate(value => window.panel.render({ entries: [{ ...value, outcome: 'success',
@@ -297,14 +299,22 @@ test('mixed activity overflow has no invented account or completed-sign-in outco
     await openPanel(page);
     const summary = entry({ id: 51, event: 'activity_summary', summaryEvent: null, outcome: 'summary',
         userId: null, username: null, method: null, ip: null, peerIp: null, client: null,
-        occurrences: 46, retentionGroup: 'activity', firstAt: '2026-11-25T12:00:00Z', lastAt: '2026-11-25T12:30:00Z',
-        reasonText: '46 additional activity events were grouped.', reasonCounts: {},
-        activityCounts: { 'sign_in:mfa_required:password': 44, 'sign_in:success:password': 2 } });
+        occurrences: 54, retentionGroup: 'activity', firstAt: '2026-11-25T12:00:00Z', lastAt: '2026-11-25T12:30:00Z',
+        reasonText: '54 additional activity events were grouped.', reasonCounts: {},
+        activityCounts: { 'sign_in:mfa_required:password': 44, 'sign_in:success:password': 2,
+            'sign_out:success:unspecified': 5, 'sign_in:success:password+totp': 3,
+            '<img src=x onerror="window.__activityXss=1">:success:unspecified': 0 } });
     await page.evaluate(value => window.panel.render({ entries: [value], total: 1, page: 1, pages: 1 }), summary);
     await expect(page.locator('.auth-log-outcome')).toHaveText('Mixed activity');
     await expect(page.locator('.auth-log-row [data-auth-log-filter]')).toHaveCount(0);
     await expect(page.locator('.auth-log-row')).not.toContainText('Succeeded');
     await page.locator('.auth-log-toggle').click();
-    await expect(page.locator('.auth-log-details')).toContainText('sign_in:mfa_required:password: 44');
-    await expect(page.locator('.auth-log-details')).toContainText('sign_in:success:password: 2');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Two-factor required · Password: 44');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Succeeded · Password: 2');
+    await expect(page.locator('.auth-log-details')).not.toContainText('sign_in:');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-out · Succeeded: 5');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Succeeded · Password + authenticator: 3');
+    await expect(page.locator('.auth-log-details img')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__activityXss)).toBeUndefined();
+    await expect(page.locator('.auth-log-details dt').filter({ hasText: /^Reasons$/ })).toHaveCount(0);
 });

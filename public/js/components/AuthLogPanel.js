@@ -169,6 +169,14 @@ class AuthLogPanel {
         return AuthLogPanel.LABELS[group]?.[value] || value;
     }
 
+    static activityCountLabel(kind) {
+        const parts = String(kind).split(':');
+        if (parts.length !== 3) return String(kind);
+        const [event, outcome, method] = parts;
+        return [AuthLogPanel.label('event', event), AuthLogPanel.label('outcome', outcome),
+            ...(method === 'unspecified' ? [] : [AuthLogPanel.label('method', method)])].join(' · ');
+    }
+
     static formatTime(iso) {
         const date = new Date(iso);
         if (!Number.isFinite(date.getTime())) return String(iso || '');
@@ -302,18 +310,19 @@ class AuthLogPanel {
         add('Account', entry.userId !== null && entry.userId !== undefined
             ? `${entry.username || '—'} (ID ${entry.userId})`
             : entry.username);
-        add('Reason', entry.reasonText || entry.reason);
+        const activitySummary = entry.event === 'activity_summary';
+        add(activitySummary ? 'Summary' : 'Reason', entry.reasonText || entry.reason);
         if (entry.event === 'failure_summary' || entry.event === 'activity_summary') {
-            add('Grouped attempts', entry.occurrences);
-            add('First attempt (UTC)', entry.firstAt);
-            add('Last attempt (UTC)', entry.lastAt);
+            add(activitySummary ? 'Grouped events' : 'Grouped attempts', entry.occurrences);
+            add(activitySummary ? 'First event (UTC)' : 'First attempt (UTC)', entry.firstAt);
+            add(activitySummary ? 'Last event (UTC)' : 'Last attempt (UTC)', entry.lastAt);
             add('Evidence group', entry.retentionGroup === 'activity' ? 'Protected activity'
                 : entry.retentionGroup === 'mfa' ? 'Challenged two-factor failures' : 'Ordinary failures');
-            add('Reasons', Object.entries(entry.reasonCounts || {})
-                .map(([reason, count]) => `${reason}: ${count}`).join(' · '), { wide: true });
+            const reasons = Object.entries(entry.reasonCounts || {});
+            if (reasons.length) add('Reasons', reasons.map(([reason, count]) => `${reason}: ${count}`).join(' · '), { wide: true });
             if (Object.keys(entry.activityCounts || {}).length) {
                 add('Activity counts', Object.entries(entry.activityCounts)
-                    .map(([kind, count]) => `${kind}: ${count}`).join(' · '), { wide: true });
+                    .map(([kind, count]) => `${AuthLogPanel.activityCountLabel(kind)}: ${count}`).join(' · '), { wide: true });
             }
         }
         add('Client IP', entry.ip, { hint: 'Resolved through the trusted proxy settings' });

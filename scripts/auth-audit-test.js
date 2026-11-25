@@ -964,11 +964,21 @@ async function testHttpFloodPreservesActivity() {
 
 async function testForcedShutdownFinalFlush() {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'nodecast-audit-force-stop-'));
+    const pluginFile = path.join(projectRoot, 'server', 'plugins', `audit-stop-test-${crypto.randomBytes(8).toString('hex')}.js`);
     const secrets = Object.fromEntries(['jwt', 'session', 'totp'].map(key => [key, crypto.randomBytes(48).toString('hex')]));
     const sockets = [];
     let server;
     try {
+        await fs.mkdir(path.dirname(pluginFile), { recursive: true });
+        await fs.writeFile(pluginFile, `module.exports = { init() {}, async shutdown() {
+            console.log('Audit shutdown test delay');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        } };`);
         server = await startServer(directory, secrets, { TRUST_PROXY: 'false' });
+        let delayedPluginObserved = false;
+        server.child.stdout.on('data', bytes => {
+            if (bytes.toString().includes('Audit shutdown test delay')) delayedPluginObserved = true;
+        });
         for (let i = 0; i < 5; i++) {
             assert.equal((await request(server.baseUrl, '/api/auth/login', { method: 'POST',
                 body: { username: 'force-stop-unknown', password: 'synthetic-invalid-value' } })).response.status, 401);
@@ -1003,9 +1013,11 @@ async function testForcedShutdownFinalFlush() {
         server.child.kill('SIGTERM');
         await Promise.race([closing, new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown did not begin')), 3000))]);
         completing.write(body.slice(-1));
-        await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('Forced shutdown did not finish')), 13000))]);
+        await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('Forced shutdown did not finish')), 12000))]);
         assert.equal(server.child.exitCode, 1, 'The held request exercises the internal forced-exit path.');
-        assert.ok(Date.now() - started >= 9000);
+        assert.ok(delayedPluginObserved, 'The deadline includes plugin shutdown time.');
+        assert.ok(Date.now() - started >= 7000);
+        assert.ok(Date.now() - started < 10000, 'The final save runs before the usual Docker stop deadline.');
         assert.match(responseText, /429 Too Many Requests/);
         const database = new Database(path.join(directory, 'content.db'));
         try {
@@ -1015,6 +1027,7 @@ async function testForcedShutdownFinalFlush() {
     } finally {
         for (const socket of sockets) socket.destroy();
         await stopServer(server?.child);
+        await fs.rm(pluginFile, { force: true }).catch(() => {});
         await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
     }
 }
@@ -1070,6 +1083,7 @@ async function testViewerActivityRemainsBounded() {
 }
 
 async function run() {
+    await testForcedShutdownFinalFlush();
     testDescribeClient();
     testNormalizeIp();
     testRetentionSettings();
@@ -1081,7 +1095,6 @@ async function run() {
     await testExpiredChallengeAudit();
     await testSummaryShutdownAndRestart();
     await testHttpFloodPreservesActivity();
-    await testForcedShutdownFinalFlush();
     await testViewerActivityRemainsBounded();
     await testPlayerSaveKeepsRetention();
     await testServerFlow();

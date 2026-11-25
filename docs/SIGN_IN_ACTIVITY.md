@@ -36,6 +36,6 @@ Account filters can match per-account activity summaries. IP filters do not matc
 
 ## Shutdown and recovery
 
-Pending counts are saved at the start of normal shutdown and again after active requests finish. The internal forced-exit path makes a final best-effort save. Saved rows and counts survive restarts, and subsequent increments can update the same hourly row.
+Pending counts are saved at the start of normal shutdown and again after active requests finish. The application starts an eight-second deadline when shutdown begins, including time spent stopping plugins. Its forced-exit path makes a final best-effort save, leaving headroom before Docker's usual ten-second stop timeout. Deployment timeouts, blocked execution or unavailable storage can still prevent that save. Saved rows and counts survive restarts, and subsequent increments can update the same hourly row.
 
 An external force-kill, process/host crash or unavailable storage can still prevent a save. Normally only counts since the most recent successful flush, up to about 30 seconds, are at risk. Continuing storage errors can extend that interval. Per-minute admission counters restart with the process. Recording, summary and cleanup warnings are each rate limited independently.

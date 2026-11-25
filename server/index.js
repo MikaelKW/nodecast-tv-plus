@@ -201,10 +201,17 @@ async function loadPlugins() {
 
 async function shutdown(signal) {
     if (shuttingDown) return;
+    const shutdownStartedAt = Date.now();
     shuttingDown = true;
     applicationReady = false;
-    releaseUpdateService.stop();
     const authAudit = require('./services/authAudit');
+    const forceExitTimer = setTimeout(() => {
+        console.error('Graceful shutdown timed out.');
+        authAudit.shutdown();
+        process.exit(1);
+    }, Math.max(0, 8000 - (Date.now() - shutdownStartedAt)));
+    forceExitTimer.unref();
+    releaseUpdateService.stop();
     authAudit.stopMaintenance();
     authAudit.flushPending();
     console.log(`${signal} received, shutting down...`);
@@ -221,13 +228,6 @@ async function shutdown(signal) {
     }
 
     if (!server) return process.exit(0);
-
-    const forceExitTimer = setTimeout(() => {
-        console.error('Graceful shutdown timed out.');
-        authAudit.shutdown();
-        process.exit(1);
-    }, 10000);
-    forceExitTimer.unref();
 
     server.close(error => {
         const flushed = authAudit.shutdown();
