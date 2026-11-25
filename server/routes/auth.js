@@ -279,6 +279,30 @@ router.post('/logout', (req, res) => {
 });
 
 /**
+ * Check the browser session without treating signed-out visits as failures.
+ * Protected routes, including /me, retain their existing unauthorized response.
+ */
+router.get('/session', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    auth.passport.authenticate('jwt', { session: false }, async (error, identity) => {
+        if (error) return next(error);
+        if (!identity) return res.json({ authenticated: false });
+
+        try {
+            const user = await db.users.getById(identity.id);
+            if (!user) return res.json({ authenticated: false });
+
+            // Preserve migration from legacy browser-stored bearer tokens.
+            const bearerToken = bearerTokenFromHeader(req.get('authorization'));
+            if (bearerToken) auth.setAuthCookie(req, res, bearerToken);
+            return res.json({ authenticated: true, user: db.users.toPublic(user) });
+        } catch (error) {
+            return next(error);
+        }
+    })(req, res, next);
+});
+
+/**
  * Get current user
  * GET /api/auth/me
  */

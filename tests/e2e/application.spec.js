@@ -316,7 +316,9 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await expect(page.locator('#totp-manual-secret')).toHaveCount(0);
     await expect(page.locator('#account-recovery-codes')).toHaveCount(0);
 
-    await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST' }));
+    await page.locator('#account-menu-trigger').click();
+    await page.locator('#logout-btn').click();
+    await expect(page).toHaveURL(/\/login\.html\?signed_out=1$/);
     await page.goto('/login.html');
     await expect(page.locator('#confirm-password-group')).toBeHidden();
     await expect(page.locator('#confirm-password')).toBeDisabled();

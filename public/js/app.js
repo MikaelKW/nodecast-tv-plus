@@ -210,15 +210,22 @@ class App {
             // Verify either the legacy Bearer token or the secure HttpOnly cookie.
             const headers = {};
             if (token) headers.Authorization = `Bearer ${token}`;
-            const response = await fetch(NodeCastUrl.resolve('/api/auth/me'), {
-                headers
+            const response = await fetch(NodeCastUrl.resolve('/api/auth/session'), {
+                headers,
+                cache: 'no-store'
             });
 
             if (!response.ok) {
-                throw new Error('Invalid token');
+                throw new Error('Unable to check session');
             }
 
-            this.currentUser = await response.json();
+            const session = await response.json();
+            if (session.authenticated !== true || !session.user) {
+                localStorage.removeItem('authToken');
+                window.location.replace(NodeCastUrl.resolve('/login.html'));
+                return false;
+            }
+            this.currentUser = session.user;
             // The server has migrated any legacy token into an HttpOnly cookie.
             localStorage.removeItem('authToken');
 
