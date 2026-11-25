@@ -26,7 +26,7 @@
         "test:channel-sidebar": "node scripts/channel-sidebar-resize-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:migration": "node scripts/migration-test.js",
-        "test:auth": "node scripts/auth-username-test.js && node scripts/auth-startup-test.js",
+        "test:auth": "node scripts/auth-username-test.js && node scripts/auth-startup-test.js && node scripts/session-status-limit-test.js",
         "test:auth-startup": "node scripts/auth-startup-test.js",
         "test:users": "node scripts/user-management-test.js",
         "test:db-concurrency": "node scripts/db-concurrency-test.js",
