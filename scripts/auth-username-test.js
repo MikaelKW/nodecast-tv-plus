@@ -5,6 +5,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const jwt = require('jsonwebtoken');
 const { DEFAULT_APPEARANCE } = require('../public/js/components/SubtitlePreferences');
 
 const projectRoot = path.join(__dirname, '..');
@@ -76,6 +77,7 @@ async function startServer(dataDirectory) {
     const port = await getFreePort();
     const baseUrl = `http://127.0.0.1:${port}`;
     let output = '';
+    const signingKey = crypto.randomBytes(48).toString('hex');
     const child = spawn(process.execPath, ['server/index.js'], {
         cwd: projectRoot,
         env: {
@@ -83,7 +85,7 @@ async function startServer(dataDirectory) {
             NODE_ENV: 'test',
             NODECAST_DATA_DIR: dataDirectory,
             PORT: String(port),
-            JWT_SECRET: crypto.randomBytes(48).toString('hex'),
+            JWT_SECRET: signingKey,
             SESSION_SECRET: crypto.randomBytes(48).toString('hex'),
             OIDC_ISSUER_URL: '',
             OIDC_CLIENT_ID: '',
@@ -99,11 +101,11 @@ async function startServer(dataDirectory) {
     child.stdout.on('data', chunk => { output += chunk.toString(); });
     child.stderr.on('data', chunk => { output += chunk.toString(); });
     await waitForServer(baseUrl, child);
-    return { baseUrl, child, getOutput: () => output };
+    return { baseUrl, child, signingKey, getOutput: () => output };
 }
 
-async function request(baseUrl, route, { method = 'GET', body, cookie } = {}) {
-    const headers = {};
+async function request(baseUrl, route, { method = 'GET', body, cookie, headers: extraHeaders = {} } = {}) {
+    const headers = { ...extraHeaders };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (cookie) headers.Cookie = cookie;
     const response = await fetch(`${baseUrl}${route}`, {
@@ -111,7 +113,9 @@ async function request(baseUrl, route, { method = 'GET', body, cookie } = {}) {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body)
     });
-    const payload = await response.json();
+    const payload = (response.headers.get('content-type') || '').includes('application/json')
+        ? await response.json()
+        : await response.text();
     return { response, payload };
 }
 
@@ -125,6 +129,12 @@ async function run() {
 
     try {
         server = await startServer(dataDirectory);
+
+        const signedOut = await request(server.baseUrl, '/api/auth/session');
+        assert.equal(signedOut.response.status, 200);
+        assert.equal(signedOut.response.headers.get('cache-control'), 'no-store');
+        assert.deepEqual(signedOut.payload, { authenticated: false });
+        assert.equal((await request(server.baseUrl, '/api/auth/me')).response.status, 401);
 
         const mismatch = await request(server.baseUrl, '/api/auth/setup', {
             method: 'POST',
@@ -152,6 +162,33 @@ async function run() {
         assert.deepEqual(setup.payload.onboarding, { mfaEnrollmentRecommended: true });
         const adminCookie = getCookie(setup.response);
         assert.ok(adminCookie, 'Initial setup must issue an authentication cookie.');
+
+        const cookieName = adminCookie.slice(0, adminCookie.indexOf('='));
+        const token = decodeURIComponent(adminCookie.slice(adminCookie.indexOf('=') + 1));
+        const tokenPayload = jwt.verify(token, server.signingKey);
+        const expiredToken = jwt.sign({ ...tokenPayload, exp: Math.floor(Date.now() / 1000) - 60 }, server.signingKey);
+        const invalidTokens = [
+            crypto.randomBytes(32).toString('base64url'),
+            expiredToken,
+            jwt.sign({ id: tokenPayload.id }, crypto.randomBytes(48).toString('hex')),
+            jwt.sign({ id: 2147483647 }, server.signingKey)
+        ];
+        for (const invalidToken of invalidTokens) {
+            const cookie = `${cookieName}=${invalidToken}`;
+            const status = await request(server.baseUrl, '/api/auth/session', { cookie });
+            assert.equal(status.response.status, 200);
+            assert.deepEqual(status.payload, { authenticated: false });
+            assert.equal(status.response.headers.get('cache-control'), 'no-store');
+            assert.equal((await request(server.baseUrl, '/api/auth/me', { cookie })).response.status, 401);
+            assert.equal((await request(server.baseUrl, '/api/settings', { cookie })).response.status, 401);
+        }
+        const bearerStatus = await request(server.baseUrl, '/api/auth/session', {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        assert.equal(bearerStatus.payload.authenticated, true);
+        assert.equal(bearerStatus.payload.user.username, 'MobileUser');
+        assert.ok(getCookie(bearerStatus.response).startsWith(`${cookieName}=`), 'Session status migrates valid legacy bearer credentials.');
+        assert.equal('passwordHash' in bearerStatus.payload.user, false);
 
         for (const username of ['mobileuser', 'MOBILEUSER', 'MoBiLeUsEr']) {
             const login = await request(server.baseUrl, '/api/auth/login', {
@@ -225,6 +262,10 @@ async function run() {
         assert.deepEqual(currentUser.payload.subtitlePreferences, savedSubtitlePreferences);
         assert.deepEqual(currentUser.payload.liveTvPreferences, liveTvPreferences.payload.liveTvPreferences);
         assert.deepEqual(currentUser.payload.lastLiveChannel, lastLiveChannel.payload.lastLiveChannel);
+        const currentSession = await request(server.baseUrl, '/api/auth/session', { cookie: adminCookie });
+        assert.equal(currentSession.response.status, 200);
+        assert.deepEqual(currentSession.payload, { authenticated: true, user: currentUser.payload });
+        assert.equal(currentSession.response.headers.get('cache-control'), 'no-store');
 
         const duplicate = await request(server.baseUrl, '/api/auth/users', {
             method: 'POST',

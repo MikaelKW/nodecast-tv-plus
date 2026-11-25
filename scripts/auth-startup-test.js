@@ -13,7 +13,7 @@ function load(file, globals) {
     return context;
 }
 
-async function testStartup(ok, failNetwork = false) {
+async function testStartup(authenticated, failNetwork = false, ok = true) {
     let completeAuth;
     const calls = [];
     const context = load('app.js', {
@@ -28,9 +28,12 @@ async function testStartup(ok, failNetwork = false) {
         fetch: (url, options) => {
             calls.push(url);
             assert.equal(options.headers.Authorization, 'Bearer legacy-test-value');
+            assert.equal(options.cache, 'no-store');
             return new Promise((resolve, reject) => {
                 completeAuth = () => failNetwork ? reject(new Error('Controlled network failure')) : resolve({
-                    ok, json: async () => ({ username: 'test-account', role: 'admin' })
+                    ok, json: async () => authenticated
+                        ? { authenticated: true, user: { username: 'test-account', role: 'admin' } }
+                        : { authenticated: false }
                 });
             });
         }
@@ -43,15 +46,15 @@ async function testStartup(ok, failNetwork = false) {
     `, Object.assign(context, { record: value => calls.push(value), stop: new Error('Stop after protected startup') }));
     // Constructor side effects must not run while the real auth method awaits
     // its response, even when the browser still has a legacy bearer value.
-    assert.deepEqual(calls, ['/nodecast/api/auth/me']);
+    assert.deepEqual(calls, ['/nodecast/api/auth/session']);
     completeAuth();
-    if (ok && !failNetwork) {
+    if (authenticated && ok && !failNetwork) {
         await assert.rejects(context.app.ready, /Stop after protected startup/);
-        assert.deepEqual(calls, ['/nodecast/api/auth/me', 'token-removed', 'account-menu', 'components', 'settings']);
+        assert.deepEqual(calls, ['/nodecast/api/auth/session', 'token-removed', 'account-menu', 'components', 'settings']);
         assert.equal(context.app.currentUser.username, 'test-account');
     } else {
         await context.app.ready;
-        assert.deepEqual(calls, ['/nodecast/api/auth/me', 'token-removed', 'redirect:/nodecast/login.html']);
+        assert.deepEqual(calls, ['/nodecast/api/auth/session', 'token-removed', 'redirect:/nodecast/login.html']);
         assert.equal(context.app.currentUser, null);
     }
 }
@@ -109,10 +112,41 @@ async function testLeaseCleanup() {
     assert.equal(sent.length, 4);
 }
 
+function testPageHide() {
+    const sent = [];
+    let pagehide;
+    const context = load('components/VideoPlayer.js', {
+        window: { addEventListener: (event, handler) => { if (event === 'pagehide') pagehide = handler; } },
+        document: { getElementById: () => ({ setAttribute() {} }), querySelector: () => ({}) },
+        navigator: { sendBeacon: (...args) => { sent.push(args); return true; } },
+        NodeCastUrl: { resolve: value => value }, Blob
+    });
+    vm.runInContext(`
+        VideoPlayer.prototype.getPlaybackLeaseId = () => 'synthetic-pagehide-lease';
+        VideoPlayer.prototype.loadSettingsFromServer = async () => {};
+        VideoPlayer.prototype.init = () => {};
+        globalThis.player = new VideoPlayer();
+    `, context);
+    const player = context.player;
+    let finished = 0;
+    player.finishBrowserPlayback = () => finished++;
+    pagehide();
+    assert.equal(sent.length, 0, 'The actual pagehide listener skips idle players');
+    player.currentSessionId = 'active-session';
+    pagehide();
+    assert.equal(sent.length, 1, 'The actual pagehide listener releases active sessions');
+    player._pendingLeaseRequests = 1;
+    pagehide();
+    assert.equal(sent.length, 2, 'The actual pagehide listener releases pending sessions');
+    assert.equal(finished, 3);
+}
+
 (async () => {
     await testStartup(false);
     await testStartup(false, true);
+    await testStartup(false, false, false);
     await testStartup(true);
     await testLeaseCleanup();
+    testPageHide();
     console.log('Authentication gates component startup; idle lease cleanup is suppressed and active/pending cleanup is preserved.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
