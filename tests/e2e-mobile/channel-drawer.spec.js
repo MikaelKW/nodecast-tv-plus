@@ -40,6 +40,7 @@ async function wireActualSidebarControls(page) {
         window.NodeCastOnboarding = { isMfaPending: () => false };
         const app = Object.assign(Object.create(App.prototype), {
             checkAuth: async () => true, loadNavigationSettings: async () => {},
+            initializeComponents() {},
             applyNavigationVisibility() {}, navigateTo() {},
             navigationSettings: { landingPage: 'live' }, liveTvSettings: {},
             pages: { home: { init: async () => {} } },
