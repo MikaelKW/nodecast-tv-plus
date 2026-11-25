@@ -28,6 +28,7 @@ class VideoPlayer {
         this._startupPlaybackId = null;
         this._playAbortController = null;
         this._pendingConnectionRequest = null;
+        this._pendingLeaseRequests = 0;
         this._xtreamStreamFormats = new Map();
         this.playbackLeaseId = this.getPlaybackLeaseId();
         this.playbackLeaseHeartbeatTimer = null;
@@ -76,6 +77,7 @@ class VideoPlayer {
 
     releasePlaybackLease() {
         this.stopPlaybackLeaseHeartbeat();
+        if (!this.currentSessionId && !this._pendingLeaseRequests) return;
         this.currentSessionId = null;
         const url = NodeCastUrl.resolve('/api/transcode/lease/release');
         const body = JSON.stringify({ playbackLeaseId: this.playbackLeaseId });
@@ -936,6 +938,15 @@ class VideoPlayer {
     }
 
     async startTranscodeSession(url, options = {}, signal = null) {
+        this._pendingLeaseRequests += 1;
+        try {
+            return await this.createTranscodeSession(url, options, signal);
+        } finally {
+            this._pendingLeaseRequests -= 1;
+        }
+    }
+
+    async createTranscodeSession(url, options = {}, signal = null) {
         console.log('[Player] Starting HLS transcode session...', options);
         const playId = this._playId;
         const res = await this.requestPlaybackResource('/api/transcode/session', {
