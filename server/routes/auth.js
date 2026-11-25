@@ -21,6 +21,17 @@ const limitOidcAuthorization = rateLimit({
     message: { error: 'Too many single sign-on requests. Try again shortly.' }
 });
 
+// Startup checks share an allowance across browsers on the same client IP.
+const limitSessionStatus = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_req, res) => res.set('Cache-Control', 'no-store').status(429).json({
+        error: 'Too many session checks. Try again shortly.'
+    })
+});
+
 function userMutationErrorStatus(error) {
     if (error?.code === 'USERNAME_EXISTS') return 409;
     if (error?.code === 'LAST_ADMIN') return 400;
@@ -282,7 +293,7 @@ router.post('/logout', (req, res) => {
  * Check the browser session without treating signed-out visits as failures.
  * Protected routes, including /me, retain their existing unauthorized response.
  */
-router.get('/session', (req, res, next) => {
+router.get('/session', limitSessionStatus, (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     auth.passport.authenticate('jwt', { session: false }, async (error, identity) => {
         if (error) return next(error);
