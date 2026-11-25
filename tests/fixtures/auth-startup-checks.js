@@ -10,7 +10,7 @@ function registerAuthStartupChecks() {
             const authRequests = [];
             page.on('request', request => {
                 const pathname = new URL(request.url()).pathname;
-                if (pathname === `${basePath}/api/auth/me`) authRequests.push(request);
+                if (pathname === `${basePath}/api/auth/session`) authRequests.push(request);
                 if (pathname.startsWith(`${basePath}/api/`) &&
                     !pathname.startsWith(`${basePath}/api/auth/`) &&
                     pathname !== `${basePath}/api/version`) {
@@ -24,12 +24,18 @@ function registerAuthStartupChecks() {
             }
             let unblock;
             let reachedAuth;
+            let readSession;
             const gate = new Promise(resolve => { unblock = resolve; });
             const started = new Promise(resolve => { reachedAuth = resolve; });
-            await page.route(`**${basePath}/api/auth/me`, async route => {
+            const sessionRead = new Promise(resolve => { readSession = resolve; });
+            await page.route(`**${basePath}/api/auth/session`, async route => {
                 reachedAuth();
                 await gate;
-                await route.continue();
+                // Read the real response before forwarding it. The browser may
+                // immediately navigate away, making its response body unavailable.
+                const response = await route.fetch();
+                readSession({ status: response.status(), body: await response.json(), headers: response.headers() });
+                await route.fulfill({ response });
             });
             try {
                 await page.goto(root, { waitUntil: 'domcontentloaded' });
@@ -39,10 +45,11 @@ function registerAuthStartupChecks() {
                 await page.waitForTimeout(300);
                 expect(authRequests).toHaveLength(1);
                 expect(protectedRequests).toEqual([]);
-                const rejected = page.waitForResponse(response =>
-                    new URL(response.url()).pathname === `${basePath}/api/auth/me`);
                 unblock();
-                expect((await rejected).status()).toBe(401);
+                const status = await sessionRead;
+                expect(status.status).toBe(200);
+                expect(status.body).toEqual({ authenticated: false });
+                expect(status.headers['cache-control']).toBe('no-store');
                 await expect(page).toHaveURL(new RegExp(`${basePath}/login\\.html$`));
                 await expect(page.locator('#username')).toBeVisible();
                 expect(protectedRequests).toEqual([]);
