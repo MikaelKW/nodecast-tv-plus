@@ -45,7 +45,7 @@ process.on('message',m=>{if(m?.advance===61000){offset+=m.advance;process.send({
     const base = `http://127.0.0.1:${port}`;
     for (let i = 0; i < 150; i++) {
         if (child.exitCode !== null) throw new Error(`Test server exited: ${output}`);
-        try { if ((await fetch(`${base}/api/health`)).ok) return { child, base }; } catch {}
+        try { if (await require('./helpers/applicationReadiness').isApplicationReady(base)) return { child, base }; } catch {}
         await sleep(100);
     }
     child.kill('SIGKILL');

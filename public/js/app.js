@@ -35,6 +35,7 @@ class App {
     }
 
     async init() {
+        if (!await NodeCastStartup.wait()) return;
         // Constructors can start protected requests, so create them only after
         // authentication succeeds. A redirect must end initialization too.
         if (!await this.checkAuth()) return;
@@ -227,6 +228,13 @@ class App {
             });
 
             if (!response.ok) {
+                if (response.status === 503) {
+                    const result = await response.json();
+                    if (result.code === 'APPLICATION_STARTING') {
+                        if (!await NodeCastStartup.wait()) return false;
+                        return this.checkAuth();
+                    }
+                }
                 throw new Error('Unable to check session');
             }
 
