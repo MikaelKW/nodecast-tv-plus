@@ -21,6 +21,17 @@ const limitOidcAuthorization = rateLimit({
     message: { error: 'Too many single sign-on requests. Try again shortly.' }
 });
 
+// Startup checks share an allowance across browsers on the same client IP.
+const limitSessionStatus = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_req, res) => res.set('Cache-Control', 'no-store').status(429).json({
+        error: 'Too many session checks. Try again shortly.'
+    })
+});
+
 function userMutationErrorStatus(error) {
     if (error?.code === 'USERNAME_EXISTS') return 409;
     if (error?.code === 'LAST_ADMIN') return 400;
@@ -276,6 +287,30 @@ router.post('/logout', (req, res) => {
     auth.clearAuthCookie(req, res);
     if (req.session) delete req.session.twoFactorChallenge;
     res.json({ success: true, message: 'Logged out successfully' });
+});
+
+/**
+ * Check the browser session without treating signed-out visits as failures.
+ * Protected routes, including /me, retain their existing unauthorized response.
+ */
+router.get('/session', limitSessionStatus, (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    auth.passport.authenticate('jwt', { session: false }, async (error, identity) => {
+        if (error) return next(error);
+        if (!identity) return res.json({ authenticated: false });
+
+        try {
+            const user = await db.users.getById(identity.id);
+            if (!user) return res.json({ authenticated: false });
+
+            // Preserve migration from legacy browser-stored bearer tokens.
+            const bearerToken = bearerTokenFromHeader(req.get('authorization'));
+            if (bearerToken) auth.setAuthCookie(req, res, bearerToken);
+            return res.json({ authenticated: true, user: db.users.toPublic(user) });
+        } catch (error) {
+            return next(error);
+        }
+    })(req, res, next);
 });
 
 /**
