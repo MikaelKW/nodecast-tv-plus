@@ -64,7 +64,7 @@
         "express-rate-limit": "^8.7.5",
         "express-session": "^1.19.0",
         "jsonwebtoken": "^9.0.3",
-        "otpauth": "^9.5.2",
+        "otpauth": "^9.6.0",
         "passport": "^0.7.0",
         "passport-jwt": "^4.0.1",
         "passport-local": "^1.0.0",
@@ -83,6 +83,6 @@
         "node": ">=18.0.0"
     },
     "devDependencies": {
-        "@playwright/test": "^1.64.1"
+        "@playwright/test": "^1.65.1"
     }
 }
