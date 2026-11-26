@@ -21,8 +21,21 @@ const limitOidcAuthorization = rateLimit({
     message: { error: 'Too many single sign-on requests. Try again shortly.' }
 });
 
+// Startup checks share an allowance across browsers on the same client IP.
+const limitSessionStatus = rateLimit({
+    limit: 120,
+    windowMs: 60 * 1000,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_req, res) => res.set('Cache-Control', 'no-store').status(429).json({
+        error: 'Too many session checks. Try again shortly.'
+    })
+});
+
 function userMutationErrorStatus(error) {
-    return error?.code === 'USERNAME_EXISTS' ? 409 : 500;
+    if (error?.code === 'USERNAME_EXISTS') return 409;
+    if (error?.code === 'LAST_ADMIN') return 400;
+    return 500;
 }
 
 function loginIpKey(req) {
@@ -277,6 +290,30 @@ router.post('/logout', (req, res) => {
 });
 
 /**
+ * Check the browser session without treating signed-out visits as failures.
+ * Protected routes, including /me, retain their existing unauthorized response.
+ */
+router.get('/session', limitSessionStatus, (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    auth.passport.authenticate('jwt', { session: false }, async (error, identity) => {
+        if (error) return next(error);
+        if (!identity) return res.json({ authenticated: false });
+
+        try {
+            const user = await db.users.getById(identity.id);
+            if (!user) return res.json({ authenticated: false });
+
+            // Preserve migration from legacy browser-stored bearer tokens.
+            const bearerToken = bearerTokenFromHeader(req.get('authorization'));
+            if (bearerToken) auth.setAuthCookie(req, res, bearerToken);
+            return res.json({ authenticated: true, user: db.users.toPublic(user) });
+        } catch (error) {
+            return next(error);
+        }
+    })(req, res, next);
+});
+
+/**
  * Get current user
  * GET /api/auth/me
  */
@@ -433,16 +470,6 @@ router.put('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res) =
                 return res.status(400).json({ error: 'Role must be either "admin" or "viewer"' });
             }
 
-            // Prevent removing admin role from the last admin
-            const user = await db.users.getById(id);
-            if (user && user.role === 'admin' && role !== 'admin') {
-                const allUsers = await db.users.getAll();
-                const adminCount = allUsers.filter(u => u.role === 'admin').length;
-                if (adminCount <= 1) {
-                    return res.status(400).json({ error: 'Cannot remove admin role from the last admin user' });
-                }
-            }
-
             updates.role = role;
         }
 
@@ -471,7 +498,7 @@ router.delete('/users/:id', auth.requireAuth, auth.requireAdmin, async (req, res
         res.json({ success: true, message: 'User deleted successfully' });
     } catch (err) {
         console.error('Error deleting user:', err);
-        res.status(500).json({ error: err.message || 'Server error' });
+        res.status(userMutationErrorStatus(err)).json({ error: err.message || 'Server error' });
     }
 });
 

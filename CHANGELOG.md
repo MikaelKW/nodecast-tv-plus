@@ -4,6 +4,54 @@ All notable changes to NodeCast TV Plus are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/). Historical notes below distinguish upstream development from formal NodeCast TV Plus releases.
 
+## [2.7.2] - 2026-11-02
+
+This maintenance release improves iPhone and iPad playback compatibility and updates dependencies to address security vulnerabilities.
+
+### Security
+
+- Update the `body-parser` dependency from `1.20.6` to `1.20.9`, fixing [CVE-2026-111181](https://github.com/advisories/GHSA-27r3-jxmh-p828).
+- Update the `ip-address` dependency from `10.7.3` to `10.7.4`, fixing [CVE-2026-111997](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5).
+- Update the `qs` dependency from `6.16.0` to `6.16.1`, fixing [CVE-2026-110816](https://github.com/advisories/GHSA-6pq8-jhm2-2vcw).
+
+### Fixed
+
+- Use the compatible HLS remux session for channels that require remuxing on iPhone and iPad, including iPadOS desktop browsing. Play the generated playlist natively when HLS.js is unsupported, while retaining the existing HLS.js path on supported browsers and the direct remux path on macOS Safari ([#520]). Thanks to @StevenVBeek.
+
+### Changed
+
+- Extend migration coverage to the published Plus v2.7.1 baseline while retaining earlier supported baselines.
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.7.1. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required.
+- To roll back, stop the upgraded container, restore the pre-upgrade data backup, and recreate the container with 2.7.1 and the original deployment secrets.
+
+## [2.7.1] - 2026-10-16
+
+This maintenance release improves administrator-account safety and Live TV catalogue refresh reliability, and includes dependency updates.
+
+### Security
+
+- Update the transitive `proxy-addr` dependency from `2.0.7` to `2.0.8`, fixing [CVE-2026-90711](https://github.com/advisories/GHSA-jqcg-44mw-7w3h). Under certain IPv4-mapped IPv6 trust-subnet configurations, the dependency could treat untrusted clients as trusted proxies and accept spoofed client-IP information.
+
+### Fixed
+
+- Preserve at least one administrator when account role changes and deletions overlap. Reject a conflicting change clearly without discarding other successful account updates ([#498]).
+- Initialize Live TV sources before rebuilding the channel catalogue after a successful M3U or Xtream synchronization. Opening Live TV after synchronization no longer retains an empty catalogue merely because Live TV had not yet been visited. Preserve an available selected source filter during refresh ([#500]).
+
+### Changed
+
+- Extend migration coverage to the published Plus v2.7.0 baseline while retaining v2.6.2 and supported upstream baselines.
+
+### Upgrade notes
+
+- Back up and preserve the existing `/app/data` volume and deployment secrets before upgrading from 2.7.0. Preserve `TOTP_ENCRYPTION_KEY` when authenticator-app 2FA is in use.
+- No manual database migration is required.
+- The Live TV correction covers the reproduced source-synchronization path. Other intermittent empty-catalogue reports are not established as having the same cause ([#361]).
+- To roll back, stop the upgraded container, restore the pre-upgrade data backup, and recreate the container with 2.7.0 and the original deployment secrets.
+
 ## [2.7.0] - 2026-10-04
 
 This release adds administrator diagnostics and reviewed support snapshots, improves source-setting reliability, and includes dependency updates.
@@ -596,3 +644,7 @@ For older published history, see the [upstream NodeCast TV releases](https://git
 [#425]: https://github.com/MikaelKW/nodecast-tv-plus/issues/425
 [#426]: https://github.com/MikaelKW/nodecast-tv-plus/issues/426
 [#453]: https://github.com/MikaelKW/nodecast-tv-plus/issues/453
+[#361]: https://github.com/MikaelKW/nodecast-tv-plus/issues/361
+[#498]: https://github.com/MikaelKW/nodecast-tv-plus/pull/498
+[#500]: https://github.com/MikaelKW/nodecast-tv-plus/pull/500
+[#520]: https://github.com/MikaelKW/nodecast-tv-plus/pull/520

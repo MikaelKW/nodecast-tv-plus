@@ -56,7 +56,7 @@ async function waitForServer(baseUrl, child, output, timeoutMs = 30000) {
             throw new Error(`Server exited with code ${child.exitCode}.\n${output()}`);
         }
         try {
-            if ((await fetch(`${baseUrl}/api/health`)).ok) return;
+            if (await require('./helpers/applicationReadiness').isApplicationReady(baseUrl)) return;
         } catch {
             // Startup may still be in progress.
         }
@@ -221,6 +221,13 @@ async function run() {
         assert.equal((await meA.json()).username, 'instance-a-admin');
         assert.equal(meB.status, 200);
         assert.equal((await meB.json()).username, 'instance-b-admin');
+        for (const [server, username] of [[serverA, 'instance-a-admin'], [serverB, 'instance-b-admin']]) {
+            const session = await request(server.rootUrl, '/api/auth/session', { jar: browser });
+            assert.equal(session.status, 200);
+            const payload = await session.json();
+            assert.equal(payload.authenticated, true);
+            assert.equal(payload.user.username, username);
+        }
 
         const cookieNamesBeforeRestart = new Set(browser.cookies.keys());
         await stopServer(serverB);
@@ -242,6 +249,11 @@ async function run() {
         assert.equal(legacyMe.status, 200);
         assert.equal((await legacyMe.json()).username, 'instance-a-admin');
         assert.equal(legacyJar.names('nodecast_auth_').length, 1, 'A valid legacy cookie must migrate.');
+        const legacyStatusJar = new BrowserCookieJar();
+        legacyStatusJar.cookies.set('nodecast_auth', browser.cookies.get(instanceAAuthCookie));
+        const legacyStatus = await request(serverA.rootUrl, '/api/auth/session', { jar: legacyStatusJar });
+        assert.equal((await legacyStatus.json()).user.username, 'instance-a-admin');
+        assert.equal(legacyStatusJar.names('nodecast_auth_').length, 1, 'Session status must also migrate legacy cookies.');
 
         const logoutA = await request(serverA.rootUrl, '/api/auth/logout', {
             method: 'POST',
@@ -250,6 +262,11 @@ async function run() {
         assert.equal(logoutA.status, 200);
         assert.equal((await request(serverA.rootUrl, '/api/auth/me', { jar: browser })).status, 401);
         assert.equal((await request(serverB.rootUrl, '/api/auth/me', { jar: browser })).status, 200);
+        const signedOutA = await request(serverA.rootUrl, '/api/auth/session', { jar: browser });
+        assert.equal(signedOutA.status, 200);
+        assert.deepEqual(await signedOutA.json(), { authenticated: false });
+        const stillSignedInB = await request(serverB.rootUrl, '/api/auth/session', { jar: browser });
+        assert.equal((await stillSignedInB.json()).authenticated, true);
 
         console.log('Session-cookie isolation tests passed.');
     } finally {

@@ -504,9 +504,14 @@ async function main() {
                 livePlayback: true,
                 videoMode: 'encode',
                 videoCodec: 'h264',
+                // Match the generated clip so this reconnect check does not
+                // depend on an unrelated 1080p software-upscaling workload.
+                videoHeight: 90,
                 audioCodec: 'aac',
                 audioChannels: 1
             });
+            const liveArgs = droppedLiveSession.buildFFmpegArgs();
+            assert.equal(liveArgs[liveArgs.indexOf('-vf') + 1], 'scale=-2:90');
             droppedLiveSession.url = droppedLiveServer.url;
             assert.equal(
                 await droppedLiveSession.startAndWaitForPlaylist(10_000, 1),

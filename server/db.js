@@ -220,6 +220,11 @@ function normalizeSource(source) {
   };
 }
 
+function sourceConnectionRevision(source) {
+  return Number.isSafeInteger(source?.connectionRevision) && source.connectionRevision >= 0
+    ? source.connectionRevision : 0;
+}
+
 // Source CRUD operations
 const sources = {
   async getAll() {
@@ -242,6 +247,7 @@ const sources = {
       const newSource = {
         id: db.nextId++,
         ...source,
+        connectionRevision: 0,
         contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
         enabled: true,
         created_at: new Date().toISOString(),
@@ -257,6 +263,13 @@ const sources = {
       const index = db.sources.findIndex(s => s.id === parseInt(id));
       if (index === -1) return { changed: false, result: null };
 
+      const previous = db.sources[index];
+      const connectionChanged = ['type', 'url', 'username', 'password'].some(key => (
+        Object.hasOwn(updates, key) && String(updates[key] ?? '') !== String(previous[key] ?? '')
+      ));
+      const revision = sourceConnectionRevision(previous);
+      if (connectionChanged && revision === Number.MAX_SAFE_INTEGER) throw new Error('Source revision exhausted');
+
       const contentVisibility = updates.contentVisibility
         ? normalizeSourceContentVisibility({
             ...db.sources[index].contentVisibility,
@@ -267,10 +280,21 @@ const sources = {
       db.sources[index] = {
         ...db.sources[index],
         ...updates,
+        connectionRevision: revision + (connectionChanged ? 1 : 0),
+        catalogueBaseline: connectionChanged ? undefined : previous.catalogueBaseline,
         contentVisibility,
         updated_at: new Date().toISOString()
       };
       return { result: normalizeSource(db.sources[index]) };
+    });
+  },
+
+  async recordCatalogueImport(id, revision) {
+    return mutateDb(db => {
+      const source = db.sources.find(item => item.id === Number(id));
+      if (!source || sourceConnectionRevision(source) !== revision) return { changed: false, result: false };
+      source.catalogueBaseline = { connectionRevision: revision, completedAt: Date.now() };
+      return { result: true };
     });
   },
 
@@ -470,6 +494,12 @@ function createUsernameConflictError() {
   return error;
 }
 
+function createLastAdminError(message) {
+  const error = new Error(message);
+  error.code = 'LAST_ADMIN';
+  return error;
+}
+
 function normalizeLiveTvPreferences(value = {}) {
   return {
     layout: value?.layout === 'flat' ? 'flat' : 'grouped',
@@ -590,6 +620,15 @@ const users = {
       const userIndex = db.users?.findIndex(u => u.id === parseInt(id));
       if (userIndex === -1 || userIndex === undefined) throw new Error('User not found');
 
+      // Check the current queued snapshot so overlapping role changes and
+      // deletions cannot each remove what they believe is an extra admin.
+      if (db.users[userIndex].role === 'admin' && Object.hasOwn(updates, 'role') && updates.role !== 'admin') {
+        const adminCount = db.users.filter(u => u.role === 'admin').length;
+        if (adminCount <= 1) {
+          throw createLastAdminError('Cannot remove admin role from the last admin user');
+        }
+      }
+
       if (updates.username && updates.username !== db.users[userIndex].username) {
         const usernameKey = getUsernameKey(updates.username);
         if (db.users.some((u, index) => index !== userIndex && getUsernameKey(u.username) === usernameKey)) {
@@ -614,7 +653,7 @@ const users = {
       const user = db.users[userIndex];
       if (user.role === 'admin') {
         const adminCount = db.users.filter(u => u.role === 'admin').length;
-        if (adminCount <= 1) throw new Error('Cannot delete the last admin user');
+        if (adminCount <= 1) throw createLastAdminError('Cannot delete the last admin user');
       }
 
       db.users.splice(userIndex, 1);
@@ -706,4 +745,4 @@ const users = {
   }
 };
 
-module.exports = { loadDb, checkHealth, mutateDb, sources, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };
+module.exports = { loadDb, checkHealth, mutateDb, sources, sourceConnectionRevision, hiddenItems, favorites, settings, users, getDefaultSettings, getUserAgent, USER_AGENT_PRESETS, normalizeLiveTvPreferences, normalizeLastLiveChannel };

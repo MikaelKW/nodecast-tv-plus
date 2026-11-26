@@ -11,6 +11,10 @@ class App {
         this.liveTvSettings = this.getDefaultLiveTvSettings();
         this.lastLiveChannelSave = Promise.resolve();
 
+        this.ready = this.init();
+    }
+
+    initializeComponents() {
         // Initialize components
         this.player = new VideoPlayer();
         this.channelList = new ChannelList();
@@ -28,12 +32,14 @@ class App {
         this.pages['mfa-onboarding'] = new MfaOnboardingPage(this);
         this.pages.watch = new WatchPage(this);
 
-        this.init();
     }
 
     async init() {
-        // Check authentication first
-        await this.checkAuth();
+        if (!await NodeCastStartup.wait()) return;
+        // Constructors can start protected requests, so create them only after
+        // authentication succeeds. A redirect must end initialization too.
+        if (!await this.checkAuth()) return;
+        this.initializeComponents();
         await this.loadNavigationSettings();
         this.applyNavigationVisibility();
 
@@ -90,12 +96,17 @@ class App {
             });
         }
 
-        // Desktop sidebar collapse toggle
+        // The chevron closes the mobile drawer or collapses the desktop sidebar.
         const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
         const sidebarExpandBtn = document.getElementById('sidebar-expand-btn');
         const homeLayout = document.querySelector('.home-layout');
 
         const toggleSidebarCollapse = () => {
+            if (window.matchMedia('(max-width: 768px)').matches) {
+                channelSidebar?.classList.remove('active');
+                channelOverlay?.classList.remove('active');
+                return;
+            }
             channelSidebar?.classList.toggle('collapsed');
             homeLayout?.classList.toggle('sidebar-collapsed');
 
@@ -112,6 +123,12 @@ class App {
             channelSidebar?.classList.add('collapsed');
             homeLayout?.classList.add('sidebar-collapsed');
         }
+
+        // Desktop sidebar width (drag the edge, double-click to reset)
+        window.ChannelSidebarResizer?.attach({
+            sidebar: channelSidebar,
+            handle: document.getElementById('channel-sidebar-resizer')
+        });
 
         // Navigation handling
         document.querySelectorAll('.nav-link').forEach(link => {
@@ -205,24 +222,40 @@ class App {
             // Verify either the legacy Bearer token or the secure HttpOnly cookie.
             const headers = {};
             if (token) headers.Authorization = `Bearer ${token}`;
-            const response = await fetch(NodeCastUrl.resolve('/api/auth/me'), {
-                headers
+            const response = await fetch(NodeCastUrl.resolve('/api/auth/session'), {
+                headers,
+                cache: 'no-store'
             });
 
             if (!response.ok) {
-                throw new Error('Invalid token');
+                if (response.status === 503) {
+                    const result = await response.json();
+                    if (result.code === 'APPLICATION_STARTING') {
+                        if (!await NodeCastStartup.wait()) return false;
+                        return this.checkAuth();
+                    }
+                }
+                throw new Error('Unable to check session');
             }
 
-            this.currentUser = await response.json();
+            const session = await response.json();
+            if (session.authenticated !== true || !session.user) {
+                localStorage.removeItem('authToken');
+                window.location.replace(NodeCastUrl.resolve('/login.html'));
+                return false;
+            }
+            this.currentUser = session.user;
             // The server has migrated any legacy token into an HttpOnly cookie.
             localStorage.removeItem('authToken');
 
             this.setupAccountMenu();
+            return true;
 
         } catch (err) {
             console.error('Authentication error:', err);
             localStorage.removeItem('authToken');
             window.location.replace(NodeCastUrl.resolve('/login.html'));
+            return false;
         }
     }
 

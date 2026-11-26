@@ -82,7 +82,6 @@ class WatchPage {
         this.browserPlaybackRenewalTimer = null;
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
         this.sourceUrl = null;
         this.playbackQuality = 'auto';
         this.qualityChanging = false;
@@ -173,15 +172,6 @@ class WatchPage {
             window.visualViewport.addEventListener('scroll', updateIosUiBottom);
         } else {
             window.addEventListener('resize', updateIosUiBottom);
-        }
-
-        // iOS: use custom --vh unit to avoid 100vh issues with dynamic toolbar
-        const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
-        const watchVideoSection = document.querySelector('.watch-video-section');
-        if (isIOS && watchVideoSection) {
-            const vh = window.innerHeight * 0.01;
-            document.documentElement.style.setProperty('--vh', `${vh}px`);
-            watchVideoSection.style.height = 'calc(var(--vh) * 100)';
         }
 
         // Apply safe area + iOS toolbar padding to overlay
@@ -301,7 +291,6 @@ class WatchPage {
         });
         this.video?.addEventListener('waiting', () => this.showLoading());
         this.video?.addEventListener('canplay', () => {
-            this.hlsMediaRecoveryCount = 0;
             this.hideLoading();
             this.scheduleSelectedSubtitleRestore();
         });
@@ -588,6 +577,26 @@ class WatchPage {
         }
     }
 
+    async probePlayback(url, userAgent, playId) {
+        this.assertPlaybackRequestCurrent(playId);
+        this.playbackProbeController?.abort();
+        const controller = new AbortController();
+        this.playbackProbeController = controller;
+        try {
+            const response = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(userAgent || '')}`), {
+                signal: controller.signal
+            });
+            this.assertPlaybackRequestCurrent(playId);
+            if (!response.ok) throw new Error(`Probe request failed (${response.status})`);
+            const info = await response.json();
+            if (controller.signal.aborted) throw this.createPlaybackAbortError();
+            this.assertPlaybackRequestCurrent(playId);
+            return info;
+        } finally {
+            if (this.playbackProbeController === controller) this.playbackProbeController = null;
+        }
+    }
+
     /**
      * Start a HLS transcode session
      */
@@ -858,6 +867,7 @@ class WatchPage {
     } = {}) {
         // Store the URL for copy functionality
         this.currentUrl = url;
+        this.playbackProbeController?.abort();
         // Direct playback uses the media element's native content timeline.
         // A successful transcode session will replace this with its seek offset.
         this.playbackTimeOffset = 0;
@@ -911,10 +921,9 @@ class WatchPage {
         if (!forceDirectFallback && !settings.autoTranscode && !skipProbe) {
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
-                if (probeRes.ok && !info.error) {
+                if (!info.error) {
                     this.currentStreamInfo = info;
                     this.updateQualityBadge();
                     this.applyProbeTracks(info, url);
@@ -931,11 +940,10 @@ class WatchPage {
             console.log('[WatchPage] Auto Transcode enabled. Probing stream...');
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
-                if (!probeRes.ok || info.error) {
-                    throw new Error(info.error || `Probe request failed (${probeRes.status})`);
+                if (info.error) {
+                    throw new Error(info.error);
                 }
                 console.log(`[WatchPage] Probe result: video=${info.video}, audio=${info.audio}, ${info.width}x${info.height}, compatible=${info.compatible}`);
 
@@ -990,7 +998,7 @@ class WatchPage {
                     return;
                 } else if (info.needsRemux) {
                     if (NodeCastUrl.prefersHlsRemuxFallback()) {
-                        console.log('[WatchPage] Auto: Using Firefox-compatible HLS remux');
+                        console.log('[WatchPage] Auto: Using compatible HLS remux');
                         this.updateTranscodeStatus('remuxing', 'Remux (Compatible)');
                         const playlistUrl = await this.startTranscodeSession(url, {
                             videoMode: 'copy',
@@ -1063,8 +1071,7 @@ class WatchPage {
             let videoCodec = 'unknown';
             try {
                 const ua = settings.userAgentPreset === 'custom' ? settings.userAgentCustom : settings.userAgentPreset;
-                const probeRes = await fetch(NodeCastUrl.resolve(`/api/probe?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(ua || '')}`));
-                const info = await probeRes.json();
+                const info = await this.probePlayback(url, ua, diagnosticPlayId);
                 this.assertPlaybackRequestCurrent(diagnosticPlayId);
                 videoCodec = info.video;
                 this.currentStreamInfo = info;
@@ -1151,20 +1158,45 @@ class WatchPage {
         }
     }
 
+    canPlayNativeHls() {
+        const support = this.video?.canPlayType?.('application/vnd.apple.mpegurl');
+        return support === 'probably' || support === 'maybe';
+    }
+
     /**
-     * Play HLS stream using Hls.js
+     * Play HLS stream using Hls.js, or natively where HLS.js is unsupported
      */
     playHls(url, { autoPlay = true, playId = this._diagnosticPlayId } = {}) {
         this.assertPlaybackRequestCurrent(playId);
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
         this.subtitleMediaTimeOffset = 0;
         this.subtitleMediaTimeOffsetResolved = false;
 
+        this.audioRecovery?.dispose();
+        this.audioRecovery = null;
         if (this.hls) {
             this.hls.destroy();
+            this.hls = null;
+        }
+
+        // iOS before 17.1 has no Media Source Extensions, so HLS.js cannot run,
+        // but WebKit plays HLS playlists natively.
+        if (!Hls.isSupported() && this.canPlayNativeHls()) {
+            this.video.src = url;
+            if (autoPlay) {
+                this.video.play().catch(e => {
+                    this.reportBrowserPlaybackFailure(e, playId);
+                    if (e.name !== 'AbortError') console.error('[WatchPage] Autoplay error:', e);
+                });
+            } else {
+                this.hideLoading();
+                this.showOverlay();
+            }
+            this.renderProbeSubtitleTracks();
+            this.scheduleSelectedSubtitleRestore();
+            return;
         }
 
         this.hls = new Hls({
@@ -1183,6 +1215,30 @@ class WatchPage {
         });
 
         const activeHls = this.hls;
+        this.audioRecovery = new HlsAudioRecovery(activeHls, this.video, Hls.Events,
+            () => this.hls === activeHls && this._diagnosticPlayId === playId, {
+                beforeRecovery: () => {
+                    const selected = this.activeSubtitleTrack;
+                    const mode = selected?.mode;
+                    const cues = Array.from(selected?.cues || []);
+                    return () => {
+                        if (this.activeSubtitleTrack !== selected) return;
+                        if (selected) {
+                            selected.mode = 'hidden';
+                            const key = cue => JSON.stringify([cue.id, cue.startTime, cue.endTime, cue.text]);
+                            const present = new Set(Array.from(selected.cues || [], key));
+                            for (const cue of cues) {
+                                const id = key(cue);
+                                if (present.has(id)) continue;
+                                selected.addCue(cue);
+                                present.add(id);
+                            }
+                            selected.mode = mode;
+                        }
+                        this.scheduleSelectedSubtitleRestore();
+                    };
+                }
+            });
 
         this.hls.loadSource(url);
         this.hls.attachMedia(this.video);
@@ -1202,9 +1258,11 @@ class WatchPage {
 
         // Listen for subtitle track updates
         this.hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
+            if (this.hls !== activeHls) return;
             console.log('[WatchPage] Subtitle tracks updated:', data.subtitleTracks);
             // Wait a moment for native text tracks to populate
             setTimeout(() => {
+                if (this.hls !== activeHls) return;
                 this.applyAutomaticSubtitlePreference();
                 this.updateCaptionsTracks();
             }, 100);
@@ -1260,21 +1318,8 @@ class WatchPage {
         });
 
         this.hls.on(Hls.Events.ERROR, (event, data) => {
-            if (!data.fatal || activeHls !== this.hls) return;
-
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                this.hlsMediaRecoveryCount += 1;
-                console.warn(`[WatchPage] Recovering from HLS media error (${this.hlsMediaRecoveryCount}/2):`, data.details);
-                if (this.hlsMediaRecoveryCount === 1) {
-                    activeHls.recoverMediaError();
-                    return;
-                }
-                if (this.hlsMediaRecoveryCount === 2) {
-                    activeHls.swapAudioCodec();
-                    activeHls.recoverMediaError();
-                    return;
-                }
-            }
+            if (activeHls !== this.hls || this._diagnosticPlayId !== playId) return;
+            if (this.audioRecovery.requestMediaError(data, Hls.ErrorTypes.MEDIA_ERROR) || !data.fatal) return;
 
             if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                 this.hlsRecoveryCount += 1;
@@ -1332,12 +1377,15 @@ class WatchPage {
     }
 
     stop({ saveHistory = true } = {}) {
+        this.playbackProbeController?.abort();
+        this.playbackProbeController = null;
+        this.audioRecovery?.dispose();
+        this.audioRecovery = null;
         this.finishBrowserPlayback('browser_stopped');
         this._diagnosticPlayId += 1;
         clearTimeout(this.hlsRecoveryTimer);
         this.hlsRecoveryTimer = null;
         this.hlsRecoveryCount = 0;
-        this.hlsMediaRecoveryCount = 0;
 
         // Stop history tracking and save final progress
         this.stopHistoryTracking();
@@ -1384,6 +1432,7 @@ class WatchPage {
     // === Playback Controls ===
 
     togglePlay() {
+        if (this.audioRecovery?.togglePendingPlayback()) return;
         if (this.video.paused) {
             this.video.play().catch(console.error);
         } else {
@@ -1555,9 +1604,11 @@ class WatchPage {
                 document.webkitExitFullscreen();
             }
         } else {
-            if (container?.requestFullscreen) {
-                container.requestFullscreen();
-            } else if (container?.webkitRequestFullscreen) {
+            if (document.fullscreenEnabled !== false &&
+                (document.fullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && container?.requestFullscreen) {
+                container.requestFullscreen().catch(error => console.warn('[WatchPage] Fullscreen unavailable:', error.name));
+            } else if (document.webkitFullscreenEnabled !== false &&
+                (document.webkitFullscreenEnabled === true || !this.video?.webkitEnterFullscreen) && container?.webkitRequestFullscreen) {
                 container.webkitRequestFullscreen();
             } else if (this.video?.webkitEnterFullscreen) {
                 // iOS Safari: use native video fullscreen
@@ -1566,7 +1617,7 @@ class WatchPage {
                     this.video.webkitEnterFullscreen();
                 } catch (error) {
                     this.setNativeSubtitleContext('ios-fullscreen', false);
-                    throw error;
+                    console.warn('[WatchPage] Native fullscreen unavailable:', error.name);
                 }
             }
         }
@@ -2034,7 +2085,7 @@ class WatchPage {
             this.setActiveSubtitleTrack(null);
         }
         existingProbeTracks.forEach(track => track.remove());
-        if (!this.subtitleStreamUrl) {
+        if (!this.subtitleStreamUrl || this.hls?.subtitleTracks?.length) {
             this.updateCaptionsTracks();
             return;
         }
@@ -2585,7 +2636,9 @@ class WatchPage {
 
         // Disable all tracks
         for (let i = 0; i < tracks.length; i++) {
-            tracks[i].mode = 'hidden';
+            if (tracks[i].kind === 'subtitles' || tracks[i].kind === 'captions') {
+                tracks[i].mode = index < 0 ? 'disabled' : 'hidden';
+            }
         }
 
         // Enable selected track. Embedded subtitles are populated after the

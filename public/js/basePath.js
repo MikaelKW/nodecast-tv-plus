@@ -51,8 +51,22 @@
         return resolve(`/api/remux?${params.toString()}`);
     }
 
-    function prefersHlsRemuxFallback(userAgent = window.navigator?.userAgent || '') {
-        return /\bFirefox\//i.test(String(userAgent));
+    function isAppleMobile(userAgent, platform, maxTouchPoints) {
+        if (/\biP(?:hone|ad|od)\b/.test(userAgent)) return true;
+        // iPadOS requests desktop sites by default and reports a Mac user agent.
+        return platform === 'MacIntel' && Number(maxTouchPoints) > 1;
+    }
+
+    // Use the copy-mode HLS session instead of the progressive fragmented-MP4
+    // remux pipe. Firefox drops the remuxed AAC audio, and iOS/iPadOS WebKit
+    // cannot play the open-ended pipe at all, which leaves Live TV black.
+    function prefersHlsRemuxFallback(
+        userAgent = window.navigator?.userAgent || '',
+        platform = window.navigator?.platform || '',
+        maxTouchPoints = window.navigator?.maxTouchPoints || 0
+    ) {
+        const agent = String(userAgent);
+        return /\bFirefox\//i.test(agent) || isAppleMobile(agent, platform, maxTouchPoints);
     }
 
     window.NodeCastUrl = Object.freeze({

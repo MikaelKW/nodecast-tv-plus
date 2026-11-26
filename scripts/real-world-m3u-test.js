@@ -26,8 +26,7 @@ async function waitForServer(baseUrl, child) {
     while (Date.now() < deadline) {
         if (child.exitCode !== null) throw new Error(`Application exited with code ${child.exitCode}`);
         try {
-            const response = await fetch(`${baseUrl}/api/version`);
-            if (response.ok) return;
+            if (await require('./helpers/applicationReadiness').isApplicationReady(baseUrl)) return;
         } catch { /* Server is still starting. */ }
         await new Promise(resolve => setTimeout(resolve, 250));
     }
