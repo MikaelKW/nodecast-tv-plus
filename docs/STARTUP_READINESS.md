@@ -10,6 +10,10 @@ The initial waiting period is limited to five minutes. When that limit expires, 
 
 Existing source synchronization status remains available to administrators in Settings. Public startup information contains only the coarse application state, without provider information. Container health is separate from catalogue readiness.
 
+Malformed provider data and temporary database contention can leave an import incomplete and the application usable in degraded mode. Critical local storage failures during required startup work, such as a full disk, a read-only or corrupt database, or an I/O or permission error, produce a failed startup state and an unavailable health response. A normal shutdown uses the generic waiting state rather than reporting a failed startup.
+
+An optional startup guide refresh owns the same per-source synchronization lock as a full refresh. Concurrent manual or scheduled refreshes therefore cannot start another catalogue import for that source while its deferred guide is running.
+
 ## Existing installations
 
 An automatic, one-time compatibility step handles catalogues created before import completion was tracked separately:

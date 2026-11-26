@@ -82,7 +82,7 @@ class StartupReadiness {
 
     stop() {
         this.stopped = true;
-        this.state = 'failed';
+        this.state = 'starting';
         clearTimeout(this.timer);
         this.unsubscribe?.();
         this.unsubscribe = null;
