@@ -182,9 +182,7 @@ async function progressAndStreams() {
 async function serverBoundary() {
     const data = path.join(directory, 'http');
     fs.mkdirSync(data);
-    const preload = path.join(directory, 'hold.cjs');
-    const readinessPath = require.resolve('../server/services/startupReadiness');
-    fs.writeFileSync(preload, `const http = require('node:http'); const listen = http.Server.prototype.listen; http.Server.prototype.listen = function(...args) { this.once('listening', () => process.send({ port: this.address().port })); return listen.apply(this, args); }; const service = require(${JSON.stringify(readinessPath)}); const prepare = service.prepare; service.prepare = () => new Promise(resolve => process.once('message', async message => { if (message === 'prepare') resolve(await prepare()); })); process.on('message', message => { if (message === 'fatal-storage') { service.fail(); process.send(service.snapshot()); } });`);
+    const preload = require.resolve('./helpers/startup-readiness-preload.cjs');
     const child = spawn(process.execPath, ['-r', preload, 'server/index.js'], {
         cwd: path.join(__dirname, '..'),
         env: { ...process.env, PORT: '0', NODECAST_DATA_DIR: data, NODECAST_BASE_PATH: '/tv', NODECAST_DISABLE_BACKGROUND_JOBS: 'true', JWT_SECRET: randomBytes(48).toString('hex'), SESSION_SECRET: randomBytes(48).toString('hex') },
