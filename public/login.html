@@ -9,6 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <script src="js/theme.js?v=1"></script>
     <link rel="stylesheet" href="css/main.css?v=10">
+    <link rel="stylesheet" href="css/startup.css?v=1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html,
@@ -288,9 +289,18 @@
     </div>
 
     <script src="js/basePath.js?v=1"></script>
+    <script src="js/startup.js?v=1"></script>
     <script src="js/passwordVisibility.js?v=1"></script>
     <script src="js/onboarding.js?v=1"></script>
     <script>
+        async function authFetch(url, options) {
+            const response = await fetch(url, options);
+            if (response.status === 503) {
+                const result = await response.clone().json();
+                if (NodeCastStartup.handleUnavailable(response, result)) throw new Error('Server is starting. Please wait.');
+            }
+            return response;
+        }
         // Start SSO Login
         document.getElementById('btn-sso-login').addEventListener('click', () => {
             window.location.href = NodeCastUrl.resolve('/api/auth/oidc/login');
@@ -334,7 +344,7 @@
 
         async function checkTwoFactorChallenge() {
             try {
-                const response = await fetch(NodeCastUrl.resolve('/api/auth/2fa/challenge'));
+                const response = await authFetch(NodeCastUrl.resolve('/api/auth/2fa/challenge'));
                 if (!response.ok) return false;
                 const data = await response.json();
                 if (data.required) showTwoFactorChallenge();
@@ -346,7 +356,7 @@
 
         async function checkSetupRequired() {
             try {
-                const response = await fetch(NodeCastUrl.resolve('/api/auth/setup-required'));
+                const response = await authFetch(NodeCastUrl.resolve('/api/auth/setup-required'));
                 const data = await response.json();
 
                 if (data.setupRequired) {
@@ -376,7 +386,7 @@
 
         async function configureLoginMethods() {
             try {
-                const response = await fetch(NodeCastUrl.resolve('/api/auth/oidc/status'));
+                const response = await authFetch(NodeCastUrl.resolve('/api/auth/oidc/status'));
                 if (!response.ok) throw new Error(`Sign-in configuration request failed (${response.status})`);
                 const options = await response.json();
                 const enabled = Boolean(options.enabled);
@@ -447,7 +457,7 @@
                 const endpoint = isSetupMode ? '/api/auth/setup' : '/api/auth/login';
                 const credentials = { username, password };
                 if (isSetupMode) credentials.passwordConfirmation = passwordConfirmation;
-                const response = await fetch(NodeCastUrl.resolve(endpoint), {
+                const response = await authFetch(NodeCastUrl.resolve(endpoint), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -532,7 +542,7 @@
             submit.disabled = true;
             submit.textContent = 'Please wait...';
             try {
-                const response = await fetch(NodeCastUrl.resolve('/api/auth/2fa/verify'), {
+                const response = await authFetch(NodeCastUrl.resolve('/api/auth/2fa/verify'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ credentialType: twoFactorMethod, credential: code.value })
@@ -555,7 +565,9 @@
         });
 
         // Determine setup mode before deciding whether SSO should be offered.
-        checkTwoFactorChallenge().then(async required => {
+        NodeCastStartup.wait().then(async ready => {
+            if (!ready) return;
+            const required = await checkTwoFactorChallenge();
             if (required) return;
             const setupRequired = await checkSetupRequired();
             if (setupRequired === false) await configureLoginMethods();

@@ -25,6 +25,7 @@ async function testStartup(authenticated, failNetwork = false, ok = true) {
         window: { location: { replace: url => calls.push(`redirect:${url}`) } },
         localStorage: { getItem: () => 'legacy-test-value', removeItem: () => calls.push('token-removed') },
         NodeCastUrl: { resolve: url => `/nodecast${url}` },
+        NodeCastStartup: { wait: async () => true },
         fetch: (url, options) => {
             calls.push(url);
             assert.equal(options.headers.Authorization, 'Bearer legacy-test-value');
@@ -46,6 +47,7 @@ async function testStartup(authenticated, failNetwork = false, ok = true) {
     `, Object.assign(context, { record: value => calls.push(value), stop: new Error('Stop after protected startup') }));
     // Constructor side effects must not run while the real auth method awaits
     // its response, even when the browser still has a legacy bearer value.
+    await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(calls, ['/nodecast/api/auth/session']);
     completeAuth();
     if (authenticated && ok && !failNetwork) {

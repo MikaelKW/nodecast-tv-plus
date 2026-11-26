@@ -13,7 +13,7 @@ function registerAuthStartupChecks() {
                 if (pathname === `${basePath}/api/auth/session`) authRequests.push(request);
                 if (pathname.startsWith(`${basePath}/api/`) &&
                     !pathname.startsWith(`${basePath}/api/auth/`) &&
-                    pathname !== `${basePath}/api/version`) {
+                    ![`${basePath}/api/version`, `${basePath}/api/startup`].includes(pathname)) {
                     protectedRequests.push(`${request.method()} ${pathname}`);
                 }
             });
