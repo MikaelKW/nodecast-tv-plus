@@ -56,7 +56,7 @@ async function waitForServer(baseUrl, child, output, timeoutMs = 30000) {
             throw new Error(`Server exited with code ${child.exitCode}.\n${output()}`);
         }
         try {
-            if ((await fetch(`${baseUrl}/api/health`)).ok) return;
+            if (await require('./helpers/applicationReadiness').isApplicationReady(baseUrl)) return;
         } catch {
             // Startup may still be in progress.
         }

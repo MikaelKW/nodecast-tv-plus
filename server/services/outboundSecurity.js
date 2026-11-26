@@ -5,6 +5,7 @@ const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
 const zlib = require('node:zlib');
+const { Transform } = require('node:stream');
 const { validateHttpUrl } = require('./urlSecurity');
 
 const MAX_REDIRECTS = 5;
@@ -182,20 +183,41 @@ function performPinnedRequest(target, options = {}) {
                 callback(null, target.address, target.family);
             }
         }, response => {
+            options.onProgress?.();
             const rawHeaders = { ...response.headers };
             const encoding = String(rawHeaders['content-encoding'] || '').toLowerCase();
-            let body = response;
-            if (encoding === 'gzip') body = response.pipe(zlib.createGunzip());
-            else if (encoding === 'deflate') body = response.pipe(zlib.createInflate());
-            else if (encoding === 'br') body = response.pipe(zlib.createBrotliDecompress());
+            const source = options.onProgress ? new Transform({
+                transform(chunk, _encoding, callback) { options.onProgress(); callback(null, chunk); }
+            }) : response;
+            if (source !== response) {
+                response.on('error', error => source.destroy(error));
+                response.pipe(source);
+            }
+            let body = source;
+            if (encoding === 'gzip') body = source.pipe(zlib.createGunzip());
+            else if (encoding === 'deflate') body = source.pipe(zlib.createInflate());
+            else if (encoding === 'br') body = source.pipe(zlib.createBrotliDecompress());
+            if (body !== source) source.on('error', error => body.destroy(error));
             if (body !== response) {
+                response.on('error', error => body.destroy(error));
                 delete rawHeaders['content-encoding'];
                 delete rawHeaders['content-length'];
             }
             body.cancel = async () => {
                 body.destroy();
+                source.destroy();
                 response.destroy();
             };
+            if (options.signal) {
+                const abort = () => {
+                    body.destroy(options.signal.reason);
+                    source.destroy(options.signal.reason);
+                    response.destroy(options.signal.reason);
+                };
+                options.signal.addEventListener('abort', abort, { once: true });
+                body.once('close', () => options.signal.removeEventListener('abort', abort));
+                if (options.signal.aborted) abort();
+            }
             const headers = responseHeaders(rawHeaders);
             const status = response.statusCode || 0;
             resolve({
@@ -207,7 +229,10 @@ function performPinnedRequest(target, options = {}) {
                 url: target.url,
                 async text() {
                     const chunks = [];
-                    for await (const chunk of body) chunks.push(Buffer.from(chunk));
+                    for await (const chunk of body) {
+                        options.onProgress?.();
+                        chunks.push(Buffer.from(chunk));
+                    }
                     return Buffer.concat(chunks).toString('utf8');
                 },
                 async json() {
@@ -226,7 +251,8 @@ async function fetchWithPolicy(value, options = {}, policy = {}) {
     let currentOptions = { ...options, redirect: 'manual' };
 
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-        const target = await resolveSafeOutboundTarget(currentUrl, policy);
+        const target = await waitWithSignal(resolveSafeOutboundTarget(currentUrl, policy), options.signal);
+        options.signal?.throwIfAborted();
         const response = await performPinnedRequest(target, currentOptions);
         if (!REDIRECT_STATUSES.has(response.status)) return response;
 
@@ -245,6 +271,23 @@ async function fetchWithPolicy(value, options = {}, policy = {}) {
     }
 
     throw securityError('Outbound request exceeded the redirect limit');
+}
+
+async function waitWithSignal(promise, signal) {
+    if (!signal) return promise;
+    signal.throwIfAborted();
+    let onAbort;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                onAbort = () => reject(signal.reason);
+                signal.addEventListener('abort', onAbort, { once: true });
+            })
+        ]);
+    } finally {
+        signal.removeEventListener('abort', onAbort);
+    }
 }
 
 module.exports = {

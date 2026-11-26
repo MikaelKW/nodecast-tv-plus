@@ -11,11 +11,12 @@ const XTREAM_API_HEADERS = Object.freeze({
 });
 
 class XtreamApi {
-    constructor(baseUrl, username, password) {
+    constructor(baseUrl, username, password, progress) {
         // Clean up base URL
         this.baseUrl = baseUrl.replace(/\/+$/, '');
         this.username = username;
         this.password = password;
+        this.progress = progress;
     }
 
     /**
@@ -40,10 +41,11 @@ class XtreamApi {
      * Make API request
      */
     async request(action, params = {}) {
+        this.progress?.check();
         const url = this.buildApiUrl(action, params);
         const response = await fetchWithPolicy(
             url,
-            { headers: XTREAM_API_HEADERS },
+            { headers: XTREAM_API_HEADERS, signal: this.progress?.signal, onProgress: this.progress?.touch },
             { allowPrivateHosts: [this.baseUrl] }
         );
         if (!response.ok) {
@@ -203,8 +205,8 @@ function normalizeAccountInfo(data, now = Date.now()) {
 /**
  * Factory function to create API instance from source
  */
-function createFromSource(source) {
-    return new XtreamApi(source.url, source.username, source.password);
+function createFromSource(source, progress) {
+    return new XtreamApi(source.url, source.username, source.password, progress);
 }
 
 /**

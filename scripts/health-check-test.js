@@ -86,6 +86,7 @@ async function run() {
         server = await startServer(rootData);
         const rootHealth = await waitForHealthy(`${server.baseUrl}/api/health`, server.child);
         assert.deepEqual(await rootHealth.json(), { status: 'ok', version: packageVersion });
+        await require('./helpers/applicationReadiness').waitForApplicationReady(server.baseUrl);
 
         await fs.writeFile(path.join(rootData, 'db.json'), '{not-valid-json');
         const unavailable = await fetch(`${server.baseUrl}/api/health`);
