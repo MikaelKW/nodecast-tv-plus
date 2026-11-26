@@ -113,6 +113,15 @@ async function stateTransitions() {
     for (const code of ['SQLITE_FULL', 'SQLITE_READONLY', 'SQLITE_READONLY_DBMOVED', 'SQLITE_IOERR_WRITE', 'SQLITE_CORRUPT', 'SQLITE_NOTADB', 'SQLITE_CANTOPEN', 'SQLITE_PERM', 'EACCES', 'EPERM', 'ENOSPC', 'EDQUOT', 'EROFS', 'EIO', 'ENOENT']) {
         assert.equal(isFatalStorageError({ code }), true, `${code} is a storage failure`);
     }
+    for (const code of ['EACCES', 'EPERM', 'ENOENT']) {
+        assert.equal(isFatalStorageError({ code, syscall: 'connect' }), false, `${code} connecting to a provider is recoverable`);
+        for (const syscall of ['open', 'stat', 'mkdir', 'rename', 'write']) {
+            assert.equal(isFatalStorageError({ code, syscall }), true, `${code} during ${syscall} remains a storage failure`);
+        }
+    }
+    for (const code of ['SQLITE_CORRUPT', 'SQLITE_READONLY', 'SQLITE_FULL']) {
+        assert.equal(isFatalStorageError({ code, syscall: 'connect' }), true, 'The connection exclusion is limited to the three ambiguous system codes');
+    }
 }
 
 async function progressAndStreams() {
@@ -332,6 +341,45 @@ async function actualImports() {
         assert.equal(sqlite.getDb().prepare('SELECT 1 AS healthy').get().healthy, 1);
         badReadiness.stop();
         malformed = false;
+
+        // Inject native ClientRequest connection errors in this test process
+        // without changing firewall rules or requiring restricted networking.
+        const originalRequest = http.request;
+        try {
+            for (const code of ['EACCES', 'EPERM', 'ENOENT']) {
+                http.request = function(...args) {
+                    const request = originalRequest.apply(this, args);
+                    if (args[0].pathname === '/blocked/player_api.php') {
+                        queueMicrotask(() => request.destroy(Object.assign(new Error('Synthetic blocked connection'), { code, syscall: 'connect' })));
+                    }
+                    return request;
+                };
+                const blocked = await database.sources.create({ type: 'xtream', url: base + '/blocked' });
+                const readiness = new StartupReadiness({ prepare: async () => [blocked] });
+                try {
+                    await readiness.initialize({
+                        subscribeCatalogueReadiness: listener => service.subscribeCatalogueReadiness(listener),
+                        syncAll: () => service.syncSource(blocked.id, { initialImport: true })
+                    });
+                    assert.equal((await readiness.backgroundSync).status, 'error');
+                    assert.equal(readiness.state, 'degraded', `${code} from connect must not lock sign-in`);
+                    assert.equal(readiness.canUseApplication(), true);
+                } finally { readiness.stop(); }
+            }
+        } finally { http.request = originalRequest; }
+
+        // The existing DNS boundary already converts resolver errors into an
+        // ordinary provider error before storage classification is reached.
+        const dns = require('node:dns').promises;
+        const originalLookup = dns.lookup;
+        try {
+            for (const code of ['EACCES', 'EPERM', 'ENOENT']) {
+                dns.lookup = async () => { throw Object.assign(new Error('Synthetic lookup failure'), { code, syscall: 'getaddrinfo' }); };
+                await assert.rejects(fetchWithPolicy('http://synthetic.example.invalid/playlist'), error => (
+                    error.statusCode === 502 && !isFatalStorageError(error)
+                ));
+            }
+        } finally { dns.lookup = originalLookup; }
 
         // Reproduce real transient writer contention without changing the app
         // or exhausting the disk. WAL readers remain usable during this lock.
