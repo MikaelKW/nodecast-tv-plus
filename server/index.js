@@ -246,7 +246,7 @@ process.on('SIGINT', () => shutdown('SIGINT').catch(error => {
 // A minimal unauthenticated endpoint for container and reverse-proxy readiness checks.
 app.get('/api/health', async (req, res) => {
     const unavailable = () => res.status(503).json({ status: 'unavailable', version: packageVersion });
-    if (!applicationReady || shuttingDown) return unavailable();
+    if (!applicationReady || shuttingDown || startupReadiness.snapshot().state === 'failed') return unavailable();
 
     try {
         await database.checkHealth();

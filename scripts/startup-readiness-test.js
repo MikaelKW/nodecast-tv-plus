@@ -17,6 +17,7 @@ const { createImportProgress } = require('../server/services/importProgress');
 const { fetchWithPolicy } = require('../server/services/outboundSecurity');
 const m3uParser = require('../server/services/m3uParser');
 const syncService = require('../server/services/syncService');
+const { isFatalStorageError } = require('../server/services/storageErrors');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function insertItem(id, sourceId) {
@@ -104,6 +105,14 @@ async function stateTransitions() {
     await noSources.initialize(fakeSync());
     assert.equal(noSources.state, 'ready');
     noSources.stop();
+    assert.deepEqual(noSources.snapshot(), { state: 'starting' }, 'A normal stop does not advertise a failed startup');
+    assert.equal(noSources.canUseApplication(), false);
+    for (const code of ['SQLITE_CONSTRAINT', 'SQLITE_CONSTRAINT_NOTNULL', 'SQLITE_CONSTRAINT_UNIQUE', 'SQLITE_BUSY', 'SQLITE_BUSY_SNAPSHOT', 'SQLITE_LOCKED', 'SQLITE_MISMATCH', 'SQLITE_TOOBIG']) {
+        assert.equal(isFatalStorageError({ code }), false, `${code} is not proof of broken storage`);
+    }
+    for (const code of ['SQLITE_FULL', 'SQLITE_READONLY', 'SQLITE_READONLY_DBMOVED', 'SQLITE_IOERR_WRITE', 'SQLITE_CORRUPT', 'SQLITE_NOTADB', 'SQLITE_CANTOPEN', 'SQLITE_PERM', 'EACCES', 'EPERM', 'ENOSPC', 'EDQUOT', 'EROFS', 'EIO', 'ENOENT']) {
+        assert.equal(isFatalStorageError({ code }), true, `${code} is a storage failure`);
+    }
 }
 
 async function progressAndStreams() {
@@ -166,7 +175,7 @@ async function serverBoundary() {
     fs.mkdirSync(data);
     const preload = path.join(directory, 'hold.cjs');
     const readinessPath = require.resolve('../server/services/startupReadiness');
-    fs.writeFileSync(preload, `const http = require('node:http'); const listen = http.Server.prototype.listen; http.Server.prototype.listen = function(...args) { this.once('listening', () => process.send({ port: this.address().port })); return listen.apply(this, args); }; const service = require(${JSON.stringify(readinessPath)}); const prepare = service.prepare; service.prepare = () => new Promise(resolve => process.once('message', async message => { if (message === 'prepare') resolve(await prepare()); }));`);
+    fs.writeFileSync(preload, `const http = require('node:http'); const listen = http.Server.prototype.listen; http.Server.prototype.listen = function(...args) { this.once('listening', () => process.send({ port: this.address().port })); return listen.apply(this, args); }; const service = require(${JSON.stringify(readinessPath)}); const prepare = service.prepare; service.prepare = () => new Promise(resolve => process.once('message', async message => { if (message === 'prepare') resolve(await prepare()); })); process.on('message', message => { if (message === 'fatal-storage') { service.fail(); process.send(service.snapshot()); } });`);
     const child = spawn(process.execPath, ['-r', preload, 'server/index.js'], {
         cwd: path.join(__dirname, '..'),
         env: { ...process.env, PORT: '0', NODECAST_DATA_DIR: data, NODECAST_BASE_PATH: '/tv', NODECAST_DISABLE_BACKGROUND_JOBS: 'true', JWT_SECRET: randomBytes(48).toString('hex'), SESSION_SECRET: randomBytes(48).toString('hex') },
@@ -230,6 +239,13 @@ async function serverBoundary() {
         assert.ok(Number(limited.headers.get('retry-after')) > 0);
         assert.equal(limited.headers.get('cache-control'), 'no-store');
         assert.equal((await request('/auth/session')).status, 200);
+        const failureState = new Promise(resolve => child.once('message', resolve));
+        child.send('fatal-storage');
+        assert.deepEqual(await failureState, { state: 'failed' });
+        assert.equal((await request('/health')).status, 503, 'A failed readiness state cannot remain healthy');
+        const failedAuth = await request('/auth/me', { headers: { Cookie: cookie } });
+        assert.equal(failedAuth.status, 503);
+        assert.equal(failedAuth.headers.get('set-cookie'), null);
     } finally {
         const exited = new Promise(resolve => child.once('exit', resolve));
         child.kill('SIGTERM');
@@ -242,9 +258,14 @@ async function actualImports() {
     let guideStarted = false;
     let serveWorking = false;
     let providerClosed = false;
+    let catalogueRequests = 0;
+    let malformed = false;
     const provider = http.createServer((req, res) => {
         const url = new URL(req.url, 'http://example.invalid');
-        if (url.pathname === '/player_api.php') return res.end('[]');
+        if (url.pathname === '/player_api.php') {
+            catalogueRequests++;
+            return res.end(JSON.stringify(malformed && url.searchParams.get('action') === 'get_live_categories' ? [{}] : []));
+        }
         if (url.pathname === '/xmltv.php') {
             guideStarted = true;
             res.writeHead(200); res.flushHeaders();
@@ -254,7 +275,7 @@ async function actualImports() {
         res.writeHead(200);
         if (serveWorking) return res.end('#EXTM3U\n');
         res.write('#EXTM3U\n');
-        req.on('close', () => { providerClosed = true; });
+        res.on('close', () => { providerClosed = true; });
     });
     await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${provider.address().port}`;
@@ -270,6 +291,71 @@ async function actualImports() {
         assert.equal(settled, false);
         finishGuide();
         assert.equal((await refresh).status, 'success');
+
+        // Exercise the startup-deferred guide, not the already locked normal
+        // Xtream path. A manual refresh must not start a second catalogue job.
+        guideStarted = false;
+        const getAll = database.sources.getAll;
+        let startupRefresh;
+        try {
+            database.sources.getAll = async () => [await database.sources.getById(xtream.id)];
+            startupRefresh = service.syncAll({ startup: true });
+            for (let i = 0; i < 100 && !guideStarted; i++) await delay(10);
+            assert.equal(guideStarted, true);
+            const requestsBefore = catalogueRequests;
+            assert.equal(await service.syncSource(xtream.id), undefined, 'Deferred guide owns the source-wide lock');
+            assert.equal(catalogueRequests, requestsBefore, 'A duplicate refresh cannot download another catalogue');
+        } finally {
+            database.sources.getAll = getAll;
+            finishGuide?.();
+            await startupRefresh;
+        }
+        // Both normal completion and failure must release the deferred lock.
+        const originalGuide = service.syncEpgFromUrl;
+        try {
+            service.syncEpgFromUrl = async () => { throw new Error('Synthetic guide failure'); };
+            await assert.rejects(service.syncDeferredGuide(xtream.id, 0), /Synthetic guide failure/);
+        } finally { service.syncEpgFromUrl = originalGuide; }
+        assert.equal((await service.syncSource(xtream.id, { skipGuide: true })).status, 'success');
+
+        malformed = true;
+        const bad = await database.sources.create({ type: 'xtream', url: base, username: 'synthetic', password: randomBytes(16).toString('hex') });
+        const badReadiness = new StartupReadiness({ prepare: async () => [bad] });
+        await badReadiness.initialize({
+            subscribeCatalogueReadiness: listener => service.subscribeCatalogueReadiness(listener),
+            syncAll: () => service.syncSource(bad.id, { initialImport: true })
+        });
+        const malformedResult = await badReadiness.backgroundSync;
+        assert.equal(malformedResult.status, 'error');
+        assert.equal(badReadiness.state, 'degraded', 'A real provider-generated NOT NULL constraint must not lock sign-in');
+        assert.equal(badReadiness.canUseApplication(), true);
+        assert.equal(sqlite.getDb().prepare('SELECT 1 AS healthy').get().healthy, 1);
+        badReadiness.stop();
+        malformed = false;
+
+        // Reproduce real transient writer contention without changing the app
+        // or exhausting the disk. WAL readers remain usable during this lock.
+        const busy = await database.sources.create({ type: 'xtream', url: base });
+        const busyReadiness = new StartupReadiness({ prepare: async () => [busy] });
+        const Database = require('better-sqlite3');
+        const writer = new Database(path.join(directory, 'content.db'));
+        const previousTimeout = sqlite.getDb().pragma('busy_timeout', { simple: true });
+        try {
+            sqlite.getDb().pragma('busy_timeout = 0');
+            writer.exec('BEGIN IMMEDIATE');
+            await busyReadiness.initialize({
+                subscribeCatalogueReadiness: listener => service.subscribeCatalogueReadiness(listener),
+                syncAll: () => service.syncSource(busy.id, { initialImport: true })
+            });
+            await assert.rejects(busyReadiness.backgroundSync, error => error.code === 'SQLITE_BUSY');
+            assert.equal(busyReadiness.state, 'degraded', 'Temporary database contention is not permanent startup failure');
+            assert.equal(sqlite.getDb().prepare('SELECT 1 AS healthy').get().healthy, 1);
+        } finally {
+            writer.exec('ROLLBACK');
+            writer.close();
+            sqlite.getDb().pragma(`busy_timeout = ${previousTimeout}`);
+            busyReadiness.stop();
+        }
         const stalled = await database.sources.create({ type: 'm3u', url: base + '/stall' });
         insertItem('retained-after-stall', stalled.id);
         assert.equal((await service.syncSource(stalled.id, { initialImport: true })).status, 'error');

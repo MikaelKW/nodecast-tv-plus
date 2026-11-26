@@ -1,6 +1,7 @@
 const { getDb, catalogueRevisions } = require('../db/sqlite');
 const { sources, settings, sourceConnectionRevision } = require('../db'); // For source config and settings
 const { createImportProgress } = require('./importProgress');
+const { isFatalStorageError } = require('./storageErrors');
 const { randomUUID } = require('node:crypto');
 const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
@@ -146,15 +147,26 @@ class SyncService {
                 }
             }
             for (const guide of deferredGuides) {
-                const source = await sources.getById(guide.id);
-                if (!source?.enabled || source.type !== 'xtream' || sourceConnectionRevision(source) !== guide.revision) continue;
-                try { await this.syncEpgFromUrl(source.id, xtreamApi.createFromSource(source).getXmltvUrl()); }
+                try { await this.syncDeferredGuide(guide.id, guide.revision); }
                 catch { console.warn('[Sync] Initial optional guide refresh failed'); }
             }
             this.lastSyncTime = new Date();
             console.log('[Sync] Global sync completed at', this.lastSyncTime.toISOString());
         } catch (err) {
             console.error('[Sync] Global sync failed:', redactText(err?.stack || err));
+        }
+    }
+
+    async syncDeferredGuide(sourceId, connectionRevision) {
+        // The optional guide still owns the same source-wide refresh lock.
+        if (activeSyncs.has(sourceId)) return;
+        activeSyncs.add(sourceId);
+        try {
+            const source = await sources.getById(sourceId);
+            if (!source?.enabled || source.type !== 'xtream' || sourceConnectionRevision(source) !== connectionRevision) return;
+            await this.syncEpgFromUrl(source.id, xtreamApi.createFromSource(source).getXmltvUrl());
+        } finally {
+            activeSyncs.delete(sourceId);
         }
     }
 
@@ -227,7 +239,7 @@ class SyncService {
         } catch (err) {
             console.error(`[Sync] Failed sync for source ${sourceId}:`, redactText(err?.stack || err));
             record('sync_failed', sourceMissing ? 'source_not_found' : 'sync_error');
-            const storageFailure = /^(SQLITE_|EACCES|ENOSPC|EROFS|EIO)/.test(String(err.code || ''));
+            const storageFailure = isFatalStorageError(err);
             this.notifyCatalogueReadiness({ kind: storageFailure ? 'storage_failure' : 'failure', sourceId, connectionRevision });
             this.updateSyncStatus(sourceId, 'all', 'error', redactText(err.message));
             return { status: 'error', connectionRevision };
