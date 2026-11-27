@@ -2131,6 +2131,34 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     expect(seekHistory.progress).toBeGreaterThanOrEqual(11);
     expect(seekHistory.progress).toBeLessThanOrEqual(12);
     expect(seekHistory.duration).toBeGreaterThan(19);
+
+    // An episode that shares the movie's provider ID and source is stored as a
+    // separate record, so it cannot replace the movie's resume position.
+    const sharedIdHistory = await page.evaluate(async sourceId => {
+        const itemId = 'controlled-multi-track-movie';
+        await window.API.request('POST', '/history', {
+            id: itemId,
+            type: 'episode',
+            sourceId,
+            progress: 3,
+            duration: 40,
+            data: { title: 'Controlled shared-ID episode' }
+        });
+        const records = (await window.API.request('GET', '/history?limit=20'))
+            .filter(entry => entry.item_id === itemId && entry.source_id === sourceId)
+            .map(entry => ({ type: entry.item_type, progress: entry.progress, title: entry.data.title }));
+        await window.API.request('DELETE', `/history/${itemId}?type=episode&sourceId=${sourceId}`);
+        const remaining = (await window.API.request('GET', '/history?limit=20'))
+            .filter(entry => entry.item_id === itemId)
+            .map(entry => entry.item_type);
+        return { records, remaining };
+    }, m3uSource.id);
+    expect(sharedIdHistory.records).toHaveLength(2);
+    expect(sharedIdHistory.records).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'movie', progress: seekHistory.progress }),
+        { type: 'episode', progress: 3, title: 'Controlled shared-ID episode' }
+    ]));
+    expect(sharedIdHistory.remaining).toEqual(['movie']);
     await expect(page.locator('#watch-time-total')).toBeHidden();
     await expect(page.locator('#watch-time-total')).toHaveText('');
 
