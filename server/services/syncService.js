@@ -8,6 +8,7 @@ const m3uParser = require('./m3uParser');
 const epgParser = require('./epgParser');
 const { redactText, redactUrl, validateHttpUrl } = require('./urlSecurity');
 const diagnosticEvents = require('./diagnosticEvents');
+const { catalogueId } = require('./catalogueIdentity');
 
 // Sync tracking
 const activeSyncs = new Set(); // sourceId
@@ -342,7 +343,7 @@ class SyncService {
             for (const cat of batch) {
                 const catId = cat.category_id; // standard xtream field
                 const name = cat.category_name;
-                const id = `${sourceId}:${catId}`;
+                const id = catalogueId(sourceId, type, catId);
                 stmt.run(id, sourceId, String(catId), type, name, cat.parent_id || null, visibilityDefault, JSON.stringify(cat));
             }
         });
@@ -428,7 +429,7 @@ class SyncService {
                     added = item.last_modified;
                 }
 
-                const id = `${sourceId}:${itemId}`;
+                const id = catalogueId(sourceId, type, itemId);
                 syncedIds.add(id);
 
                 stmt.run(
@@ -616,7 +617,7 @@ class SyncService {
             for (const channel of channels) {
                 // EPG channel IDs often overlap Xtream stream IDs. Keep the
                 // staged row in the same dedicated namespace as the active row.
-                const id = `${sourceId}:epg_channel:${channel.id}`;
+                const id = catalogueId(sourceId, 'epg_channel', channel.id);
                 channelStmt.run(
                     runId,
                     sourceId,
