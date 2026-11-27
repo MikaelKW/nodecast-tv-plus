@@ -112,8 +112,8 @@ class M3uXtreamAdapter {
 
         const row = db.prepare(`
             SELECT stream_url FROM playlist_items 
-            WHERE source_id = ? AND item_id = ?
-        `).get(this.sourceId, streamId);
+            WHERE source_id = ? AND type = ? AND item_id = ?
+        `).get(this.sourceId, type, streamId);
 
         return row?.stream_url || null;
     }
