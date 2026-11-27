@@ -979,9 +979,18 @@ async function testForcedShutdownFinalFlush() {
         server.child.stdout.on('data', bytes => {
             if (bytes.toString().includes('Audit shutdown test delay')) delayedPluginObserved = true;
         });
-        for (let i = 0; i < 5; i++) {
-            assert.equal((await request(server.baseUrl, '/api/auth/login', { method: 'POST',
-                body: { username: 'force-stop-unknown', password: 'synthetic-invalid-value' } })).response.status, 401);
+        // Sign-out is the audited route that stays reachable while the server
+        // shuts down. Setup and the sign-outs below fill the per-account activity
+        // allowance, so the sign-out during shutdown becomes a pending count.
+        const password = 'Force-stop-admin-9!';
+        const jar = new CookieJar();
+        assert.equal((await request(server.baseUrl, '/api/auth/setup', { method: 'POST', jar,
+            body: { username: 'force-stop-admin', password, passwordConfirmation: password } })).response.status, 201);
+        const cookie = jar.header();
+        assert.ok(cookie, 'Setup signs the administrator in.');
+        for (let i = 0; i < authAudit.ACTIVITY_ACCOUNT_LIMIT - 1; i++) {
+            assert.equal((await request(server.baseUrl, '/api/auth/logout', { method: 'POST', body: {},
+                headers: { Cookie: cookie } })).response.status, 200);
         }
         const port = new URL(server.baseUrl).port;
         const connect = () => new Promise((resolve, reject) => {
@@ -994,8 +1003,8 @@ async function testForcedShutdownFinalFlush() {
         const hold = await connect();
         hold.write(`POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\nConnection: close\r\n\r\n{`);
         const completing = await connect();
-        const body = JSON.stringify({ username: 'force-stop-unknown', password: 'synthetic-invalid-value' });
-        completing.write(`POST /api/auth/login HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body.slice(0, -1)}`);
+        const body = '{}';
+        completing.write(`POST /api/auth/logout HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nCookie: ${cookie}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body.slice(0, -1)}`);
         let responseText = '';
         completing.on('data', bytes => { responseText += bytes.toString(); });
         await new Promise(resolve => setTimeout(resolve, 150));
@@ -1018,10 +1027,10 @@ async function testForcedShutdownFinalFlush() {
         assert.ok(delayedPluginObserved, 'The deadline includes plugin shutdown time.');
         assert.ok(Date.now() - started >= 7000);
         assert.ok(Date.now() - started < 10000, 'The final save runs before the usual Docker stop deadline.');
-        assert.match(responseText, /429 Too Many Requests/);
+        assert.match(responseText, /^HTTP\/1\.1 200 /, 'Sign-out stays available during shutdown.');
         const database = new Database(path.join(directory, 'content.db'));
         try {
-            assert.equal(database.prepare("SELECT SUM(occurrences) n FROM auth_events WHERE event='failure_summary'").get().n, 1,
+            assert.equal(database.prepare("SELECT SUM(occurrences) n FROM auth_events WHERE event='activity_summary'").get().n, 1,
                 'The final forced-exit save preserves a count created after the initial shutdown flush.');
         } finally { database.close(); }
     } finally {
