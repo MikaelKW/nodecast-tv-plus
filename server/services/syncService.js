@@ -1,5 +1,7 @@
 const { getDb, catalogueRevisions } = require('../db/sqlite');
-const { sources, settings } = require('../db'); // For source config and settings
+const { sources, settings, sourceConnectionRevision } = require('../db'); // For source config and settings
+const { createImportProgress } = require('./importProgress');
+const { isFatalStorageError } = require('./storageErrors');
 const { randomUUID } = require('node:crypto');
 const xtreamApi = require('./xtreamApi');
 const m3uParser = require('./m3uParser');
@@ -19,10 +21,23 @@ function normalizeChannelNumber(value) {
 }
 
 class SyncService {
-    constructor() {
+    constructor({ createProgress = createImportProgress } = {}) {
         this.lastSyncTime = null; // Track when global sync last completed
         this._syncTimer = null;   // Server-side sync timer
         this._currentInterval = null;
+        this._catalogueReadinessListeners = new Set();
+        this._createImportProgress = createProgress;
+    }
+
+    subscribeCatalogueReadiness(listener) {
+        this._catalogueReadinessListeners.add(listener);
+        return () => this._catalogueReadinessListeners.delete(listener);
+    }
+
+    notifyCatalogueReadiness(event) {
+        for (const listener of this._catalogueReadinessListeners) {
+            try { listener(event); } catch { console.warn('[Sync] Catalogue readiness observer failed'); }
+        }
     }
 
     /**
@@ -111,15 +126,29 @@ class SyncService {
     /**
      * Sync all enabled sources
      */
-    async syncAll() {
+    async syncAll({ startup = false, initialImportIds = new Set() } = {}) {
         console.log('[Sync] Starting global sync...');
         try {
             const allSources = await sources.getAll();
+            if (startup) allSources.sort((a, b) => (
+                (initialImportIds.has(a.id) ? 0 : a.type === 'epg' ? 2 : 1)
+                - (initialImportIds.has(b.id) ? 0 : b.type === 'epg' ? 2 : 1)
+            ));
+            const deferredGuides = [];
             for (const source of allSources) {
                 if (source.enabled) {
                     // Run sequentially to not overload
-                    await this.syncSource(source.id);
+                    const result = await this.syncSource(source.id, {
+                        initialImport: initialImportIds.has(source.id), skipGuide: startup
+                    });
+                    if (startup && source.type === 'xtream' && result?.status === 'success') {
+                        deferredGuides.push({ id: source.id, revision: result.connectionRevision });
+                    }
                 }
+            }
+            for (const guide of deferredGuides) {
+                try { await this.syncDeferredGuide(guide.id, guide.revision); }
+                catch { console.warn('[Sync] Initial optional guide refresh failed'); }
             }
             this.lastSyncTime = new Date();
             console.log('[Sync] Global sync completed at', this.lastSyncTime.toISOString());
@@ -128,10 +157,23 @@ class SyncService {
         }
     }
 
+    async syncDeferredGuide(sourceId, connectionRevision) {
+        // The optional guide still owns the same source-wide refresh lock.
+        if (activeSyncs.has(sourceId)) return;
+        activeSyncs.add(sourceId);
+        try {
+            const source = await sources.getById(sourceId);
+            if (!source?.enabled || source.type !== 'xtream' || sourceConnectionRevision(source) !== connectionRevision) return;
+            await this.syncEpgFromUrl(source.id, xtreamApi.createFromSource(source).getXmltvUrl());
+        } finally {
+            activeSyncs.delete(sourceId);
+        }
+    }
+
     /**
      * Start sync for a source
      */
-    async syncSource(sourceId) {
+    async syncSource(sourceId, { initialImport = false, skipGuide = false } = {}) {
         const traceId = diagnosticEvents.createTraceId();
         const record = (event, reason) => diagnosticEvents.record({ traceId, event, reason, sourceId });
         if (activeSyncs.has(sourceId)) {
@@ -143,6 +185,9 @@ class SyncService {
         activeSyncs.add(sourceId);
         record('sync_start', 'sync_requested');
         let sourceMissing = false;
+        let connectionRevision;
+        let progress;
+        let catalogueFinished = false;
 
         try {
             const db = getDb();
@@ -152,6 +197,7 @@ class SyncService {
                 sourceMissing = true;
                 throw new Error(`Source ${sourceId} not found`);
             }
+            connectionRevision = sourceConnectionRevision(source);
 
             source.url = validateHttpUrl(source.url, 'Source URL');
 
@@ -166,24 +212,39 @@ class SyncService {
 
             // Update status
             this.updateSyncStatus(sourceId, 'all', 'syncing');
+            if (initialImport && source.type !== 'epg') progress = this._createImportProgress();
+            const catalogueComplete = async () => {
+                progress?.check();
+                const accepted = await sources.recordCatalogueImport(source.id, connectionRevision);
+                this.updateSyncStatus(sourceId, 'all', 'success');
+                catalogueFinished = true;
+                progress?.dispose();
+                if (accepted) this.notifyCatalogueReadiness({ kind: 'catalogue', sourceId: source.id, connectionRevision });
+            };
 
             if (source.type === 'xtream') {
-                await this.syncXtream(source);
+                await this.syncXtream(source, { progress, skipGuide, catalogueComplete });
             } else if (source.type === 'm3u') {
-                await this.syncM3u(source);
+                await this.syncM3u(source, progress);
+                await catalogueComplete();
             } else if (source.type === 'epg') {
                 await this.syncEpg(source);
             }
 
-            this.updateSyncStatus(sourceId, 'all', 'success');
+            if (!catalogueFinished) this.updateSyncStatus(sourceId, 'all', 'success');
             console.log(`[Sync] Completed sync for source ${source.name}`);
             record('sync_completed', 'sync_completed');
+            return { status: 'success', connectionRevision };
 
         } catch (err) {
             console.error(`[Sync] Failed sync for source ${sourceId}:`, redactText(err?.stack || err));
             record('sync_failed', sourceMissing ? 'source_not_found' : 'sync_error');
+            const storageFailure = isFatalStorageError(err);
+            this.notifyCatalogueReadiness({ kind: storageFailure ? 'storage_failure' : 'failure', sourceId, connectionRevision });
             this.updateSyncStatus(sourceId, 'all', 'error', redactText(err.message));
+            return { status: 'error', connectionRevision };
         } finally {
+            progress?.dispose();
             activeSyncs.delete(sourceId);
         }
     }
@@ -210,39 +271,41 @@ class SyncService {
     /**
      * Xtream Sync Logic
      */
-    async syncXtream(source) {
-        const api = xtreamApi.createFromSource(source);
+    async syncXtream(source, { progress, skipGuide = false, catalogueComplete = async () => {} } = {}) {
+        const api = xtreamApi.createFromSource(source, progress);
         const db = getDb();
 
         // 1. Live Categories
         console.log(`[Sync] Fetching Live Categories for ${source.name}`);
         const liveCats = await api.getLiveCategories();
-        await this.saveCategories(source.id, 'live', liveCats);
+        await this.saveCategories(source.id, 'live', liveCats, progress);
 
         // 2. Live Streams
         console.log(`[Sync] Fetching Live Streams for ${source.name}`);
         const liveStreams = await api.getLiveStreams();
-        await this.saveStreams(source.id, 'live', liveStreams);
+        await this.saveStreams(source.id, 'live', liveStreams, { progress });
 
         // 3. VOD Categories
         console.log(`[Sync] Fetching VOD Categories for ${source.name}`);
         const vodCats = await api.getVodCategories();
-        await this.saveCategories(source.id, 'movie', vodCats);
+        await this.saveCategories(source.id, 'movie', vodCats, progress);
 
         // 4. VOD Streams
         console.log(`[Sync] Fetching VOD Streams for ${source.name}`);
         const vodStreams = await api.getVodStreams();
-        await this.saveStreams(source.id, 'movie', vodStreams);
+        await this.saveStreams(source.id, 'movie', vodStreams, { progress });
 
         // 5. Series Categories
         console.log(`[Sync] Fetching Series Categories for ${source.name}`);
         const seriesCats = await api.getSeriesCategories();
-        await this.saveCategories(source.id, 'series', seriesCats);
+        await this.saveCategories(source.id, 'series', seriesCats, progress);
 
         // 6. Series
         console.log(`[Sync] Fetching Series for ${source.name}`);
         const series = await api.getSeries();
-        await this.saveStreams(source.id, 'series', series);
+        await this.saveStreams(source.id, 'series', series, { progress });
+        await catalogueComplete();
+        if (skipGuide) return;
 
         // 7. EPG (Xmltv)
         // Try to fetch XMLTV if available
@@ -258,7 +321,7 @@ class SyncService {
     /**
      * Batch save categories
      */
-    async saveCategories(sourceId, type, categories) {
+    async saveCategories(sourceId, type, categories, progress) {
         if (!categories || categories.length === 0) return;
         console.log(`[Sync] Saving ${categories.length} ${type} categories for source ${sourceId}...`);
         const db = getDb();
@@ -287,6 +350,7 @@ class SyncService {
         // Reduced batch size for better event loop interleaving
         const BATCH_SIZE = 100;
         for (let i = 0; i < categories.length; i += BATCH_SIZE) {
+            progress?.check();
             insertBatch(categories.slice(i, i + BATCH_SIZE));
             // Yield to event loop between batches to allow other requests
             await new Promise(resolve => setImmediate(resolve));
@@ -307,7 +371,7 @@ class SyncService {
     async saveStreams(sourceId, type, items, options = {}) {
         if (!items || items.length === 0) return new Set();
         const db = getDb();
-        const { skipPurge = false } = options;
+        const { skipPurge = false, progress } = options;
         const getVisibilityDefault = db.prepare(`
             SELECT is_hidden FROM content_visibility_defaults
             WHERE source_id = ? AND type = ?
@@ -392,6 +456,7 @@ class SyncService {
         // Reduced batch size for better event loop interleaving
         const BATCH_SIZE = 100;
         for (let i = 0; i < items.length; i += BATCH_SIZE) {
+            progress?.check();
             insertBatch(items.slice(i, i + BATCH_SIZE));
             // Yield to event loop between batches to allow other requests
             await new Promise(resolve => setImmediate(resolve));
@@ -399,6 +464,7 @@ class SyncService {
 
         // Purge stale entries (skip if doing batch sync like M3U)
         if (!skipPurge && syncedIds.size > 0) {
+            progress?.check();
             await this.purgeStaleItems(sourceId, type, syncedIds);
         }
 
@@ -661,7 +727,7 @@ class SyncService {
      * M3U Sync Logic (Streaming - Memory Efficient)
      * Processes M3U files in batches to avoid OOM on large playlists
      */
-    async syncM3u(source) {
+    async syncM3u(source, progress) {
         console.log(`[Sync] Fetching M3U playlist for ${source.name}`);
 
         // Temporary memory logging for verification
@@ -678,7 +744,7 @@ class SyncService {
         let batchCount = 0;
 
         // Stream and process in batches (default 500 channels per batch)
-        for await (const batch of m3uParser.fetchAndParseStreaming(source.url)) {
+        for await (const batch of m3uParser.fetchAndParseStreaming(source.url, 500, progress)) {
             batchCount++;
 
             // Map M3U channel format to our schema
@@ -695,7 +761,7 @@ class SyncService {
 
             // Save this batch immediately (skip purge - we'll do it at the end)
             if (playlistItems.length > 0) {
-                const batchIds = await this.saveStreams(source.id, 'live', playlistItems, { skipPurge: true });
+                const batchIds = await this.saveStreams(source.id, 'live', playlistItems, { skipPurge: true, progress });
                 batchIds.forEach(id => allSyncedIds.add(id));
                 totalChannels += playlistItems.length;
             }
@@ -714,6 +780,7 @@ class SyncService {
         logMemory();
 
         // Purge stale items after all batches are complete
+        progress?.check();
         if (allSyncedIds.size > 0) {
             await this.purgeStaleItems(source.id, 'live', allSyncedIds);
         }
@@ -725,7 +792,7 @@ class SyncService {
             parent_id: null
         }));
 
-        await this.saveCategories(source.id, 'live', categories);
+        await this.saveCategories(source.id, 'live', categories, progress);
         console.log(`[Sync] M3U sync complete for ${source.name}`);
     }
 
@@ -739,3 +806,4 @@ class SyncService {
 }
 
 module.exports = new SyncService();
+module.exports.SyncService = SyncService;

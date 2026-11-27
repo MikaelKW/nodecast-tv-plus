@@ -64,8 +64,8 @@ function buildRemuxArgs({ url, userAgent, audioCodecs = [], output = '-' }) {
         '-sn', '-dn',
         // Copy streams without re-encoding.
         '-c', 'copy',
-        // Convert Annex B video extradata for fragmented MP4.
-        '-bsf:v', 'dump_extra',
+        // Let the MP4 muxer handle AVC framing. Prepending extradata with
+        // dump_extra corrupts length-prefixed packets from containers like MKV.
         // MPEG-TS commonly carries AAC in ADTS. Apply its MP4 conversion only
         // to AAC outputs so other audio codecs remain unaffected.
         ...audioBitstreamFilters,

@@ -200,6 +200,7 @@ async function testWatchPlaybackReplacement() {
     let fetchHandler = async () => ({ ok: true, json: async () => ({}) });
     const context = {
         window: {},
+        AbortController,
         console: { log() {}, warn() {}, error() {} },
         NodeCastUrl: {
             resolve: value => value,
@@ -481,7 +482,7 @@ async function run() {
     child.stderr.on('data', chunk => { output += chunk.toString(); });
 
     try {
-        await waitFor(async () => (await fetch(`${baseUrl}/api/health`)).ok, 'application readiness');
+        await waitFor(() => require('./helpers/applicationReadiness').isApplicationReady(baseUrl), 'application readiness');
         const unauthenticated = await fetch(`${baseUrl}/api/diagnostics/events`);
         assert.equal(unauthenticated.status, 401);
         const unauthenticatedSummary = await fetch(`${baseUrl}/api/diagnostics/summary`);

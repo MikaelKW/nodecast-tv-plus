@@ -31,8 +31,7 @@ async function waitForServer(baseUrl, child, timeoutMs = 30000) {
             throw new Error(`Server exited before becoming ready (code ${child.exitCode}).`);
         }
         try {
-            const response = await fetch(`${baseUrl}/api/health`);
-            if (response.ok) return;
+            if (await require('./helpers/applicationReadiness').isApplicationReady(baseUrl)) return;
         } catch {
             // The server may still be starting.
         }

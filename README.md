@@ -142,7 +142,7 @@ Check the container:
 docker compose ps
 ```
 
-When ready, the container reports `healthy`. The lightweight `/api/health` endpoint also reports application readiness without contacting IPTV providers or exposing configuration.
+The container reports `healthy` when its local health checks pass. The lightweight `/api/health` endpoint does not contact IPTV providers or expose configuration. Sign-in readiness is tracked separately: an initial catalogue import can show “Server is starting. Please wait.” while the container remains healthy. Existing usable catalogues do not wait for an ordinary provider refresh. See [application startup readiness](docs/STARTUP_READINESS.md) for waiting limits and upgrade behavior.
 
 <details>
 <summary><strong>Docker run alternative</strong></summary>

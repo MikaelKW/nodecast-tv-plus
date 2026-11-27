@@ -4,6 +4,8 @@ require('dotenv').config();
 const path = require('path');
 const passport = require('passport');
 const syncService = require('./services/syncService');
+const startupReadiness = require('./services/startupReadiness');
+const { rateLimit } = require('express-rate-limit');
 const releaseUpdateService = require('./services/releaseUpdates');
 const securityConfig = require('./config/security');
 const basePathConfig = require('./config/basePath');
@@ -203,6 +205,7 @@ async function shutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
     applicationReady = false;
+    startupReadiness.stop();
     releaseUpdateService.stop();
     console.log(`${signal} received, shutting down...`);
 
@@ -243,7 +246,7 @@ process.on('SIGINT', () => shutdown('SIGINT').catch(error => {
 // A minimal unauthenticated endpoint for container and reverse-proxy readiness checks.
 app.get('/api/health', async (req, res) => {
     const unavailable = () => res.status(503).json({ status: 'unavailable', version: packageVersion });
-    if (!applicationReady || shuttingDown) return unavailable();
+    if (!applicationReady || shuttingDown || startupReadiness.snapshot().state === 'failed') return unavailable();
 
     try {
         await database.checkHealth();
@@ -255,6 +258,23 @@ app.get('/api/health', async (req, res) => {
 });
 
 // API Routes
+const limitStartupChecks = rateLimit({
+    windowMs: 60000, limit: 600, standardHeaders: 'draft-7', legacyHeaders: false,
+    handler: (_req, res) => res.set('Cache-Control', 'no-store').status(429).json({ error: 'Too many startup checks. Try again shortly.' })
+});
+app.get('/api/startup', limitStartupChecks, (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(startupReadiness.snapshot());
+});
+app.use('/api', (req, res, next) => {
+    if (['/health', '/version', '/auth/logout'].includes(req.path) || startupReadiness.canUseApplication()) return next();
+    res.set('Cache-Control', 'no-store').set('Retry-After', '2').set('Referrer-Policy', 'no-referrer');
+    if (req.path === '/auth/oidc/callback') {
+        // An authorization response is not replayed after the startup wait.
+        const login = basePathConfig.withBasePath('/login.html', basePathConfig.requestBasePath(req));
+        return res.status(503).type('html').send(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Server is starting</title><p>Server is starting. Please wait, then return to sign-in to start a new sign-in request.</p><a href="${login}">Return to sign-in</a></html>`);
+    }
+    res.status(503).json({ code: 'APPLICATION_STARTING', error: 'Server is starting. Please wait.' });
+});
 app.use('/api', auth.requireSameOrigin);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/sources', require('./routes/sources'));
@@ -293,6 +313,9 @@ server = app.listen(PORT, async () => {
         console.error('Plugin initialization failed:', err);
     });
     applicationReady = true;
+    await startupReadiness.initialize(syncService, {
+        disableBackgroundJobs: process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true'
+    });
 
     // Test environments run explicit syncs and should not start persistent background work.
     if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {
@@ -302,9 +325,8 @@ server = app.listen(PORT, async () => {
 
     releaseUpdateService.start();
 
-    // Trigger background sync with delay to allow server to settle
-    setTimeout(async () => {
-        await syncService.syncAll().catch(console.error);
+    // Catalogue readiness is tracked independently of optional background work.
+    Promise.resolve(startupReadiness.backgroundSync).then(async () => {
         // Start the server-side sync timer after initial sync
         await syncService.startSyncTimer().catch(console.error);
 
@@ -315,5 +337,5 @@ server = app.listen(PORT, async () => {
         } catch (err) {
             console.warn('Hardware detection failed:', err.message);
         }
-    }, 5000);
+    }).catch(err => console.warn('[Startup] Background initialization failed:', err.code || 'background_error'));
 });

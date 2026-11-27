@@ -220,6 +220,11 @@ function normalizeSource(source) {
   };
 }
 
+function sourceConnectionRevision(source) {
+  return Number.isSafeInteger(source?.connectionRevision) && source.connectionRevision >= 0
+    ? source.connectionRevision : 0;
+}
+
 // Source CRUD operations
 const sources = {
   async getAll() {
@@ -242,6 +247,7 @@ const sources = {
       const newSource = {
         id: db.nextId++,
         ...source,
+        connectionRevision: 0,
         contentVisibility: normalizeSourceContentVisibility(source.contentVisibility),
         enabled: true,
         created_at: new Date().toISOString(),
@@ -257,6 +263,13 @@ const sources = {
       const index = db.sources.findIndex(s => s.id === parseInt(id));
       if (index === -1) return { changed: false, result: null };
 
+      const previous = db.sources[index];
+      const connectionChanged = ['type', 'url', 'username', 'password'].some(key => (
+        Object.hasOwn(updates, key) && String(updates[key] ?? '') !== String(previous[key] ?? '')
+      ));
+      const revision = sourceConnectionRevision(previous);
+      if (connectionChanged && revision === Number.MAX_SAFE_INTEGER) throw new Error('Source revision exhausted');
+
       const contentVisibility = updates.contentVisibility
         ? normalizeSourceContentVisibility({
             ...db.sources[index].contentVisibility,
@@ -267,10 +280,21 @@ const sources = {
       db.sources[index] = {
         ...db.sources[index],
         ...updates,
+        connectionRevision: revision + (connectionChanged ? 1 : 0),
+        catalogueBaseline: connectionChanged ? undefined : previous.catalogueBaseline,
         contentVisibility,
         updated_at: new Date().toISOString()
       };
       return { result: normalizeSource(db.sources[index]) };
+    });
+  },
+
+  async recordCatalogueImport(id, revision) {
+    return mutateDb(db => {
+      const source = db.sources.find(item => item.id === Number(id));
+      if (!source || sourceConnectionRevision(source) !== revision) return { changed: false, result: false };
+      source.catalogueBaseline = { connectionRevision: revision, completedAt: Date.now() };
+      return { result: true };
     });
   },
 
@@ -943,6 +967,7 @@ module.exports = {
   checkHealth,
   mutateDb,
   sources,
+  sourceConnectionRevision,
   hiddenItems,
   favorites,
   settings,

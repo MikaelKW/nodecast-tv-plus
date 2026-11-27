@@ -289,8 +289,9 @@ async function* parseStreaming(input, batchSize = 500) {
  * @param {number} batchSize - Number of channels per batch
  * @yields {{ channels: Array, groups: Set, isLast: boolean }}
  */
-async function* fetchAndParseStreaming(url, batchSize = 500) {
-    const response = await fetchWithPolicy(url, {}, { allowPrivateHosts: [url] });
+async function* fetchAndParseStreaming(url, batchSize = 500, progress) {
+    progress?.check();
+    const response = await fetchWithPolicy(url, { signal: progress?.signal, onProgress: progress?.touch }, { allowPrivateHosts: [url] });
     if (!response.ok) {
         throw new Error(`Failed to fetch M3U: ${response.status} ${response.statusText}`);
     }
@@ -304,7 +305,28 @@ async function* fetchAndParseStreaming(url, batchSize = 500) {
         stream = Readable.from([]);
     }
 
-    yield* parseStreaming(stream, batchSize);
+    if (!progress) {
+        yield* parseStreaming(stream, batchSize);
+        return;
+    }
+    const original = stream;
+    const abort = () => original.destroy(progress.signal.reason);
+    progress.signal.addEventListener('abort', abort, { once: true });
+    const observed = Readable.from((async function* () {
+        for await (const chunk of original) {
+            progress.check();
+            yield chunk;
+        }
+    })());
+    try {
+        progress.check();
+        yield* parseStreaming(observed, batchSize);
+        progress.check();
+    } finally {
+        progress.signal.removeEventListener('abort', abort);
+        observed.destroy();
+        original.destroy();
+    }
 }
 
 /**

@@ -128,6 +128,7 @@ class SourceManager {
           <div class="source-name">${source.name}</div>
           <div class="source-url">${source.url}</div>
           ${type !== 'epg' ? `<div class="source-visibility-summary">Shown in: ${this.getSourceVisibilityLabels(source, type).join(', ') || 'Nowhere'}</div>` : ''}
+          ${type === 'xtream' ? '<div class="source-account" aria-live="polite" hidden></div>' : ''}
           <div class="source-sync-status" role="status" aria-live="polite"></div>
         </div>
         <div class="source-actions">
@@ -153,6 +154,103 @@ class SourceManager {
             item.querySelector('[data-action="delete"]').addEventListener('click', () => this.deleteSource(id));
             this.renderInitialSyncState(item, id, type);
         });
+
+        if (type === 'xtream') {
+            sources.filter(source => source.enabled).forEach(source => {
+                this.loadAccountStatus(source.id).catch(() => {});
+            });
+        }
+    }
+
+    /**
+     * Fetch and show the Xtream account status of one source.
+     * Resolves with the account, or null when the provider gave none.
+     */
+    async loadAccountStatus(id, { refresh = false } = {}) {
+        // Only the latest lookup for a source may render. An earlier one can
+        // finish last, for example after the source's credentials were edited.
+        this.accountLookups ??= new Map();
+        const lookup = (this.accountLookups.get(id) || 0) + 1;
+        this.accountLookups.set(id, lookup);
+        const isCurrent = () => this.accountLookups.get(id) === lookup;
+
+        const findContainer = () => document.querySelector(`.source-item[data-id="${id}"] .source-account`);
+        const loading = findContainer();
+        if (loading && loading.hidden) {
+            this.renderAccountStatus(loading, [{ text: 'Checking account…', tone: 'muted' }]);
+        }
+
+        try {
+            const { account } = await API.sources.getAccount(id, { refresh });
+            const container = isCurrent() ? findContainer() : null;
+            if (container) this.renderAccountStatus(container, this.describeAccount(account));
+            return account;
+        } catch (err) {
+            const container = isCurrent() ? findContainer() : null;
+            if (container) {
+                this.renderAccountStatus(container, this.describeAccount(null));
+            }
+            throw err;
+        }
+    }
+
+    renderAccountStatus(container, parts) {
+        container.replaceChildren(...parts.map(part => {
+            const element = document.createElement('span');
+            element.className = `source-account-part ${part.tone || ''}`.trim();
+            element.textContent = part.text;
+            return element;
+        }));
+        container.hidden = parts.length === 0;
+    }
+
+    /**
+     * Turn an account from /api/sources/:id/account into labelled parts.
+     * Each part has a text and a tone: success, warning, error or muted.
+     */
+    describeAccount(account, now = Date.now()) {
+        if (!account) return [{ text: 'Account status unavailable', tone: 'error' }];
+
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const parts = [];
+
+        if (account.expired) {
+            parts.push({ text: 'Expired', tone: 'error' });
+        } else if (account.active) {
+            parts.push({ text: account.isTrial ? 'Active (trial)' : 'Active', tone: 'success' });
+        } else {
+            parts.push({ text: account.status || (account.authorized ? 'Inactive' : 'Not authorized'), tone: 'error' });
+        }
+
+        if (account.expiresAt) {
+            const expiresAt = new Date(account.expiresAt);
+            const date = expiresAt.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+            const days = Math.ceil((expiresAt.getTime() - now) / DAY_MS);
+            if (days <= 0) {
+                parts.push({ text: `Ended ${date}`, tone: 'error' });
+            } else {
+                const remaining = days === 1 ? 'tomorrow' : `in ${days} days`;
+                parts.push({ text: `Expires ${date} (${remaining})`, tone: days <= 7 ? 'warning' : '' });
+            }
+        } else {
+            parts.push({ text: 'No end date', tone: '' });
+        }
+
+        const { activeConnections: activeCount, maxConnections: maxCount } = account;
+        const usageKnown = activeCount !== null && activeCount !== undefined;
+        if (maxCount && usageKnown) {
+            parts.push({
+                text: `Connections ${activeCount} / ${maxCount}`,
+                tone: activeCount >= maxCount ? 'warning' : ''
+            });
+        } else if (maxCount) {
+            // The provider did not report usage: show the limit without guessing it.
+            parts.push({ text: `Up to ${maxCount} connections`, tone: '' });
+        } else if (usageKnown) {
+            parts.push({ text: `Connections ${activeCount} in use`, tone: '' });
+        }
+
+        return parts;
     }
 
     getSourceVisibilityLabels(source, type) {
@@ -672,7 +770,12 @@ class SourceManager {
         try {
             const result = await API.sources.test(id);
             if (result.success) {
-                alert('Connection successful!');
+                let summary = '';
+                if (result.data?.user_info) {
+                    const account = await this.loadAccountStatus(id, { refresh: true }).catch(() => null);
+                    if (account) summary = `\n\n${this.describeAccount(account).map(part => part.text).join('\n')}`;
+                }
+                alert(`Connection successful!${summary}`);
             } else {
                 alert('Connection failed: ' + (result.error || result.message));
             }

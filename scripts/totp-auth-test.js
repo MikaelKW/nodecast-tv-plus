@@ -56,7 +56,7 @@ async function waitForServer(baseUrl, child, timeoutMs = 30000) {
     while (Date.now() < deadline) {
         if (child.exitCode !== null) throw new Error(`Server exited with code ${child.exitCode}.`);
         try {
-            if ((await fetch(`${baseUrl}/api/version`)).ok) return;
+            if (await require('./helpers/applicationReadiness').isApplicationReady(baseUrl)) return;
         } catch {
             // The server may still be starting.
         }
@@ -168,6 +168,9 @@ async function beginPasswordLogin(baseUrl, username, password) {
     assert.equal(login.payload.requiresTwoFactor, true);
     assert.equal(jar.hasPrefix('nodecast_auth_'), false, 'Password step must not issue the app authentication cookie.');
     assert.equal(jar.hasPrefix('nodecast.sid.'), true, 'The pending challenge must remain server-side behind the session cookie.');
+    const session = await request(baseUrl, '/api/auth/session', { jar });
+    assert.equal(session.response.status, 200);
+    assert.deepEqual(session.payload, { authenticated: false }, 'An unfinished second-factor challenge is not an authenticated session.');
     return jar;
 }
 
@@ -178,6 +181,11 @@ async function verifyLogin(baseUrl, jar, credentialType, credential, expectedSta
         body: { credentialType, credential }
     });
     assert.equal(result.response.status, expectedStatus);
+    if (expectedStatus === 200) {
+        const session = await request(baseUrl, '/api/auth/session', { jar });
+        assert.equal(session.response.status, 200);
+        assert.equal(session.payload.authenticated, true);
+    }
     return result;
 }
 

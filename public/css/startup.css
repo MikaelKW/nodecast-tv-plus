@@ -1,0 +1,14 @@
+.startup-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: grid;
+    place-content: center;
+    padding: 24px;
+    box-sizing: border-box;
+    background: var(--color-bg-primary, #0a0a0f);
+    color: var(--color-text-primary, #f5f5f7);
+    text-align: center;
+    font-family: Inter, sans-serif;
+}
+.startup-overlay p { max-width: 32rem; line-height: 1.5; }
