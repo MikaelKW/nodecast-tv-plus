@@ -126,6 +126,21 @@ function verifyToken(token) {
 }
 
 /**
+ * Return the verified token payload from the auth cookie or bearer header,
+ * or null. Used where a route must identify the caller without requiring
+ * authentication, such as sign-out.
+ */
+function getRequestTokenPayload(req) {
+    const header = req?.headers?.authorization;
+    const bearer = typeof header === 'string' && header.slice(0, 7).toLowerCase() === 'bearer '
+        ? header.slice(7).trim()
+        : null;
+    // verifyToken() returns null for a missing, malformed, expired or forged
+    // token, so every value is verified rather than pre-filtered.
+    return verifyToken(bearer || extractJwtFromCookie(req));
+}
+
+/**
  * Configure Passport Local Strategy for username/password authentication
  */
 function configureLocalStrategy(getUserByUsername, verifyUserPassword) {
@@ -134,14 +149,16 @@ function configureLocalStrategy(getUserByUsername, verifyUserPassword) {
             try {
                 const user = await getUserByUsername(username);
 
+                // The reason is only used for the administrator audit log.
+                // Clients receive the same message for both cases.
                 if (!user) {
-                    return done(null, false, { message: 'Invalid credentials' });
+                    return done(null, false, { message: 'Invalid credentials', reason: 'unknown_account' });
                 }
 
                 const isValid = await verifyUserPassword(password, user.passwordHash);
 
                 if (!isValid) {
-                    return done(null, false, { message: 'Invalid credentials' });
+                    return done(null, false, { message: 'Invalid credentials', reason: 'invalid_password', user });
                 }
 
                 return done(null, user);
@@ -382,6 +399,7 @@ module.exports = {
     verifyPassword,
     generateToken,
     verifyToken,
+    getRequestTokenPayload,
     setAuthCookie,
     clearAuthCookie,
     migrateLegacyAuthCookie,

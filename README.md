@@ -479,6 +479,16 @@ Keep both `/app/data` and `TOTP_ENCRYPTION_KEY` in the deployment backup. Recove
 
 SSO accounts use the identity provider's authentication and MFA policy.
 
+## Sign-in activity log
+
+Administrators can review sign-in activity under **Settings > Logs**. Each entry records the time, the account or attempted username, the event (sign-in, sign-out or initial setup), the outcome and reason, the method (password, SSO, authenticator code or recovery code), the client IP address, the address that delivered the request, the trusted forwarding chain, the host name used, and the browser user agent. Both steps of a two-factor sign-in share a flow ID, and a successful sign-in is recorded only after every required step has completed.
+
+Entries can be filtered by date, account, IP address, outcome and event. They are stored in `/app/data/content.db`, survive restarts, and are removed after a configurable retention period (default 90 days) or beyond a maximum number of entries (default 50,000). Password and verification-code fields, recovery-code fields, session cookies and authentication tokens are excluded from recording. Attempted usernames are recorded as entered, subject to length and character limits, and can contain sensitive information accidentally entered in that field.
+
+Repeated activity and failures can be grouped into counted summaries. Successful activity, challenged two-factor evidence and ordinary failures have separate storage allowances, and protected activity is shared fairly between accounts. Pending counts are saved periodically and during shutdown, but an abrupt crash or storage failure can lose unsaved counts. See [sign-in activity and retention](docs/SIGN_IN_ACTIVITY.md) for grouping, filtering, retention limits and recovery behaviour.
+
+The client IP address follows `TRUST_PROXY`: behind a trusted reverse proxy it is the forwarded client address, otherwise the direct connection address. Forwarded headers from untrusted addresses are ignored. Attempted usernames and IP addresses are personal data; choose a retention period that suits your privacy obligations.
+
 ## Migrating from upstream NodeCast TV
 
 Downgrading from NodeCast TV Plus back to upstream NodeCast TV after Plus has opened the data volume is not supported. Returning to upstream requires restoring the complete backup created before migration.

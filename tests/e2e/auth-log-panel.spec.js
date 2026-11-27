@@ -1,0 +1,320 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { test, expect } = require('@playwright/test');
+
+// Render the real Logs tab markup from index.html so the panel is tested
+// against the shipped structure.
+const indexHtml = fs.readFileSync(path.join(__dirname, '../../public/index.html'), 'utf8');
+const logsTab = indexHtml.slice(
+    indexHtml.indexOf('<div id="tab-logs"'),
+    indexHtml.indexOf('<!-- Diagnostics Tab -->')
+).replace('<div id="tab-logs" class="tab-content">', '<div id="tab-logs" class="tab-content active">');
+
+const hostile = '<img src=x onerror="window.__xss=1">';
+
+function entry(overrides) {
+    return {
+        id: 1,
+        at: '2026-11-01T12:00:00.000Z',
+        event: 'sign_in',
+        outcome: 'failure',
+        method: 'password',
+        reason: 'unknown_account',
+        reasonText: 'No account exists with this username.',
+        userId: null,
+        username: hostile,
+        ip: '203.0.113.7',
+        peerIp: '192.168.2.222',
+        forwardedFor: ['203.0.113.7', '192.168.2.222'],
+        host: 'tv.example.test',
+        userAgent: `Mozilla/5.0 ${hostile}`,
+        client: 'Safari 26 · iOS 26',
+        flowId: null,
+        ...overrides
+    };
+}
+
+async function openPanel(page) {
+    await page.route('**/auth-log-harness', route => route.fulfill({
+        contentType: 'text/html',
+        body: `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${logsTab}</body></html>`
+    }));
+    await page.goto('/auth-log-harness');
+    await page.addStyleTag({ path: path.join(__dirname, '../../public/css/main.css') });
+    await page.addScriptTag({ path: path.join(__dirname, '../../public/js/components/AuthLogPanel.js') });
+    await page.evaluate(({ first, second }) => {
+        window.requests = [];
+        window.savedSettings = [];
+        const all = [first, second];
+        window.API = {
+            authLog: {
+                list: async filters => {
+                    window.requests.push(filters);
+                    const matching = filters.ip ? all.filter(item => item.ip.startsWith(filters.ip)) : all;
+                    const pageSize = 1;
+                    const start = (filters.page - 1) * pageSize;
+                    return {
+                        entries: matching.slice(start, start + pageSize),
+                        total: matching.length,
+                        page: filters.page,
+                        pageSize,
+                        pages: Math.max(1, Math.ceil(matching.length / pageSize))
+                    };
+                }
+            },
+            settings: {
+                get: async () => ({ authLogRetentionDays: 90, authLogMaxEntries: 50000 }),
+                update: async data => {
+                    window.savedSettings.push(data);
+                    return { authLogRetentionDays: Math.max(1, data.authLogRetentionDays), authLogMaxEntries: data.authLogMaxEntries };
+                }
+            }
+        };
+        window.panel = new window.AuthLogPanel({ api: window.API });
+        window.panel.show();
+    }, {
+        first: entry({}),
+        second: entry({
+            id: 2,
+            at: '2026-11-01T11:00:00.000Z',
+            outcome: 'success',
+            reason: null,
+            reasonText: null,
+            userId: 1,
+            username: 'admin',
+            ip: '192.168.1.81',
+            peerIp: '192.168.1.81',
+            forwardedFor: [],
+            method: 'password+totp',
+            flowId: '6f1c2c1e-6c1d-4c6e-9d6a-2b1f3c4d5e6f'
+        })
+    });
+}
+
+test.use({ viewport: { width: 1400, height: 900 } });
+
+test('the sign-in log renders untrusted text safely with details and pagination', async ({ page }) => {
+    await openPanel(page);
+    const rows = page.locator('#auth-log-rows .auth-log-row');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText(hostile);
+    await expect(rows.first()).toContainText('Failed');
+    await expect(rows.first()).toContainText('No account exists with this username.');
+    await expect(rows.first()).toContainText('203.0.113.7');
+    await expect(rows.first()).toContainText('Safari 26 · iOS 26');
+    expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+    expect(await page.locator('#auth-log-rows img').count()).toBe(0);
+    await expect(page.locator('#auth-log-page')).toHaveText('1–1 of 2');
+
+    const details = page.locator('#auth-log-rows .auth-log-details').first();
+    await expect(details).toBeHidden();
+    const toggle = rows.first().getByRole('button', { name: /^Show details for / });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(details).toBeVisible();
+    await expect(details).toContainText('192.168.2.222');
+    await expect(details).toContainText('203.0.113.7 → 192.168.2.222');
+    await expect(details).toContainText('tv.example.test');
+    await expect(details).toContainText('Sign-in · Password');
+
+    // Clicking anywhere else in the row toggles the details too.
+    await rows.first().locator('td').nth(2).click();
+    await expect(details).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await rows.first().locator('td').nth(5).click();
+    await expect(details).toBeVisible();
+    await rows.first().locator('td').nth(5).click();
+    await expect(details).toBeHidden();
+
+    // The table fits its container without horizontal scrolling.
+    const overflow = await page.locator('.auth-log-table').evaluate(table =>
+        table.scrollWidth - table.parentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+
+    await page.locator('#auth-log-next').click();
+    await expect(rows.first()).toContainText('admin');
+    await expect(rows.first()).toContainText('Password + authenticator');
+    await expect(page.locator('#auth-log-next')).toBeDisabled();
+    await expect(page.locator('#auth-log-prev')).toBeEnabled();
+});
+
+test('filters are sent to the API and an IP can be applied from a row', async ({ page }) => {
+    await openPanel(page);
+    await page.locator('#auth-log-rows').getByRole('button', { name: '203.0.113.7' }).click();
+    await expect(page.locator('#auth-log-ip')).toHaveValue('203.0.113.7');
+    // Applying a filter from a row does not open that row's details.
+    await expect(page.locator('#auth-log-rows .auth-log-details').first()).toBeHidden();
+    await expect(page.locator('#auth-log-page')).toHaveText('1–1 of 1');
+
+    await page.locator('#auth-log-account').fill('adm');
+    await page.locator('#auth-log-outcome').selectOption('failure');
+    await page.locator('#auth-log-from').fill('2026-11-01T10:00');
+    await page.locator('#auth-log-filters').getByRole('button', { name: 'Apply' }).click();
+    const last = await page.evaluate(() => window.requests.at(-1));
+    expect(last.account).toBe('adm');
+    expect(last.outcome).toBe('failure');
+    expect(last.ip).toBe('203.0.113.7');
+    expect(last.page).toBe(1);
+    expect(Date.parse(last.from)).toBe(new Date('2026-11-01T10:00').getTime());
+
+    await page.locator('#auth-log-reset').click();
+    await expect(page.locator('#auth-log-ip')).toHaveValue('');
+    const reset = await page.evaluate(() => window.requests.at(-1));
+    expect(reset.ip).toBe('');
+    expect(reset.account).toBe('');
+});
+
+test('retention settings load and save', async ({ page }) => {
+    await openPanel(page);
+    await expect(page.locator('#auth-log-retention-days')).toHaveValue('90');
+    await expect(page.locator('#auth-log-max-entries')).toHaveValue('50000');
+    await page.locator('#auth-log-retention-days').fill('30');
+    await page.locator('#auth-log-retention').getByRole('button', { name: 'Save retention' }).click();
+    await expect(page.locator('#auth-log-retention-status')).toHaveText('Retention saved.');
+    expect(await page.evaluate(() => window.savedSettings.at(-1))).toEqual({
+        authLogRetentionDays: 30, authLogMaxEntries: 50000
+    });
+});
+
+test('an old retention load cannot replace the policy shown after reopening', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(async () => {
+        const panel = window.panel;
+        panel.api.settings.get = () => new Promise(resolve => { window.resolveOldRetention = resolve; });
+        const oldLoad = panel.loadRetention();
+        panel.hide();
+        panel.api.settings.get = async () => ({ authLogRetentionDays: 365, authLogMaxEntries: 75000 });
+        panel.show();
+        await panel.loadRetention();
+        window.resolveOldRetention({ authLogRetentionDays: 1, authLogMaxEntries: 1000 });
+        await oldLoad;
+    });
+    await expect(page.locator('#auth-log-retention-days')).toHaveValue('365');
+    await expect(page.locator('#auth-log-max-entries')).toHaveValue('75000');
+});
+
+test('saving retention supersedes a pending policy load', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(async () => {
+        const panel = window.panel;
+        panel.api.settings.get = () => new Promise(resolve => { window.resolveOldRetention = resolve; });
+        const oldLoad = panel.loadRetention();
+        panel.retentionDays.value = '365';
+        panel.maxEntries.value = '75000';
+        await panel.saveRetention();
+        window.resolveOldRetention({ authLogRetentionDays: 1, authLogMaxEntries: 1000 });
+        await oldLoad;
+    });
+    await expect(page.locator('#auth-log-retention-days')).toHaveValue('365');
+    await expect(page.locator('#auth-log-max-entries')).toHaveValue('75000');
+});
+
+test('retention number inputs stay compact in mobile portrait and landscape', async ({ page }) => {
+    await openPanel(page);
+    for (const viewport of [{ width: 402, height: 874 }, { width: 874, height: 402 }]) {
+        await page.setViewportSize(viewport);
+        for (const selector of ['#auth-log-retention-days', '#auth-log-max-entries']) {
+            const bounds = await page.locator(selector).boundingBox();
+            expect(bounds.height).toBeGreaterThanOrEqual(28);
+            expect(bounds.height).toBeLessThanOrEqual(52);
+            expect(bounds.width).toBeLessThanOrEqual(180);
+        }
+    }
+});
+
+test('date filters fit the other fields without horizontal overflow on mobile', async ({ page }) => {
+    await openPanel(page);
+    for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 },
+        { width: 402, height: 874 }, { width: 844, height: 390 }, { width: 874, height: 402 }]) {
+        await page.setViewportSize(viewport);
+        const account = await page.locator('#auth-log-account').boundingBox();
+        for (const selector of ['#auth-log-from', '#auth-log-to']) {
+            const input = page.locator(selector);
+            await expect(input).toHaveCSS('appearance', 'none');
+            await input.fill('');
+            const empty = await input.boundingBox();
+            expect(Math.abs(empty.width - account.width)).toBeLessThanOrEqual(1);
+            expect(Math.abs(empty.height - account.height)).toBeLessThanOrEqual(4);
+            expect(empty.height).toBeGreaterThanOrEqual(24);
+            await input.fill('2026-11-24T22:15');
+            const filled = await input.boundingBox();
+            expect(Math.abs(filled.width - account.width)).toBeLessThanOrEqual(1);
+            expect(filled.height).toBe(empty.height);
+            expect(filled.x + filled.width).toBeLessThanOrEqual(viewport.width);
+            await expect(input).toHaveValue('2026-11-24T22:15');
+            await input.fill('');
+            const cleared = await input.boundingBox();
+            expect(cleared.height).toBe(filled.height);
+        }
+        const overflow = await page.locator('.auth-log-filters').evaluate(form => form.scrollWidth - form.clientWidth);
+        expect(overflow).toBeLessThanOrEqual(1);
+    }
+});
+
+test('grouped failures show counts and time ranges without inventing an account', async ({ page }) => {
+    await openPanel(page);
+    await page.evaluate(() => window.panel.render({ total: 1, page: 1, pages: 1, pageSize: 25, entries: [{
+        id: 40, at: '2026-11-24T12:00:30Z', event: 'failure_summary', outcome: 'failure', method: null,
+        userId: null, username: null, ip: null, peerIp: null, forwardedFor: [], host: null, userAgent: null,
+        reasonText: '1240 additional ordinary failures were grouped.', occurrences: 1240, retentionGroup: 'ordinary',
+        firstAt: '2026-11-24T12:00:01Z', lastAt: '2026-11-24T12:00:30Z',
+        reasonCounts: { rate_limited: 1240, '<img src=x onerror="window.__summaryXss=1">': 0 }
+    }] }));
+    await expect(page.locator('.auth-log-row')).toContainText('Grouped failures');
+    await expect(page.locator('.auth-log-row')).toContainText('1240 additional ordinary failures');
+    await expect(page.locator('.auth-log-row [data-auth-log-filter]')).toHaveCount(0);
+    await page.locator('.auth-log-toggle').click();
+    await expect(page.locator('.auth-log-details')).toContainText('1240');
+    await expect(page.locator('.auth-log-details')).toContainText('2026-11-24T12:00:01Z');
+    await expect(page.locator('.auth-log-details')).toContainText('rate_limited: 1240');
+    await expect(page.locator('.auth-log-details img')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__summaryXss)).toBeUndefined();
+});
+
+test('activity summaries distinguish incomplete factors from completed sign-ins', async ({ page }) => {
+    await openPanel(page);
+    const summary = entry({ id: 50, event: 'activity_summary', summaryEvent: 'sign_in', outcome: 'mfa_required',
+        userId: 7, username: 'account-7', method: 'password', ip: null, peerIp: null, host: null,
+        userAgent: null, client: null, flowId: null, occurrences: 14, retentionGroup: 'activity',
+        firstAt: '2026-11-25T12:00:00Z', lastAt: '2026-11-25T12:30:00Z', reasonCounts: {}, activityCounts: {},
+        reasonText: '14 additional first-factor successes requiring two-factor verification were grouped.' });
+    await page.evaluate(value => window.panel.render({ entries: [value], total: 1, page: 1, pages: 1 }), summary);
+    await expect(page.locator('.auth-log-row')).toContainText('Grouped activity');
+    await expect(page.locator('.auth-log-outcome')).toHaveText('Two-factor required');
+    await expect(page.locator('.auth-log-row')).not.toContainText('Succeeded');
+    await page.locator('.auth-log-toggle').click();
+    await expect(page.locator('.auth-log-details')).toContainText('Protected activity');
+    await expect(page.locator('.auth-log-details dt')).toContainText(['Grouped events', 'First event (UTC)', 'Last event (UTC)']);
+    await expect(page.locator('.auth-log-details dt').filter({ hasText: /^Reasons$/ })).toHaveCount(0);
+    await expect(page.locator('.auth-log-details')).toContainText('14');
+    await expect(page.locator('.auth-log-details')).toContainText('2026-11-25T12:30:00Z');
+    await page.evaluate(value => window.panel.render({ entries: [{ ...value, outcome: 'success',
+        reasonText: '14 additional completed sign-ins were grouped.' }], total: 1, page: 1, pages: 1 }), summary);
+    await expect(page.locator('.auth-log-outcome')).toHaveText('Succeeded');
+    await expect(page.locator('.auth-log-row')).toContainText('completed sign-ins');
+});
+
+test('mixed activity overflow has no invented account or completed-sign-in outcome', async ({ page }) => {
+    await openPanel(page);
+    const summary = entry({ id: 51, event: 'activity_summary', summaryEvent: null, outcome: 'summary',
+        userId: null, username: null, method: null, ip: null, peerIp: null, client: null,
+        occurrences: 54, retentionGroup: 'activity', firstAt: '2026-11-25T12:00:00Z', lastAt: '2026-11-25T12:30:00Z',
+        reasonText: '54 additional activity events were grouped.', reasonCounts: {},
+        activityCounts: { 'sign_in:mfa_required:password': 44, 'sign_in:success:password': 2,
+            'sign_out:success:unspecified': 5, 'sign_in:success:password+totp': 3,
+            '<img src=x onerror="window.__activityXss=1">:success:unspecified': 0 } });
+    await page.evaluate(value => window.panel.render({ entries: [value], total: 1, page: 1, pages: 1 }), summary);
+    await expect(page.locator('.auth-log-outcome')).toHaveText('Mixed activity');
+    await expect(page.locator('.auth-log-row [data-auth-log-filter]')).toHaveCount(0);
+    await expect(page.locator('.auth-log-row')).not.toContainText('Succeeded');
+    await page.locator('.auth-log-toggle').click();
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Two-factor required · Password: 44');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Succeeded · Password: 2');
+    await expect(page.locator('.auth-log-details')).not.toContainText('sign_in:');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-out · Succeeded: 5');
+    await expect(page.locator('.auth-log-details')).toContainText('Sign-in · Succeeded · Password + authenticator: 3');
+    await expect(page.locator('.auth-log-details img')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__activityXss)).toBeUndefined();
+    await expect(page.locator('.auth-log-details dt').filter({ hasText: /^Reasons$/ })).toHaveCount(0);
+});

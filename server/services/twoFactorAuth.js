@@ -20,12 +20,18 @@ function saveSession(req) {
     });
 }
 
-async function beginChallenge(req, user) {
+/**
+ * Start the second sign-in step. `firstFactor` ('password' or 'sso') and
+ * `flowId` link both steps in the authentication audit log.
+ */
+async function beginChallenge(req, user, { firstFactor = 'password', flowId = null } = {}) {
     await regenerateSession(req);
     req.session.twoFactorChallenge = {
         challengeId: crypto.randomBytes(24).toString('base64url'),
         userId: user.id,
-        expiresAt: Date.now() + CHALLENGE_TTL_MS
+        expiresAt: Date.now() + CHALLENGE_TTL_MS,
+        firstFactor: firstFactor === 'sso' ? 'sso' : 'password',
+        flowId: typeof flowId === 'string' ? flowId : null
     };
     await saveSession(req);
 }

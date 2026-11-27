@@ -203,10 +203,20 @@ async function loadPlugins() {
 
 async function shutdown(signal) {
     if (shuttingDown) return;
+    const shutdownStartedAt = Date.now();
     shuttingDown = true;
     applicationReady = false;
+    const authAudit = require('./services/authAudit');
+    const forceExitTimer = setTimeout(() => {
+        console.error('Graceful shutdown timed out.');
+        authAudit.shutdown();
+        process.exit(1);
+    }, Math.max(0, 8000 - (Date.now() - shutdownStartedAt)));
+    forceExitTimer.unref();
     startupReadiness.stop();
     releaseUpdateService.stop();
+    authAudit.stopMaintenance();
+    authAudit.flushPending();
     console.log(`${signal} received, shutting down...`);
 
     for (const { name, plugin } of loadedPlugins) {
@@ -222,15 +232,10 @@ async function shutdown(signal) {
 
     if (!server) return process.exit(0);
 
-    const forceExitTimer = setTimeout(() => {
-        console.error('Graceful shutdown timed out.');
-        process.exit(1);
-    }, 10000);
-    forceExitTimer.unref();
-
     server.close(error => {
+        const flushed = authAudit.shutdown();
         clearTimeout(forceExitTimer);
-        process.exit(error ? 1 : 0);
+        process.exit(error || !flushed ? 1 : 0);
     });
 }
 
@@ -277,6 +282,7 @@ app.use('/api', (req, res, next) => {
 });
 app.use('/api', auth.requireSameOrigin);
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth-log', require('./routes/authLog'));
 app.use('/api/sources', require('./routes/sources'));
 app.use('/api/proxy', require('./routes/proxy'));
 app.use('/api/channels', require('./routes/channels'));
@@ -316,6 +322,9 @@ server = app.listen(PORT, async () => {
     await startupReadiness.initialize(syncService, {
         disableBackgroundJobs: process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true'
     });
+
+    // Apply the sign-in log retention at startup and hourly afterwards.
+    require('./services/authAudit').startMaintenance();
 
     // Test environments run explicit syncs and should not start persistent background work.
     if (process.env.NODECAST_DISABLE_BACKGROUND_JOBS === 'true') {
