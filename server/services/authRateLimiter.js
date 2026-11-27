@@ -1,3 +1,5 @@
+const { ipKeyGenerator } = require('express-rate-limit');
+
 class AttemptLimiter {
     constructor({ maxAttempts, windowMs, blockMs = windowMs, maxEntries = 10000 }) {
         this.maxAttempts = maxAttempts;
@@ -49,8 +51,16 @@ class AttemptLimiter {
     }
 }
 
+// Key by the client address resolved through the trust proxy setting, so
+// forwarded headers count only from trusted proxies. IPv4-mapped addresses
+// share the IPv4 key and IPv6 groups per /56, as express-rate-limit does.
+function clientAddressKey(req) {
+    return req.ip ? ipKeyGenerator(req.ip) : 'unknown';
+}
+
 module.exports = {
     AttemptLimiter,
+    clientAddressKey,
     passwordIdentityLimiter: new AttemptLimiter({
         maxAttempts: 5,
         windowMs: 15 * 60 * 1000,

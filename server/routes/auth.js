@@ -9,6 +9,7 @@ const totpService = require('../services/totpService');
 const twoFactorAuth = require('../services/twoFactorAuth');
 const { normalizePreferences } = require('../../public/js/components/SubtitlePreferences');
 const {
+    clientAddressKey,
     passwordIdentityLimiter,
     passwordIpLimiter
 } = require('../services/authRateLimiter');
@@ -38,13 +39,9 @@ function userMutationErrorStatus(error) {
     return 500;
 }
 
-function loginIpKey(req) {
-    return req.socket?.remoteAddress || 'unknown';
-}
-
 function loginIdentityKey(req) {
     const username = String(req.body?.username || '').trim().toLowerCase();
-    return `${loginIpKey(req)}:${username}`;
+    return `${clientAddressKey(req)}:${username}`;
 }
 
 function rejectRateLimited(res, states) {
@@ -237,7 +234,7 @@ router.post('/login', (req, res, next) => {
     }
 
     const identityKey = loginIdentityKey(req);
-    const ipKey = loginIpKey(req);
+    const ipKey = clientAddressKey(req);
     if (rejectRateLimited(res, [
         passwordIdentityLimiter.check(identityKey),
         passwordIpLimiter.check(ipKey)
