@@ -32,7 +32,7 @@ function initSchema() {
     // Categories (Groups)
     db.exec(`
         CREATE TABLE IF NOT EXISTS categories (
-            id TEXT PRIMARY KEY, -- Composite key: sourceId:categoryId
+            id TEXT PRIMARY KEY, -- Composite key: sourceId:type:categoryId
             source_id INTEGER NOT NULL,
             category_id TEXT NOT NULL,
             type TEXT NOT NULL, -- 'live', 'movie', 'series'
@@ -49,7 +49,7 @@ function initSchema() {
     // Playlist Items (Channels, Movies, Series, Episodes)
     db.exec(`
         CREATE TABLE IF NOT EXISTS playlist_items (
-            id TEXT PRIMARY KEY, -- Composite key: sourceId:itemId
+            id TEXT PRIMARY KEY, -- Composite key: sourceId:type:itemId
             source_id INTEGER NOT NULL,
             item_id TEXT NOT NULL, -- Original ID from provider
             type TEXT NOT NULL, -- 'live', 'movie', 'series', 'episode'
@@ -95,6 +95,7 @@ function initSchema() {
 
     migrateLiveChannelNumbers();
     migrateStoredM3uMediaUrls();
+    migrateCatalogueTypeIdentity();
 
     // EPG Programs
     // Optimized for range queries
@@ -282,6 +283,87 @@ function migrateStoredM3uMediaUrls() {
     }
 }
 
+// Xtream providers number live streams, movies and series independently, so
+// the same provider ID can belong to several content types within one source.
+// Internal catalogue keys therefore include the type. Categories use the same
+// shape with their category ID. Provider IDs used for playback are unchanged.
+function buildCatalogueKey(sourceId, type, providerId) {
+    return `${sourceId}:${type}:${providerId}`;
+}
+
+// Earlier releases keyed items and categories as `sourceId:providerId`, so a
+// live channel, movie and series with the same provider ID shared one row
+// and the last synchronized type overwrote the others. Rekey every surviving
+// row to its typed identity. User state (hidden flags) lives on the row and
+// moves with it; favourites and other saved references use the source, type
+// and provider ID rather than this key. Metadata that was already overwritten
+// cannot be recovered here and is restored by the next provider sync.
+// Only rows whose key differs from the typed identity are touched, so the
+// migration is safe to repeat on every start, including after an older
+// release wrote legacy keys again.
+function migrateCatalogueTypeIdentity() {
+    const tables = [
+        { table: 'playlist_items', idColumn: 'item_id' },
+        { table: 'categories', idColumn: 'category_id' }
+    ];
+
+    const applyMigration = db.transaction(() => {
+        let migrated = 0;
+        for (const { table, idColumn } of tables) {
+            const legacyRows = db.prepare(`
+                SELECT id, source_id, type, ${idColumn} AS provider_id
+                FROM ${table}
+                WHERE id <> CAST(source_id AS TEXT) || ':' || type || ':' || ${idColumn}
+            `).all();
+            if (legacyRows.length === 0) continue;
+
+            const findRecord = db.prepare(`
+                SELECT source_id, type, ${idColumn} AS provider_id
+                FROM ${table}
+                WHERE id = ?
+            `);
+            const deleteRecord = db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+            const rekeyRecord = db.prepare(`UPDATE ${table} SET id = ? WHERE id = ?`);
+
+            let pending = legacyRows;
+            while (pending.length > 0) {
+                const deferred = [];
+                for (const row of pending) {
+                    const id = buildCatalogueKey(row.source_id, row.type, row.provider_id);
+                    if (id === row.id) continue;
+
+                    const existing = findRecord.get(id);
+                    if (existing) {
+                        const sameRecord = existing.source_id === row.source_id
+                            && existing.type === row.type
+                            && existing.provider_id === row.provider_id;
+                        if (!sameRecord) {
+                            // Another legacy row still holds this key and is
+                            // itself waiting to move.
+                            deferred.push(row);
+                            continue;
+                        }
+                        // An older release wrote this record again after an
+                        // upgrade. Keep the typed row and its saved state.
+                        deleteRecord.run(row.id);
+                    } else {
+                        rekeyRecord.run(id, row.id);
+                    }
+                    migrated += 1;
+                }
+                if (deferred.length === pending.length) break;
+                pending = deferred;
+            }
+        }
+        return migrated;
+    });
+
+    const migrated = applyMigration();
+    if (migrated > 0) {
+        console.log(`[SQLite] Migrated ${migrated} catalogue records to type-specific identities`);
+    }
+}
+
 // ============================================================
 // Favorites CRUD Operations
 // ============================================================
@@ -441,5 +523,6 @@ module.exports = {
     getDb,
     initSchema,
     favorites,
-    catalogueRevisions
+    catalogueRevisions,
+    buildCatalogueKey
 };
