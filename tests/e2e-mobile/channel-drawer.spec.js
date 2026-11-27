@@ -35,11 +35,19 @@ async function setDrawer(page, open) {
 async function wireActualSidebarControls(page) {
     // Load the real App.init bindings, without constructing unrelated players
     // or making authentication/catalogue requests in this focused harness.
+    let startupChecks = 0;
+    await page.route('**/api/startup', route => {
+        startupChecks++;
+        return route.fulfill({ json: { state: 'ready' } });
+    });
+    await page.addScriptTag({ path: path.resolve(__dirname, '../../public/js/basePath.js') });
+    await page.addScriptTag({ path: path.resolve(__dirname, '../../public/js/startup.js') });
     await page.addScriptTag({ path: path.resolve(__dirname, '../../public/js/app.js') });
     await page.evaluate(async () => {
         window.NodeCastOnboarding = { isMfaPending: () => false };
         const app = Object.assign(Object.create(App.prototype), {
             checkAuth: async () => true, loadNavigationSettings: async () => {},
+            initializeComponents() {},
             applyNavigationVisibility() {}, navigateTo() {},
             navigationSettings: { landingPage: 'live' }, liveTvSettings: {},
             pages: { home: { init: async () => {} } },
@@ -50,6 +58,7 @@ async function wireActualSidebarControls(page) {
         document.querySelector('.channel-item').addEventListener('click', () => window.channelSelections++);
         await app.init();
     });
+    expect(startupChecks).toBe(1);
 }
 
 test('select, reopen, and left-chevron close use the real mobile drawer controls', async ({ page }) => {

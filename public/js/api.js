@@ -36,6 +36,7 @@ const API = {
         }
 
         if (!response.ok) {
+            if (typeof NodeCastStartup !== 'undefined' && NodeCastStartup.handleUnavailable(response, result)) throw new Error('Server is starting. Please wait.');
             // If unauthorized, redirect to login
             if (response.status === 401 && redirectOnUnauthorized) {
                 localStorage.removeItem('authToken');

@@ -27,7 +27,9 @@
         "test:channel-sidebar": "node scripts/channel-sidebar-resize-test.js",
         "test:real-world": "node scripts/real-world-m3u-test.js",
         "test:migration": "node scripts/migration-test.js",
-        "test:auth": "node scripts/auth-username-test.js",
+        "test:auth": "node scripts/auth-username-test.js && node scripts/auth-startup-test.js && node scripts/session-status-limit-test.js && node scripts/startup-readiness-test.js",
+        "test:auth-startup": "node scripts/auth-startup-test.js",
+        "test:readiness": "node scripts/startup-readiness-test.js",
         "test:users": "node scripts/user-management-test.js",
         "test:db-concurrency": "node scripts/db-concurrency-test.js",
         "test:diagnostics": "node scripts/diagnostic-events-test.js && node scripts/watch-probe-test.js",
@@ -61,10 +63,10 @@
         "compression": "^1.8.2",
         "dotenv": "^17.4.2",
         "express": "^4.22.2",
-        "express-rate-limit": "^8.7.0",
+        "express-rate-limit": "^8.7.5",
         "express-session": "^1.19.0",
         "jsonwebtoken": "^9.0.3",
-        "otpauth": "^9.5.2",
+        "otpauth": "^9.6.0",
         "passport": "^0.7.0",
         "passport-jwt": "^4.0.1",
         "passport-local": "^1.0.0",
@@ -83,6 +85,6 @@
         "node": ">=18.0.0"
     },
     "devDependencies": {
-        "@playwright/test": "^1.64.1"
+        "@playwright/test": "^1.65.1"
     }
 }

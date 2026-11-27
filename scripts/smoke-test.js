@@ -87,6 +87,7 @@ async function run() {
         const version = await versionResponse.json();
         const packageVersion = require('../package.json').version;
         assert.equal(version.version, packageVersion);
+        await require('./helpers/applicationReadiness').waitForApplicationReady(baseUrl);
 
         const setupResponse = await fetch(`${baseUrl}/api/auth/setup-required`);
         assert.equal(setupResponse.status, 200);
