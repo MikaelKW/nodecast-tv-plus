@@ -75,8 +75,21 @@ test('passkeys can be added, used for sign-in and removed', async ({ page }) => 
     await expect(page).toHaveURL(/\/nodecast\/(?:#.*)?$/);
     await expect.poll(() => page.evaluate(() => window.app?.currentUser?.username)).toBe('passkey-admin');
 
-    // The passkey as second factor after the password.
+    // From an address other than APP_ORIGIN the passkey cannot be verified, so
+    // the second-factor step must not offer it, let alone default to it.
     await signOut(page);
+    const { port } = new URL(page.url());
+    await page.goto(`http://127.0.0.1:${port}/nodecast/login.html`);
+    await page.locator('#username').fill('passkey-admin');
+    await page.locator('#password').fill(password);
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page.locator('#two-factor-form')).toBeVisible();
+    await expect(page.locator('#two-factor-code-panel')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Use your passkey' })).toHaveCount(0);
+    await expect(page.locator('#two-factor-alternatives')).not.toContainText('passkey');
+
+    // The passkey as second factor after the password, at APP_ORIGIN.
+    await page.goto('login.html');
     await page.locator('#username').fill('passkey-admin');
     await page.locator('#password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();

@@ -456,15 +456,43 @@
             (usePasskey ? document.getElementById('two-factor-passkey-btn') : code).focus();
         }
 
-        function showTwoFactorChallenge(methods = ['totp', 'recovery']) {
+        let passkeyAvailability = null;
+
+        // Shared by the passwordless button and the second-factor step. A failed
+        // lookup is not cached, so a later step can try again.
+        function loadPasskeyAvailability() {
+            passkeyAvailability ||= authFetch(NodeCastUrl.resolve('/api/auth/passkeys/availability'))
+                .then(response => (response.ok ? response.json() : null))
+                .catch(() => null)
+                .then(result => {
+                    if (!result) passkeyAvailability = null;
+                    return result;
+                });
+            return passkeyAvailability;
+        }
+
+        function passkeyUsableHere(availability) {
+            // Without availability details, fall back to browser support so a
+            // transient lookup failure does not hide an enrolled passkey.
+            return availability
+                ? !NodeCastPasskeys.unavailableReason(availability)
+                : NodeCastPasskeys.isSupported();
+        }
+
+        async function showTwoFactorChallenge(methods = ['totp', 'recovery']) {
             document.getElementById('login-form').hidden = true;
             document.getElementById('sso-login-section').hidden = true;
             document.getElementById('passkey-login-section').hidden = true;
             document.getElementById('two-factor-form').hidden = false;
             document.getElementById('login-subtitle').textContent = 'Two-factor verification';
 
+            // A passkey registered for APP_ORIGIN cannot be used from another
+            // hostname or port, so do not offer it as the default method there.
+            const passkeyUsable = methods.includes('passkey')
+                ? passkeyUsableHere(await loadPasskeyAvailability())
+                : false;
             twoFactorMethods = methods.filter(method => (
-                TWO_FACTOR_METHODS[method] && (method !== 'passkey' || NodeCastPasskeys.isSupported())
+                TWO_FACTOR_METHODS[method] && (method !== 'passkey' || passkeyUsable)
             ));
             if (twoFactorMethods.length === 0) {
                 document.getElementById('two-factor-passkey-panel').hidden = true;
@@ -481,7 +509,7 @@
                 const response = await authFetch(NodeCastUrl.resolve('/api/auth/2fa/challenge'));
                 if (!response.ok) return false;
                 const data = await response.json();
-                if (data.required) showTwoFactorChallenge(data.methods);
+                if (data.required) await showTwoFactorChallenge(data.methods);
                 return Boolean(data.required);
             } catch {
                 return false;
@@ -490,14 +518,8 @@
 
         async function configurePasskeyLogin() {
             const section = document.getElementById('passkey-login-section');
-            try {
-                const response = await authFetch(NodeCastUrl.resolve('/api/auth/passkeys/availability'));
-                if (!response.ok) return;
-                const availability = await response.json();
-                section.hidden = Boolean(NodeCastPasskeys.unavailableReason(availability));
-            } catch {
-                section.hidden = true;
-            }
+            const availability = await loadPasskeyAvailability();
+            if (availability) section.hidden = Boolean(NodeCastPasskeys.unavailableReason(availability));
         }
 
         async function checkSetupRequired() {
@@ -624,7 +646,7 @@
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Sign In';
                     document.getElementById('password').value = '';
-                    showTwoFactorChallenge(data.methods);
+                    await showTwoFactorChallenge(data.methods);
                     return;
                 }
 
