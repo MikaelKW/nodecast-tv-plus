@@ -187,7 +187,13 @@ legacyDb.exec(`
 const savedReferences = db => ({
     favorites: db.prepare('SELECT * FROM favorites ORDER BY id').all(),
     visibilityDefaults: db.prepare('SELECT * FROM content_visibility_defaults ORDER BY source_id, type').all(),
-    watchHistory: db.prepare('SELECT * FROM watch_history ORDER BY id').all()
+    // Watch history references provider IDs, not catalogue keys. Its own
+    // record key is migrated separately (#583), so it is not compared here.
+    watchHistory: db.prepare(`
+        SELECT user_id, source_id, item_type, item_id, progress, duration, updated_at, data
+        FROM watch_history
+        ORDER BY user_id, source_id, item_type, item_id
+    `).all()
 });
 const legacyReferences = savedReferences(legacyDb);
 const legacyItemCount = legacyDb.prepare('SELECT COUNT(*) AS count FROM playlist_items').get().count;
