@@ -401,7 +401,7 @@
         }
 
         async function postJson(endpoint, body) {
-            const response = await fetch(NodeCastUrl.resolve(endpoint), {
+            const response = await authFetch(NodeCastUrl.resolve(endpoint), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body || {})
@@ -491,7 +491,7 @@
         async function configurePasskeyLogin() {
             const section = document.getElementById('passkey-login-section');
             try {
-                const response = await fetch(NodeCastUrl.resolve('/api/auth/passkeys/availability'));
+                const response = await authFetch(NodeCastUrl.resolve('/api/auth/passkeys/availability'));
                 if (!response.ok) return;
                 const availability = await response.json();
                 section.hidden = Boolean(NodeCastPasskeys.unavailableReason(availability));
