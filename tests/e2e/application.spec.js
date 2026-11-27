@@ -953,6 +953,82 @@ test('setup, source import, EPG, navigation, and playback work together', async 
         if (!response.ok) throw new Error(`Reduced-precision EPG cleanup failed: ${response.status}`);
     }, reducedPrecisionSource.id);
 
+    // A live channel, movie and series share provider ID 1901, and their
+    // categories share ID 19. Each keeps its own catalogue entry, favourite
+    // and visibility across a repeated synchronization.
+    const collisionSource = await page.evaluate(async url => window.API.request('POST', '/sources', {
+        type: 'xtream',
+        name: 'Controlled ID Collision',
+        url,
+        username: 'collision-user',
+        password: 'collision-password'
+    }), `${fixtureBaseUrl}/xtream-collision`);
+    await waitForSync(page, collisionSource.id);
+    const readCollisionCatalogue = () => page.evaluate(async id => {
+        const names = items => items.map(item => item.name || item.category_name).sort();
+        const xtream = window.API.proxy.xtream;
+        return {
+            live: names(await xtream.liveStreams(id)),
+            movies: names(await xtream.vodStreams(id)),
+            series: names(await xtream.series(id)),
+            liveGroups: names(await xtream.liveCategories(id)),
+            movieGroups: names(await xtream.vodCategories(id)),
+            seriesGroups: names(await xtream.seriesCategories(id))
+        };
+    }, collisionSource.id);
+    expect(await readCollisionCatalogue()).toEqual({
+        live: ['Collision News Channel'],
+        movies: ['Collision Documentary', 'Collision Feature Film'],
+        series: ['Collision Drama Series'],
+        liveGroups: ['Collision Live Group'],
+        movieGroups: ['Collision Movie Group'],
+        seriesGroups: ['Collision Series Group']
+    });
+
+    await page.evaluate(async id => {
+        await window.API.favorites.add(id, '1901', 'channel');
+        await window.API.channels.hide(id, 'movie', '1901');
+        await window.API.channels.hide(id, 'series_category', '19');
+        const { syncRequestedAt } = await window.API.request('POST', `/sources/${id}/sync`);
+        window.collisionResyncRequestedAt = syncRequestedAt;
+    }, collisionSource.id);
+    await expect.poll(() => page.evaluate(async id => {
+        const statuses = await window.API.request('GET', '/sources/status');
+        const status = statuses.find(entry => entry.source_id === id && entry.type === 'all');
+        return status?.status === 'success' && status.last_sync >= window.collisionResyncRequestedAt;
+    }, collisionSource.id), { timeout: 30_000 }).toBe(true);
+    expect(await readCollisionCatalogue()).toEqual({
+        live: ['Collision News Channel'],
+        movies: ['Collision Documentary'],
+        series: [],
+        liveGroups: ['Collision Live Group'],
+        movieGroups: ['Collision Movie Group'],
+        seriesGroups: []
+    });
+
+    await page.evaluate(() => window.app.navigateTo('home'));
+    await expect(page.locator('#favorite-channels-list .channel-tile', { hasText: 'Collision News Channel' }))
+        .toBeVisible();
+    await page.evaluate(() => window.app.navigateTo('live'));
+    await page.locator('#source-select').selectOption(`xtream:${collisionSource.id}`);
+    await page.locator('#channel-list .group-header', { hasText: 'Collision Live Group' }).click();
+    await expect(page.locator('#channel-list .channel-name', { hasText: 'Collision News Channel' })).toBeVisible();
+    await page.evaluate(() => window.app.navigateTo('movies'));
+    await page.locator('#movies-source-select').selectOption(String(collisionSource.id));
+    await expect(page.locator('.movie-card', { hasText: 'Collision Documentary' })).toBeVisible();
+    await expect(page.locator('.movie-card', { hasText: 'Collision Feature Film' })).toHaveCount(0);
+    await page.evaluate(() => window.app.navigateTo('series'));
+    await page.locator('#series-source-select').selectOption(String(collisionSource.id));
+    await expect(page.locator('#series-grid')).not.toContainText('Collision Drama Series');
+
+    await page.evaluate(async id => {
+        await window.API.request('DELETE', `/sources/${id}`);
+        await window.app.sourceManager.loadSources();
+        await window.app.channelList.loadSources();
+    }, collisionSource.id);
+    await page.locator('.nav-link[data-page="settings"]').click();
+    await page.locator('.tab[data-tab="sources"]').click();
+
     const seriesCredentials = {
         username: crypto.randomBytes(18).toString('base64url'),
         password: crypto.randomBytes(24).toString('base64url')
