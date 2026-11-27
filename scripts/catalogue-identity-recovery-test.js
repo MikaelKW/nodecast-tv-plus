@@ -17,7 +17,12 @@ try {
     db.exec(`CREATE TABLE categories (id TEXT PRIMARY KEY,source_id INTEGER,type TEXT,category_id TEXT,is_hidden INTEGER,data TEXT);
         CREATE TABLE playlist_items (id TEXT PRIMARY KEY,source_id INTEGER,type TEXT,item_id TEXT,is_hidden INTEGER,data TEXT);
         CREATE TABLE schema_migrations (name TEXT PRIMARY KEY,applied_at INTEGER);`);
-    migrateCatalogueIdentities(db, { logger });
+    const fresh = migrateCatalogueIdentities(db, { logger });
+    assert.equal(fresh.itemsConverted, 0);
+    assert.equal(fresh.categoriesConverted, 0);
+    assert.equal(fresh.itemDuplicatesRemoved, 0);
+    assert.equal(fresh.categoryDuplicatesRemoved, 0);
+    assert.deepEqual(messages, [], 'An empty new installation must not announce a long conversion.');
     const appliedAt = db.prepare('SELECT applied_at FROM schema_migrations WHERE name=?').get(MIGRATION_NAME).applied_at;
     const category = db.prepare("INSERT INTO categories VALUES (?,50,'live',?,?,?)");
     category.run('50:live:10', '10', 1, 'canonical hidden');
@@ -54,9 +59,18 @@ try {
     assert.deepEqual(db.prepare('SELECT * FROM playlist_items ORDER BY id').all(), beforeItems);
     db.exec('DROP TRIGGER fail_recovery');
 
+    messages.length = 0;
     const repaired = migrateCatalogueIdentities(db, { logger });
     assert.equal(repaired.duplicatesRemoved, 4);
     assert.equal(repaired.converted, 4);
+    assert.equal(repaired.itemsConverted, 4);
+    assert.equal(repaired.categoriesConverted, 0);
+    assert.equal(repaired.itemDuplicatesRemoved, 1);
+    assert.equal(repaired.categoryDuplicatesRemoved, 3);
+    assert.deepEqual(messages.map(message => message.replace(/done in \d+\.\d+ seconds/, 'done in <duration> seconds')), [
+        '[SQLite] Updating catalogue storage. This can take a few minutes on large catalogues.',
+        '[SQLite] Catalogue storage update done in <duration> seconds. Converted: items=4, categories=0. Duplicates removed: items=1, categories=3.'
+    ]);
     assert.deepEqual(db.prepare('SELECT id,is_hidden,data FROM categories ORDER BY category_id').all(), [
         { id:'50:live:10',is_hidden:1,data:'canonical hidden' },
         { id:'50:live:11',is_hidden:0,data:'canonical explicitly shown later' },
@@ -72,6 +86,16 @@ try {
     messages.length = 0;
     assert.equal(migrateCatalogueIdentities(db, { logger }).converted, 0);
     assert.deepEqual(messages, [], 'A clean restart must not announce another conversion.');
+
+    db.exec(`INSERT INTO categories VALUES ('60:10',60,'movie','10',0,'old category');
+        INSERT INTO playlist_items VALUES ('60:80',60,'movie','80',0,'old movie');`);
+    const positive = migrateCatalogueIdentities(db, { logger });
+    assert.equal(positive.itemsConverted, 1);
+    assert.equal(positive.categoriesConverted, 1);
+    assert.equal(positive.itemDuplicatesRemoved, 0);
+    assert.equal(positive.categoryDuplicatesRemoved, 0);
+    assert.equal(messages.at(-1).replace(/done in \d+\.\d+ seconds/, 'done in <duration> seconds'),
+        '[SQLite] Catalogue storage update done in <duration> seconds. Converted: items=1, categories=1. Duplicates removed: items=0, categories=0.');
 
     // A real reader holds an older WAL snapshot while the writer commits.
     // Busy reclamation is bounded and must not undo the completed conversion.
