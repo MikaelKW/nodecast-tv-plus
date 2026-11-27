@@ -79,7 +79,7 @@ async function run() {
         );
 
         assert.equal(
-            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:legacy').stream_url,
+            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:live:legacy').stream_url,
             legacyStreamUrl,
             'Existing M3U catalogue records must be backfilled into the indexed URL column.'
         );
@@ -111,7 +111,7 @@ async function run() {
         }], { skipPurge: true });
 
         assert.equal(
-            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:fresh').stream_url,
+            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:live:fresh').stream_url,
             freshStreamUrl,
             'A newly synchronized M3U URL must be stored in the indexed URL column.'
         );
@@ -126,7 +126,7 @@ async function run() {
         }], { skipPurge: true });
 
         assert.equal(
-            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:fresh').stream_url,
+            getDb().prepare('SELECT stream_url FROM playlist_items WHERE id = ?').get('1:live:fresh').stream_url,
             updatedStreamUrl,
             'A changed M3U URL must replace the previously synchronized URL.'
         );

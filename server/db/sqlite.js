@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { migrateCatalogueIdentities } = require('./catalogueIdentityMigration');
 
 const dataDir = process.env.NODECAST_DATA_DIR
     ? path.resolve(process.env.NODECAST_DATA_DIR)
@@ -18,10 +19,16 @@ function getDb() {
     if (!db) {
         console.log('[SQLite] Opening database at', dbPath);
         db = new Database(dbPath);
-        // Optimize performance
-        db.pragma('journal_mode = WAL');
-        db.pragma('synchronous = NORMAL');
-        initSchema();
+        try {
+            // Optimize performance
+            db.pragma('journal_mode = WAL');
+            db.pragma('synchronous = NORMAL');
+            initSchema();
+        } catch (error) {
+            db.close();
+            db = undefined;
+            throw error;
+        }
     }
     return db;
 }
@@ -32,7 +39,7 @@ function initSchema() {
     // Categories (Groups)
     db.exec(`
         CREATE TABLE IF NOT EXISTS categories (
-            id TEXT PRIMARY KEY, -- Composite key: sourceId:categoryId
+            id TEXT PRIMARY KEY, -- Composite key: sourceId:type:categoryId
             source_id INTEGER NOT NULL,
             category_id TEXT NOT NULL,
             type TEXT NOT NULL, -- 'live', 'movie', 'series'
@@ -49,7 +56,7 @@ function initSchema() {
     // Playlist Items (Channels, Movies, Series, Episodes)
     db.exec(`
         CREATE TABLE IF NOT EXISTS playlist_items (
-            id TEXT PRIMARY KEY, -- Composite key: sourceId:itemId
+            id TEXT PRIMARY KEY, -- Composite key: sourceId:type:itemId
             source_id INTEGER NOT NULL,
             item_id TEXT NOT NULL, -- Original ID from provider
             type TEXT NOT NULL, -- 'live', 'movie', 'series', 'episode'
@@ -95,6 +102,7 @@ function initSchema() {
 
     migrateLiveChannelNumbers();
     migrateStoredM3uMediaUrls();
+    migrateCatalogueIdentities(db);
 
     // EPG Programs
     // Optimized for range queries
