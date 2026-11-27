@@ -885,9 +885,17 @@ class SettingsPage {
         }
     }
 
-    openResetTwoFactorModal(userId) {
+    async openResetTwoFactorModal(userId) {
         const user = this.users.find(candidate => candidate.id === userId);
         if (!user?.twoFactorEnabled) return;
+
+        // Offer the administrator's passkey only where it can be verified: a
+        // passkey registered for APP_ORIGIN fails from another host or port.
+        const currentUser = this.app.currentUser || {};
+        const passkeyAvailability = currentUser.passkeyCount > 0
+            ? await API.passkeys.list().catch(() => null)
+            : null;
+        const passkeyUsable = currentUser.passkeyCount > 0 && NodeCastPasskeys.usable(passkeyAvailability);
 
         let overlay = document.getElementById('reset-two-factor-modal');
         if (!overlay) {
@@ -897,13 +905,12 @@ class SettingsPage {
             document.body.appendChild(overlay);
         }
 
-        const currentUser = this.app.currentUser || {};
         const factorFields = currentUser.twoFactorEnabled
             ? NodeCastVerificationFields.html(NodeCastVerificationFields.methodsFor({
                 passkeyCount: currentUser.passkeyCount || 0,
                 totpEnabled: currentUser.totpEnabled,
                 secondFactorEnabled: currentUser.twoFactorEnabled
-            }), { prefix: 'reset-two-factor', groupClass: 'modal-form-group' })
+            }, { passkeyUsable }), { prefix: 'reset-two-factor', groupClass: 'modal-form-group' })
             : '';
 
         overlay.innerHTML = `

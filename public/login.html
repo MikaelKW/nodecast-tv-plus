@@ -333,7 +333,7 @@
     <script src="js/startup.js?v=1"></script>
     <script src="js/passwordVisibility.js?v=1"></script>
     <script src="js/onboarding.js?v=1"></script>
-    <script src="js/passkeys.js?v=1"></script>
+    <script src="js/passkeys.js?v=2"></script>
     <script>
         async function authFetch(url, options) {
             const response = await fetch(url, options);
@@ -471,14 +471,6 @@
             return passkeyAvailability;
         }
 
-        function passkeyUsableHere(availability) {
-            // Without availability details, fall back to browser support so a
-            // transient lookup failure does not hide an enrolled passkey.
-            return availability
-                ? !NodeCastPasskeys.unavailableReason(availability)
-                : NodeCastPasskeys.isSupported();
-        }
-
         async function showTwoFactorChallenge(methods = ['totp', 'recovery']) {
             document.getElementById('login-form').hidden = true;
             document.getElementById('sso-login-section').hidden = true;
@@ -489,7 +481,7 @@
             // A passkey registered for APP_ORIGIN cannot be used from another
             // hostname or port, so do not offer it as the default method there.
             const passkeyUsable = methods.includes('passkey')
-                ? passkeyUsableHere(await loadPasskeyAvailability())
+                ? NodeCastPasskeys.usable(await loadPasskeyAvailability())
                 : false;
             twoFactorMethods = methods.filter(method => (
                 TWO_FACTOR_METHODS[method] && (method !== 'passkey' || passkeyUsable)

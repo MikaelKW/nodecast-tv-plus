@@ -133,11 +133,21 @@
         }
     }
 
+    /**
+     * Whether a passkey can be used on this page. Without availability details
+     * (a failed lookup) fall back to browser support, so a transient error does
+     * not hide an enrolled passkey.
+     */
+    function usable(availability) {
+        return availability ? !unavailableReason(availability) : isSupported();
+    }
+
     window.NodeCastPasskeys = {
         authenticate,
         errorMessage,
         isSupported,
         register,
-        unavailableReason
+        unavailableReason,
+        usable
     };
 })();

@@ -100,6 +100,24 @@ test('passkeys can be added, used for sign-in and removed', async ({ page }) => 
     await expect(page).toHaveURL(/\/nodecast\/(?:#.*)?$/);
     await expect.poll(() => page.evaluate(() => window.app?.currentUser?.passkeyCount)).toBe(1);
 
+    // The administrator's Reset 2FA verification offers the passkey only where
+    // the server reports it usable for this page's origin.
+    const resetMethods = async passkeyOrigin => page.evaluate(async origin => {
+        const settings = window.app.pages.settings;
+        const realList = API.passkeys.list;
+        if (origin) API.passkeys.list = async () => ({ ...await realList(), origin });
+        settings.users = [{ id: 999, username: 'reset-target', twoFactorEnabled: true }];
+        try {
+            await settings.openResetTwoFactorModal(999);
+            return [...document.querySelectorAll('#reset-two-factor-factor-type option')].map(option => option.value);
+        } finally {
+            API.passkeys.list = realList;
+            document.querySelector('#reset-two-factor-modal [data-close]')?.click();
+        }
+    }, passkeyOrigin);
+    expect(await resetMethods(null)).toEqual(['passkey', 'recovery']);
+    expect(await resetMethods('https://other.example')).toEqual(['recovery']);
+
     // Rename, then remove the last factor with the passkey as verification.
     await openAccountSecurity(page);
     await expect(page.locator('.passkey-item')).not.toContainText('Not used yet');

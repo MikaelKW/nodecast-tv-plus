@@ -10,7 +10,9 @@
         recovery: 'Recovery code'
     };
 
-    function methodsFor({ passkeyCount = 0, totpEnabled = false, secondFactorEnabled = false } = {}, { passkeyUsable = true } = {}) {
+    function methodsFor({ passkeyCount = 0, totpEnabled = false, secondFactorEnabled = false } = {}, { passkeyUsable = false } = {}) {
+        // Callers pass passkeyUsable after checking the server's availability and
+        // origin; a passkey registered for another origin would always fail.
         const methods = [];
         if (passkeyCount > 0 && passkeyUsable && window.NodeCastPasskeys?.isSupported()) methods.push('passkey');
         if (totpEnabled) methods.push('totp');
