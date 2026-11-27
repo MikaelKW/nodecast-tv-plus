@@ -24,6 +24,13 @@ function snapshot(db, table) {
     return db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
 }
 
+function referenceSnapshot(db, table) {
+    const rows = snapshot(db, table);
+    // #583 migrates the independent history record key during schema startup.
+    // All provider references, progress, metadata and other fields stay equal.
+    return table === 'watch_history' ? rows.map(({ id, ...record }) => record) : rows;
+}
+
 function checkMigration(db) {
     // Rebuild a legacy-key state on an otherwise complete schema. Include IDs
     // containing colons so a one-pass UPDATE would encounter a PK conflict.
@@ -50,7 +57,8 @@ function checkMigration(db) {
     const itemsBefore = snapshot(db, 'playlist_items');
     const categoriesBefore = snapshot(db, 'categories');
     const references = ['favorites', 'watch_history', 'content_visibility_defaults', 'epg_programs'];
-    const before = references.map(table => snapshot(db, table));
+    const before = references.map(table => referenceSnapshot(db, table));
+    const historyBefore = snapshot(db, 'watch_history');
 
     // Both tables and the marker must roll back on failure. No half-rekeyed DB.
     db.exec(`CREATE TRIGGER fail_identity_update BEFORE UPDATE OF id ON playlist_items
@@ -61,13 +69,17 @@ function checkMigration(db) {
     assert.equal(db.prepare('SELECT 1 FROM schema_migrations WHERE name=?').get(MIGRATION_NAME), undefined);
     db.exec('DROP TRIGGER fail_identity_update');
 
+    // The catalogue migration itself leaves even the history key untouched.
+    migrateCatalogueIdentities(db);
+    assert.deepEqual(snapshot(db, 'watch_history'), historyBefore);
+
     // Exercise the real schema initialization path, not only the helper.
     initSchema();
     const expectedItems = itemsBefore.map(row => ({ ...row, id: catalogueId(row.source_id, row.type, row.item_id) }));
     const expectedCategories = categoriesBefore.map(row => ({ ...row, id: catalogueId(row.source_id, row.type, row.category_id) }));
     assert.deepEqual(snapshot(db, 'playlist_items'), expectedItems);
     assert.deepEqual(snapshot(db, 'categories'), expectedCategories);
-    assert.deepEqual(references.map(table => snapshot(db, table)), before);
+    assert.deepEqual(references.map(table => referenceSnapshot(db, table)), before);
     const migrationTime = db.prepare('SELECT applied_at FROM schema_migrations WHERE name=?').get(MIGRATION_NAME).applied_at;
     initSchema();
     assert.deepEqual(snapshot(db, 'playlist_items'), expectedItems);
@@ -146,7 +158,7 @@ async function run() {
         assert.equal(db.prepare("SELECT is_hidden FROM categories WHERE id='40:live:5'").get().is_hidden, 1);
         assert.equal(db.prepare("SELECT is_hidden FROM playlist_items WHERE id='40:live:live:77'").get().is_hidden, 0);
         assert.equal(db.prepare("SELECT is_hidden FROM playlist_items WHERE id='40:live:99'").get().is_hidden, 1);
-        assert.deepEqual(retained.references.map(table => snapshot(db, table)), retained.before);
+        assert.deepEqual(retained.references.map(table => referenceSnapshot(db, table)), retained.before);
         console.log('Catalogue content-type identities, migration rollback/idempotence, retained state and sync regression tests passed.');
     } finally {
         db.close();
