@@ -1009,10 +1009,15 @@ test('setup, source import, EPG, navigation, and playback work together', async 
     await page.evaluate(() => window.app.navigateTo('home'));
     await expect(page.locator('#favorite-channels-list .channel-tile', { hasText: 'Collision News Channel' }))
         .toBeVisible();
-    await page.evaluate(() => window.app.navigateTo('live'));
+    await page.evaluate(async () => {
+        await window.app.channelList.loadSources();
+        await window.app.channelList.loadChannels();
+        window.app.navigateTo('live');
+    });
     await page.locator('#source-select').selectOption(`xtream:${collisionSource.id}`);
     await page.locator('#channel-list .group-header', { hasText: 'Collision Live Group' }).click();
-    await expect(page.locator('#channel-list .channel-name', { hasText: 'Collision News Channel' })).toBeVisible();
+    // Listed once under Favorites and once in its own live group.
+    await expect(page.locator('#channel-list .channel-name', { hasText: 'Collision News Channel' })).toHaveCount(2);
     await page.evaluate(() => window.app.navigateTo('movies'));
     await page.locator('#movies-source-select').selectOption(String(collisionSource.id));
     await expect(page.locator('.movie-card', { hasText: 'Collision Documentary' })).toBeVisible();
