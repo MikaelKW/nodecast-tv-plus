@@ -29,7 +29,7 @@ NodeCast TV Plus is a player only. It does not include, sell, or provide televis
 - In-player quality limits, audio-track selection, preferred subtitle languages, and automatic subtitle modes.
 - Consistent subtitle rendering with customizable size, colors, background opacity, edge style, and vertical position, including a live appearance preview.
 - NVIDIA NVENC, AMD AMF, Intel Quick Sync, and VAAPI hardware acceleration where supported by the host.
-- Local accounts with administrator/viewer roles, account-specific preferences, TOTP two-factor authentication, recovery codes, and password safeguards.
+- Local accounts with administrator/viewer roles, account-specific preferences, passkeys, TOTP two-factor authentication, recovery codes, and password safeguards.
 - Standards-based OIDC single sign-on with optional SSO-only mode.
 - Per-source visibility controls, configurable navigation, and light/dark/system themes.
 - Multi-architecture Docker images for `linux/amd64` and `linux/arm64`.
@@ -215,7 +215,7 @@ The quick-start command generates all three values securely.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NODE_ENV` | Not set | Set to `production` to make startup fail when `JWT_SECRET` or `SESSION_SECRET` is missing or weak instead of using temporary development secrets. Recommended as an additional production safeguard. |
-| `APP_ORIGIN` | Automatic | Public origin, such as `https://tv.example.com`, when automatic reverse-proxy detection is unsuitable. |
+| `APP_ORIGIN` | Automatic | Public origin, such as `https://tv.example.com`, when automatic reverse-proxy detection is unsuitable. Also required for passkeys. |
 | `AUTH_COOKIE_SECURE` | Automatic | Force secure cookies with `true`, or disable them with `false`. Normally leave unset. |
 | `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Express `trust proxy` setting: which proxy hops may set `X-Forwarded-*` headers. |
 | `TZ` | `Etc/UTC` | Container time zone using an IANA name such as `Europe/Oslo`. |
@@ -471,11 +471,27 @@ Stream availability and legality depend on the configured source. NodeCast TV Pl
 
 </details>
 
-## Two-factor authentication
+## Two-factor authentication and passkeys
 
-Local accounts can enable authenticator-app TOTP from the username menu under **Account security**. Sign-in accepts a current six-digit code or one of the single-use recovery codes created during enrollment.
+Local accounts manage their sign-in protection from the username menu under **Account security**:
 
-Keep both `/app/data` and `TOTP_ENCRYPTION_KEY` in the deployment backup. Recovery codes are only shown during enrollment or regeneration.
+- **Passkeys** sign in with the device's fingerprint, face, or screen lock through **Sign in with a passkey** on the login page, without a password. Passkeys can be stored by the operating system (such as Windows Hello or iCloud Keychain), a password manager, or a security key, and a phone can be used through the browser's QR-code option.
+- **Authenticator-app TOTP** adds a six-digit code after the password.
+- **Recovery codes** are created with the first passkey or authenticator app and work in place of either. Each code works once, and the codes are only shown when they are created or regenerated.
+
+Once an account has a passkey or an authenticator app, signing in with its password always requires a second step: a passkey, an authenticator code, or a recovery code. Removing the last of these makes password-only sign-in available again and deletes the recovery codes. Adding or removing a factor requires the current password and, when one exists, a current factor.
+
+Passkeys require `APP_ORIGIN` to be set to the HTTPS address used to open NodeCast TV Plus, for example:
+
+```env
+APP_ORIGIN=https://tv.example.com
+```
+
+Passkeys are tied to that host name. They cannot be used through an IP address or plain HTTP, such as `http://192.168.1.20:3000`; `http://localhost` is accepted for local testing. When the installation is opened through another address, password, TOTP, and recovery-code sign-in keep working, and the account page explains why passkeys are unavailable. Changing the host name in `APP_ORIGIN` means existing passkeys stop working and must be registered again; sign in with the password and a recovery code or authenticator code to do so. A `NODECAST_BASE_PATH` does not affect passkeys.
+
+Keep both `/app/data` and `TOTP_ENCRYPTION_KEY` in the deployment backup. Passkeys and recovery codes are stored in `/app/data`; recovery codes created before passkey support continue to work, but still need the same `TOTP_ENCRYPTION_KEY`.
+
+An administrator can reset another account's second factors under **Settings > Users**. The reset removes its authenticator app, all passkeys, and all recovery codes, and cancels pending sign-ins for that account.
 
 SSO accounts use the identity provider's authentication and MFA policy.
 
