@@ -271,6 +271,20 @@ class App {
         const username = String(this.currentUser?.username || '').trim();
         initial.textContent = Array.from(username)[0]?.toLocaleUpperCase() || '?';
         trigger.title = username ? `Account: ${username}` : 'Account';
+        // Usernames are user-controlled, so they are only ever assigned as text.
+        const userLine = document.getElementById('account-menu-user');
+        const usernameLabel = document.getElementById('account-menu-username');
+        if (userLine && usernameLabel) {
+            usernameLabel.textContent = username;
+            usernameLabel.title = username;
+            userLine.hidden = !username;
+        }
+        // A page restored from the back/forward cache still shows the account
+        // it was left with, which may have signed out or changed since. Reload
+        // so the session is checked again.
+        window.addEventListener('pageshow', event => {
+            if (event.persisted) window.location.reload();
+        });
 
         const closeMenu = () => {
             popover.classList.add('hidden');

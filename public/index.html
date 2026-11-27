@@ -12,7 +12,7 @@
   <meta name="description" content="Stream live TV, movies, and series with EPG support">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <script src="js/theme.js?v=1"></script>
-  <link rel="stylesheet" href="css/main.css?v=27">
+  <link rel="stylesheet" href="css/main.css?v=28">
   <link rel="stylesheet" href="css/startup.css?v=1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -97,13 +97,19 @@
             aria-expanded="false" aria-label="Open account menu">
             <span id="account-menu-initial" aria-hidden="true">?</span>
           </button>
-          <div class="account-menu-popover hidden" id="account-menu-popover" role="menu">
-            <button type="button" class="account-menu-item" id="account-security-link" role="menuitem">
-              Account
-            </button>
-            <button type="button" class="account-menu-item account-menu-logout" id="logout-btn" role="menuitem">
-              Logout
-            </button>
+          <div class="account-menu-popover hidden" id="account-menu-popover">
+            <p class="account-menu-user" id="account-menu-user">
+              <span class="account-menu-user-label">Username:</span>
+              <span class="account-menu-username" id="account-menu-username"></span>
+            </p>
+            <div class="account-menu-actions" role="menu" aria-labelledby="account-menu-user">
+              <button type="button" class="account-menu-item" id="account-security-link" role="menuitem">
+                Account
+              </button>
+              <button type="button" class="account-menu-item account-menu-logout" id="logout-btn" role="menuitem">
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1609,7 +1615,7 @@
   <script src="js/pages/Account.js?v=4"></script>
   <script src="js/pages/MfaOnboarding.js?v=1"></script>
   <script src="js/pages/WatchPage.js?v=16"></script>
-  <script src="js/app.js?v=14"></script>
+  <script src="js/app.js?v=15"></script>
 </body>
 
 </html>
