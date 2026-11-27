@@ -64,6 +64,56 @@ function controlledVariantPlaylist(baseUrl) {
     ].join('\n');
 }
 
+function xtreamCollisionCatalogue(baseUrl) {
+    return {
+        get_live_categories: [{ category_id: '19', category_name: 'Collision Live Group', parent_id: 0 }],
+        get_live_streams: [{
+            num: 1,
+            name: 'Collision News Channel',
+            stream_type: 'live',
+            stream_id: 1901,
+            stream_icon: `${baseUrl}/logo.svg`,
+            epg_channel_id: 'collision.news',
+            added: '1784073598',
+            category_id: '19'
+        }],
+        get_vod_categories: [{ category_id: '19', category_name: 'Collision Movie Group', parent_id: 0 }],
+        get_vod_streams: [
+            {
+                num: 1,
+                name: 'Collision Feature Film',
+                stream_type: 'movie',
+                stream_id: 1901,
+                stream_icon: `${baseUrl}/logo.svg`,
+                added: '1784073599',
+                category_id: '19',
+                container_extension: 'mp4'
+            },
+            {
+                num: 2,
+                name: 'Collision Documentary',
+                stream_type: 'movie',
+                stream_id: 1902,
+                stream_icon: `${baseUrl}/logo.svg`,
+                added: '1784073599',
+                category_id: '19',
+                container_extension: 'mp4'
+            }
+        ],
+        get_series_categories: [{ category_id: '19', category_name: 'Collision Series Group', parent_id: 0 }],
+        get_series: [{
+            num: 1,
+            name: 'Collision Drama Series',
+            series_id: 1901,
+            cover: `${baseUrl}/logo.svg`,
+            releaseDate: '2026-07-15',
+            last_modified: '1784073600',
+            rating: '7.5',
+            category_id: '19'
+        }]
+    };
+}
+
 function controlledGuideXml() {
     const now = Date.now();
     const startTime = new Date(now - 30 * 60 * 1000);
@@ -293,7 +343,7 @@ async function start() {
             return res.end(xml);
         }
 
-        if (pathname === '/xtream/player_api.php') {
+        if (pathname === '/xtream/player_api.php' || pathname === '/xtream-collision/player_api.php') {
             const username = requestUrl.searchParams.get('username');
             const password = requestUrl.searchParams.get('password');
             if (!username || !password) {
@@ -319,6 +369,10 @@ async function start() {
                         timestamp_now: Math.floor(Date.now() / 1000)
                     }
                 };
+            } else if (pathname === '/xtream-collision/player_api.php') {
+                // Providers number live streams, movies, series and each
+                // category list independently, so one ID can mean all three.
+                response = xtreamCollisionCatalogue(baseUrl)[action] || [];
             } else if (action === 'get_live_categories') {
                 response = [{ category_id: '15', category_name: 'Visibility Live Test', parent_id: 0 }];
             } else if (action === 'get_live_streams') {
@@ -402,7 +456,7 @@ async function start() {
             return res.end(JSON.stringify(response));
         }
 
-        if (pathname === '/xtream/xmltv.php') {
+        if (pathname === '/xtream/xmltv.php' || pathname === '/xtream-collision/xmltv.php') {
             res.writeHead(200, { 'Content-Type': 'application/xml', 'Access-Control-Allow-Origin': '*' });
             return res.end('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
         }
