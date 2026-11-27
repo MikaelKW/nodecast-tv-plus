@@ -234,10 +234,17 @@ function migrateWatchHistoryIdentity() {
     `);
     const deleteRecord = db.prepare('DELETE FROM watch_history WHERE id = ?');
     const rekeyRecord = db.prepare('UPDATE watch_history SET id = ?, source_id = ? WHERE id = ?');
+    const moveRecord = db.prepare('UPDATE watch_history SET id = ? WHERE id = ?');
+    // A legacy key can equal another legacy row's new key (for example item
+    // `77` and item `9001:movie:77`). Moving every legacy row aside first means
+    // no legacy key can block a destination, whatever the row order.
+    const pendingId = id => `legacy-migration\u0000${id}`;
 
     const applyMigration = db.transaction(() => {
+        for (const row of legacyRows) moveRecord.run(pendingId(row.id), row.id);
         let migrated = 0;
-        for (const row of legacyRows) {
+        for (const legacyRow of legacyRows) {
+            const row = { ...legacyRow, id: pendingId(legacyRow.id) };
             // Records saved before source_id existed kept the source only in
             // their metadata. Resuming them saves under the sourced identity,
             // so adopt it here instead of leaving a duplicate behind.
@@ -247,15 +254,19 @@ function migrateWatchHistoryIdentity() {
                 itemType: row.item_type,
                 itemId: row.item_id
             });
-            if (id === row.id) continue;
-
             const existing = findRecord.get(id);
             if (existing) {
                 const sameItem = existing.user_id === row.user_id
                     && existing.source_id === sourceId
                     && existing.item_type === row.item_type
                     && existing.item_id === row.item_id;
-                if (!sameItem) continue;
+                if (!sameItem) {
+                    // Identities are unambiguous, so this is not expected. Keep
+                    // the record under its original key rather than losing it.
+                    if (!findRecord.get(legacyRow.id)) moveRecord.run(legacyRow.id, row.id);
+                    else console.warn(`[SQLite] Could not migrate watch-history record ${legacyRow.id}`);
+                    continue;
+                }
                 // An older release wrote this item again after an upgrade.
                 // Keep whichever copy holds the latest progress.
                 if (existing.updated_at >= row.updated_at) {

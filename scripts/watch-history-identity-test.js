@@ -83,6 +83,13 @@ function seedLegacyDatabase(dataDirectory) {
         JSON.stringify({ title: 'Legacy without source' }));
     insert.run('2:500', 2, 9001, 'movie', '500', 900, 6000, now - 1000,
         JSON.stringify({ title: 'Other account movie', sourceId: 9001 }));
+    // Each legacy key below is the new key of the row inserted before it, so
+    // a single in-order pass would leave the earlier rows behind.
+    insert.run('3:77', 3, 9001, 'movie', '77', 10, 6000, now - 900, JSON.stringify({ title: 'Chain 1' }));
+    insert.run('3:9001:movie:77', 3, 9001, 'movie', '9001:movie:77', 20, 6000, now - 800,
+        JSON.stringify({ title: 'Chain 2' }));
+    insert.run('3:9001:movie:9001:movie:77', 3, 9001, 'movie', '9001:movie:9001:movie:77', 30, 6000, now - 700,
+        JSON.stringify({ title: 'Chain 3' }));
     db.close();
 }
 
@@ -221,8 +228,11 @@ async function run() {
             '1:9001:movie:500',
             '1:9002:movie:502',
             '1:none:movie:local:1',
-            '2:9001:movie:500'
-        ]);
+            '2:9001:movie:500',
+            '3:9001:movie:77',
+            '3:9001:movie:9001:movie:77',
+            '3:9001:movie:9001:movie:9001:movie:77'
+        ], 'Legacy keys that equal another row\'s new key are all migrated');
 
         await save(admin, { id: '500', type: 'movie', sourceId: 9001, progress: 310, duration: 6000, data: { title: 'Legacy movie' } });
         await save(admin, { id: '502', type: 'movie', sourceId: '9002', progress: 55, duration: 6000, data: { title: 'Legacy metadata source' } });
