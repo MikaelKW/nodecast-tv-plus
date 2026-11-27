@@ -4,8 +4,8 @@ const { randomUUID } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const MIGRATION_NAME = 'catalogue-content-type-identities-v1';
 const TABLES = [
-    { table: 'categories', providerId: 'category_id', index: 'idx_categories_legacy_identity' },
-    { table: 'playlist_items', providerId: 'item_id', index: 'idx_items_legacy_identity' }
+    { table: 'categories', providerId: 'category_id', index: 'idx_categories_legacy_identity', convertedField: 'categoriesConverted', removedField: 'categoryDuplicatesRemoved' },
+    { table: 'playlist_items', providerId: 'item_id', index: 'idx_items_legacy_identity', convertedField: 'itemsConverted', removedField: 'itemDuplicatesRemoved' }
 ];
 
 function checkpointCatalogue(db, logger) {
@@ -42,12 +42,13 @@ function migrateCatalogueIdentities(db, { logger = console } = {}) {
             announced = true;
         }
     };
-    const result = { converted: 0, duplicatesRemoved: 0 };
+    const result = { converted: 0, duplicatesRemoved: 0, itemsConverted: 0, categoriesConverted: 0, itemDuplicatesRemoved: 0, categoryDuplicatesRemoved: 0 };
     db.transaction(() => {
         const indexCount = db.prepare(`SELECT count(*) AS count FROM sqlite_schema
             WHERE type = 'index' AND name IN (?, ?)`).get(...TABLES.map(entry => entry.index)).count;
         if (indexCount !== TABLES.length) {
-            announce();
+            if (db.prepare('SELECT 1 FROM categories LIMIT 1').get()
+                || db.prepare('SELECT 1 FROM playlist_items LIMIT 1').get()) announce();
             for (const { table, providerId, index } of TABLES) {
                 // Only legacy rows occupy this index. Old releases also keep
                 // it up to date when they write old-format keys after rollback.
@@ -55,20 +56,22 @@ function migrateCatalogueIdentities(db, { logger = console } = {}) {
                     WHERE id <> source_id || ':' || type || ':' || ${providerId}`);
             }
         }
-        for (const { table, providerId } of TABLES) {
+        for (const { table, providerId, convertedField, removedField } of TABLES) {
             const legacy = `id <> source_id || ':' || type || ':' || ${providerId}`;
             if (!db.prepare(`SELECT 1 FROM ${table} WHERE ${legacy} LIMIT 1`).get()) continue;
             announce();
             // Matching key text alone is insufficient: an old provider ID
             // containing a colon can occupy another row's future key. Only a
             // genuinely canonical copy of the same logical record wins.
-            result.duplicatesRemoved += db.prepare(`DELETE FROM ${table} AS old
+            const removed = db.prepare(`DELETE FROM ${table} AS old
                 WHERE old.id <> old.source_id || ':' || old.type || ':' || old.${providerId}
                   AND EXISTS (SELECT 1 FROM ${table} AS canonical
                       WHERE canonical.id = old.source_id || ':' || old.type || ':' || old.${providerId}
                         AND canonical.source_id = old.source_id
                         AND canonical.type = old.type
                         AND canonical.${providerId} = old.${providerId})`).run().changes;
+            result.duplicatesRemoved += removed;
+            result[removedField] += removed;
             const prefix = `catalogue-migration:${randomUUID()}:`;
             const upper = prefix + '\uffff';
             if (db.prepare(`SELECT 1 FROM ${table} WHERE id >= ? AND id < ? LIMIT 1`).get(prefix, upper)) {
@@ -76,12 +79,13 @@ function migrateCatalogueIdentities(db, { logger = console } = {}) {
             }
             // Move remaining legacy rows aside before assigning final keys.
             // Every other field, including explicit hide/show state, survives.
-            result.converted += db.prepare(`UPDATE ${table} SET id = ? || rowid WHERE ${legacy}`).run(prefix).changes;
+            const converted = db.prepare(`UPDATE ${table} SET id = ? || rowid WHERE ${legacy}`).run(prefix).changes;
+            result.converted += converted;
+            result[convertedField] += converted;
             db.prepare(`UPDATE ${table} SET id = source_id || ':' || type || ':' || ${providerId}
                 WHERE id >= ? AND id < ?`).run(prefix, upper);
         }
         if (!db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(MIGRATION_NAME)) {
-            announce();
             db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(MIGRATION_NAME, Date.now());
         }
     }).immediate();
@@ -89,7 +93,7 @@ function migrateCatalogueIdentities(db, { logger = console } = {}) {
     // This is outside the transaction, and also retries deferred cleanup on a
     // later clean startup. It does not shrink the main database file.
     result.checkpointComplete = checkpointCatalogue(db, logger);
-    if (announced) logger.log(`[SQLite] Catalogue storage update done in ${((performance.now() - start) / 1000).toFixed(2)} seconds.`);
+    if (announced) logger.log(`[SQLite] Catalogue storage update done in ${((performance.now() - start) / 1000).toFixed(2)} seconds. Converted: items=${result.itemsConverted}, categories=${result.categoriesConverted}. Duplicates removed: items=${result.itemDuplicatesRemoved}, categories=${result.categoryDuplicatesRemoved}.`);
     return result;
 }
 
