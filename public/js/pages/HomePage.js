@@ -275,13 +275,14 @@ class HomePage {
         }
 
         section.classList.remove('hidden');
-        list.innerHTML = items.map(item => this.createCard(item)).join('');
+        list.innerHTML = items.map((item, index) => this.createCard(item, index)).join('');
 
         // Attach click listeners
         list.querySelectorAll('.dashboard-card').forEach(card => {
             card.addEventListener('click', () => {
-                const id = card.dataset.id;
-                const item = items.find(i => i.item_id === id);
+                // A movie and an episode, or items from different sources, can
+                // share a provider ID, so resume the exact history record.
+                const item = items[Number(card.dataset.historyIndex)];
                 if (item) {
                     const type = item.item_type || item.type;
 
@@ -378,7 +379,7 @@ class HomePage {
         }
     }
 
-    createCard(item) {
+    createCard(item, index) {
         const { data, progress, duration, item_id } = item;
         const type = item.item_type || item.type;
         const percent = Math.min(100, Math.round((progress / duration) * 100));
@@ -388,7 +389,7 @@ class HomePage {
         const posterUrl = poster.startsWith('http') ? NodeCastUrl.resolve(`/api/proxy/image?url=${encodeURIComponent(poster)}`) : poster;
 
         return `
-            <div class="dashboard-card" data-id="${item_id}" data-type="${type}">
+            <div class="dashboard-card" data-id="${item_id}" data-type="${type}" data-history-index="${index}">
                 <div class="card-image">
                     <img src="${posterUrl}" alt="${data.title || item.name}" loading="lazy" onerror="this.onerror=null;this.src='img/poster-placeholder.jpg'">
                     <div class="progress-bar-container">

@@ -5,6 +5,9 @@ const MAX_HISTORY_METADATA_BYTES = 32 * 1024;
 const MAX_HISTORY_ID_LENGTH = 512;
 const MAX_MEDIA_SECONDS = 10 * 365 * 24 * 60 * 60;
 const ALLOWED_HISTORY_TYPES = new Set(['movie', 'episode']);
+// Identity segment for supported content that was saved without a source ID.
+// Source IDs are positive integers, so this value cannot match a real source.
+const SOURCELESS_HISTORY_KEY = 'none';
 
 function badRequest(message) {
     const error = new Error(message);
@@ -43,12 +46,28 @@ function normalizeSourceId(value) {
     return normalized;
 }
 
-function normalizeHistoryPayload(body = {}) {
+// Provider item IDs are only unique within one source and content type, so a
+// history record is identified by all three values together.
+function normalizeHistoryIdentity(body = {}) {
     const itemId = normalizeText(body.id, 'id', { required: true });
     const itemType = normalizeText(body.type, 'type', { required: true });
     if (!ALLOWED_HISTORY_TYPES.has(itemType)) {
         throw badRequest('type must be movie or episode');
     }
+    return {
+        itemId,
+        itemType,
+        sourceId: normalizeSourceId(body.sourceId)
+    };
+}
+
+function buildHistoryRecordId(userId, { sourceId, itemType, itemId }) {
+    // The provider item ID is last because it may itself contain colons.
+    return [userId, sourceId ?? SOURCELESS_HISTORY_KEY, itemType, itemId].join(':');
+}
+
+function normalizeHistoryPayload(body = {}) {
+    const { itemId, itemType, sourceId } = normalizeHistoryIdentity(body);
 
     if (body.data !== undefined && (
         body.data === null
@@ -72,7 +91,7 @@ function normalizeHistoryPayload(body = {}) {
         itemId,
         itemType,
         parentId: normalizeText(body.parentId, 'parentId'),
-        sourceId: normalizeSourceId(body.sourceId),
+        sourceId,
         progress: normalizeSeconds(body.progress, 'progress'),
         duration: normalizeSeconds(body.duration, 'duration'),
         serializedData
@@ -96,6 +115,8 @@ function pruneHistory(db, userId) {
 module.exports = {
     MAX_HISTORY_ITEMS_PER_USER,
     MAX_HISTORY_METADATA_BYTES,
+    buildHistoryRecordId,
+    normalizeHistoryIdentity,
     normalizeHistoryPayload,
     pruneHistory
 };
