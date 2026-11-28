@@ -5,6 +5,8 @@ const { getDb } = require('../db/sqlite');
 const { requireAuth } = require('../auth');
 const { parseBoundedInteger } = require('../services/requestControls');
 const {
+    buildHistoryRecordId,
+    normalizeHistoryIdentity,
     normalizeHistoryPayload,
     pruneHistory
 } = require('../services/historyPolicy');
@@ -84,7 +86,7 @@ router.post('/', limitHistoryWrites, (req, res) => {
             sourceId
         } = normalizeHistoryPayload(req.body);
 
-        const compositeId = `${userId}:${itemId}`;
+        const compositeId = buildHistoryRecordId(userId, { sourceId, itemType, itemId });
         const timestamp = Date.now();
 
         const saveHistory = db.transaction(() => {
@@ -125,16 +127,21 @@ router.post('/', limitHistoryWrites, (req, res) => {
 });
 
 /**
- * DELETE /api/history/:itemId
- * Removes an item from the user's watch history
+ * DELETE /api/history/:itemId?type=movie|episode&sourceId=<id>
+ * Removes an item from the user's watch history. Omitting sourceId removes
+ * the record saved without a source.
  */
 router.delete('/:itemId', limitHistoryWrites, (req, res) => {
     try {
         const db = getDb();
         const userId = req.user.id;
-        const itemId = req.params.itemId;
+        const identity = normalizeHistoryIdentity({
+            id: req.params.itemId,
+            type: req.query.type,
+            sourceId: req.query.sourceId
+        });
 
-        const compositeId = `${userId}:${itemId}`;
+        const compositeId = buildHistoryRecordId(userId, identity);
 
         const stmt = db.prepare('DELETE FROM watch_history WHERE id = ? AND user_id = ?');
         const result = stmt.run(compositeId, userId);
@@ -145,6 +152,9 @@ router.delete('/:itemId', limitHistoryWrites, (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
+        if (err.statusCode === 400) {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('[History] Error deleting history item:', err);
         res.status(500).json({ error: 'Failed to delete history item' });
     }
