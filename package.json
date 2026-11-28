@@ -15,7 +15,7 @@
         "test:e2e:subpath": "playwright test --config=playwright.subpath.config.js",
         "test:hardware": "node scripts/hw-detect-test.js",
         "test:oidc": "node scripts/oidc-discovery-test.js",
-        "test:xtream": "node scripts/xtream-epg-collision-test.js",
+        "test:xtream": "node scripts/xtream-epg-collision-test.js && node scripts/catalogue-identity-test.js && node scripts/catalogue-identity-recovery-test.js",
         "test:xtream-api": "node scripts/xtream-api-compatibility-test.js",
         "test:xtream-account": "node scripts/xtream-account-test.js",
         "test:variants": "node scripts/channel-variant-test.js",
