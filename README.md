@@ -114,6 +114,8 @@ chmod 600 .env
 
 These values protect logins, sessions, and local-account two-factor authentication. Preserve the same values across container upgrades and restores. Changing `TOTP_ENCRYPTION_KEY` makes existing TOTP enrollments unusable.
 
+See [configuration loading](docs/CONFIGURATION.md) for environment/file precedence and compatibility notes for custom dotenv settings.
+
 <details>
 <summary><strong>Generate the complete .env file automatically with Docker</strong></summary>
 
